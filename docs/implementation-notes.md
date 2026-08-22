@@ -99,6 +99,35 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Gate 2 Simulator Smoke Test
+
+### Summary
+
+- Rebuilt and reinstalled the app on the preferred simulator after Gate 2 and drove the
+  prototype dapp end to end: provider + EIP-6963 injection, `eth_requestAccounts`
+  returning the native account, `personal_sign` creating a native pending record, the
+  Safari toolbar popup rendering the native canonical card (Stupid Wallet / Ethereum /
+  Sign message / origin localhost:8080 / account / `personal_sign • 0x1`), **Approve &
+  Face** followed by the authentic `LAContext` device-owner prompt, and the signature
+  returning to the dapp.
+
+### Why
+
+- Confirm the Gate 2 refactor (added `RPCClient`/`RPCResolver`/`MethodPolicy` and test
+  target + platform) did not regress the Safari request, popup, or authentication path.
+
+### Verification
+
+- OCR of simulator screenshots confirmed injection, native account connect, the
+  canonical popup card, the Face ID prompt, and a resolved `personal_sign` signature in
+  the dapp (`Result` + log `[personal_sign] 0x…`).
+- Provider/EIP-6963 `isStupidWallet=true`; full loop closed on-device.
+
+### Follow-Up
+
+- Gate 3 next (vendored `libsecp256k1` + Ethereum primitives + shared-keychain
+  user-presence storage).
+
 ## 2026-08-22 - Gate 2 Complete: JSON And RPC Core
 
 ### Summary
