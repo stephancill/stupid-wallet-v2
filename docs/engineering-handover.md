@@ -37,15 +37,16 @@ casing fix); `RPCClient` preserves arbitrary results, `null`, and structured err
 `RPCOverrideValidator` rejects malformed, insecure, unreachable, and wrong-chain
 endpoints. `WalletService.passthrough` tunnels unhandled methods through the one resolver.
 
-Gate 3 (key and Ethereum primitives) is in progress with the cryptography and
-serialization core landed: vendored `libsecp256k1` (v0.5.1) builds as the `CSecp256k1`
-SwiftPM C target; project-owned Keccak-256, RLP, EIP-191, EIP-712 struct hashing, and
-legacy/EIP-1559 transaction serialization; key generation, address derivation, EIP-55,
-recoverable signing, and recovery through the vendored target — all verified against
-independent vectors or cross-checked with `cast`; the legacy transaction verification
-preimage matched a cross-implementation vector byte-for-byte. New-format key storage in
-the shared keychain (`KeychainKeyStore`, `.userPresence` + `ThisDeviceOnly`) is
-implemented but not yet proven on a physical device.
+Gate 3 (key and Ethereum primitives) exit conditions are met: vendored `libsecp256k1`
+(v0.5.1) builds as the `CSecp256k1` SwiftPM C target; project-owned Keccak-256, RLP,
+EIP-191, EIP-712 struct hashing, and legacy/EIP-1559 transaction serialization; key
+generation, address derivation, EIP-55, sign, and recovery through the vendored target —
+all verified against independent vectors (the legacy transaction preimage matched a
+cross-implementation vector byte-for-byte; the EIP-1559 preimage/hash cross-checked with
+`cast keccak`). New-format key storage in the shared keychain (`KeychainKeyStore`,
+`.userPresence` + `ThisDeviceOnly`) was proven on a physical device: Face ID/passcode
+released a self-test key on an on-device generate → save → reload-with-authentication →
+re-derive → sign+recover run.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, and a mock signer plus a fresh-`LAContext` local
   authentication boundary.
@@ -57,11 +58,10 @@ implemented but not yet proven on a physical device.
 - An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
 - `PrototypeDapp/index.html` for driving requests from Safari.
 
-The prototype is not gate-complete past Gate 2, with Gate 3 primitives in progress; it
-preserves the identity, security, and documentation rules, is signed for a physical
-device, and its Safari messaging/popup/Face ID lifecycle, JSON/RPC proxy behavior, and
-native key/transaction primitives work. Production work must finish Gate 3 and the
-remaining gates before release.
+The prototype is not gate-complete past Gate 3; it preserves the identity, security, and
+documentation rules, is signed for a physical device, and its Safari messaging/popup/Face
+ID lifecycle, JSON/RPC proxy behavior, and native key/transaction/authentication-primitive
+works. Production work must complete the remaining gates before release.
 
 The existing implementation in `../ios-wallet` is a behavior and migration reference,
 not a codebase to copy wholesale. It contains useful feature work, protocol handling,
@@ -707,16 +707,12 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Finish Gate 3 with the device-bound proof: confirm on a physical device that new-format
-   keys stored via `KeychainKeyStore` require Face ID or passcode (no auth reuse, no
-   plaintext), and that the shared keychain access group is writable/readable by both the
-   app and the Safari extension.
-2. Gate 4 (upgrade migration) — read the old Secure Enclave ECIES ciphertext through
+1. Gate 4 (upgrade migration) — read the old Secure Enclave ECIES ciphertext through
    Security and migrate to the new format with an authenticated sign-and-recover proof.
-3. Gate 5 (canonical approval protocol) — replace the mock signer with the real
+2. Gate 5 (canonical approval protocol) — replace the mock signer with the real
    `KeychainKeyStore` + `EthereumSigner` path and prove popup approvals bind to canonical
    pending records.
-4. Gate 6 and later per the implementation gates.
+3. Gate 6 and later per the implementation gates.
 
 ## Reference Sources
 

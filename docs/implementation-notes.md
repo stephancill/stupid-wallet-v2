@@ -99,6 +99,34 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Gate 3 Complete: Keychain User-Presence Proved On-Device
+
+### Summary
+
+- Added an on-device keychain self-test to the app (`ContentView` → "Run keychain
+  proof") that generates a random key, saves it under a `.userPresence` + `ThisDeviceOnly`
+  access control, reloads it, re-derives the address, and signs + recovers a digest.
+- Deployed over the network to the physical iPhone and confirmed: the system Face
+  ID/passcode prompt appeared during the reload, and the log returned PASS (address,
+  save ok, load ok, address matches, sign+recover verify OK).
+
+### Why
+
+- Closes the last Gate 3 exit condition: new-format key storage must require the device
+  owner on a physical device, with no preflight/plaintext persistence.
+
+### Verification
+
+- `stupid-app run --network` installed and verified the app on the device.
+- Manual on-device run: Face ID prompt presented; self-test PASS.
+
+### Follow-Up
+
+- Gate 4 (upgrade migration) is the next gate. A shared-access-group read/write
+  round-trip between the app and the Safari extension remains a runtime integration
+  check to fold into the real signing path (Gate 5), since the self-test used the app's
+  default group.
+
 ## 2026-08-22 - Gate 3 Cross-Implementation Transaction Vectors
 
 ### Summary
