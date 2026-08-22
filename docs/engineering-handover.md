@@ -22,6 +22,12 @@ Gate 0 (project and documentation baseline) exit conditions are met: production 
 extension, App Group, and keychain identities are restored in configuration and
 entitlements; `stupid-app doctor` reports zero failures; and the app builds and launches
 on the preferred simulator.
+
+Gate 1 (Safari extension packaging spike) exit conditions are met on a physical device:
+the extension enables in Safari, MAIN-world EIP-6963 discovery works on the prototype
+dapp, the toolbar popup opens under user control and renders the native request card,
+native messaging returns structured responses, and a native Face ID prompt is invoked
+while Safari stays foregrounded.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, and a mock signer plus a fresh-`LAContext` local
   authentication boundary.
@@ -33,9 +39,9 @@ on the preferred simulator.
 - An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
 - `PrototypeDapp/index.html` for driving requests from Safari.
 
-The prototype is not gate-complete past Gate 0; it preserves the identity, security, and
-documentation rules but is not signed for a device and its native messaging/popup lifecycle
-has not yet been proven on a physical device (Gate 1). Production work must complete the
+The prototype is not gate-complete past Gate 1; it preserves the identity, security, and
+documentation rules, is signed for a physical device, and its Safari messaging/popup/
+Face ID lifecycle has been proven on that device. Production work must complete the
 remaining gates before release.
 
 The existing implementation in `../ios-wallet` is a behavior and migration reference,
@@ -676,24 +682,8 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Prove the Safari prototype extension on a physical device: enable `Stupid Wallet`
-   (Settings -> Apps -> Safari -> Extensions), drive the `PrototypeDapp`, and verify the
-   toolbar popup plus the `LAContext` prompt while Safari stays foregrounded. This is the
-   Gate 1 exit and the prototype's main open risk. Before the device gate closes, confirm
-   the keychain access-group entitlement expands correctly under `stupid-app` signing
-   (note: the source uses `$(AppIdentifierPrefix)`, which Xcode expands but `stupid-app`'s
-   `EntitlementDeriver` passes through literally; verify the device run reconciles, or
-   substitute the concrete team prefix for device/release signing).
-2. Repeat the popup/authentication proof for the mobile gestures before beginning
-   real key or transaction implementation.
-3. Implement Gate 2 JSON-RPC behavior (the prototype's `JSONValue` and mock passthrough
+1. Implement Gate 2 JSON-RPC behavior (the prototype's `JSONValue` and mock passthrough
    become a real node proxy) before adding wallet features.
-4. Update this handover with observed Safari and LocalAuthentication behavior from the
-   device proof.
-5. Scope the macOS surface (Gate 8): add a `StupidWalletMac` host target sharing
-   `WalletCore` and the extension resources, add the `SFSafariExtensionHandler` entry, and
-   verify the popup + Touch ID round-trip and app-to-extension messaging. This can run in
-   parallel with the port because it reuses the same envelope and core.
 
 ## Reference Sources
 

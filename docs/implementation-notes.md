@@ -99,6 +99,38 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Gate 1 Passed on Physical Device
+
+### Summary
+
+- Proved the Safari Web Extension stack end to end on a physical iPhone: extension
+  enabled in Safari, the prototype dapp on the LAN received the injected provider,
+  MAIN-world EIP-6963 discovery rendered `Stupid Wallet ·
+  co.za.stephancill.stupid-wallet · isStupidWallet=true`, the toolbar popup opened under
+  user control and showed the native request card, personal_sign signed, and the iPhone
+  system Face ID prompt appeared while Safari remained foregrounded.
+- This closes Gate 1. The logged risk of the FAce-lifecycle with real Safari was also
+  resolved: the LAContext device-owner prompt presents over Safari on-device.
+
+### Why
+
+- Gate 1 is the spike gate that proves the Safari popup + native auth interaction under
+  real operating-system lifecycle constraints before wallet signing is implemented.
+
+### Verification
+
+- Manual on-device walk-through of the prototype dapp: enabled the extension, loaded
+  `http://<mac-lan>/index.html`, requested accounts (native card), and approved a
+  `personal_sign` with the Face ID system prompt; the dapp resolved to a signature.
+- The app and nested extension each signed `co.za.stephancill.stupid-wallet` and
+  `...extension`.
+
+### Follow-Up
+
+- Begin Gate 2 (JSON-RPC core). This follows the observed on-device behavior; observed
+  Safari/LA behavior is now recorded in the handover, so the remaining risk is now in
+  JSON/vector and RPC-proxy coverage.
+
 ## 2026-08-22 - Device Launch Confirmed
 
 ### Summary
