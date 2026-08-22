@@ -21,6 +21,13 @@
     <button id="connect">eth_requestAccounts</button>
     <button id="chain">eth_chainId</button>
     <button id="sign">personal_sign</button>
+    <button id="block">eth_blockNumber</button>
+    <button id="gas">eth_gasPrice</button>
+    <button id="balance">eth_getBalance</button>
+    <button id="txcount">eth_getTransactionCount</button>
+    <button id="blockByNum">eth_getBlockByNumber</button>
+    <button id="client">web3_clientVersion</button>
+    <button id="sweep">Sweep all RPCs</button>
     <button id="clear">Clear log</button>
 
     <h3>Result</h3>
@@ -87,6 +94,49 @@
         document.getElementById("clear").addEventListener("click", () => {
             document.getElementById("log").textContent = "—";
             document.getElementById("result").textContent = "—";
+        });
+
+        async function rpc(method, params) {
+            try {
+                const value = await window.ethereum.request({ method, params });
+                show(value);
+                logLine(method, typeof value === "string" ? value.slice(0, 26) + "…" : JSON.stringify(value));
+            } catch (e) { errorShow(e); }
+        }
+
+        document.getElementById("block").addEventListener("click", () => rpc("eth_blockNumber"));
+        document.getElementById("gas").addEventListener("click", () => rpc("eth_gasPrice"));
+        document.getElementById("balance").addEventListener("click", () => rpc("eth_getBalance", ["0xD8d6F226E874eE8257Ac2600f4C2B0A0A8d9c1d0", "latest"]));
+        document.getElementById("txcount").addEventListener("click", () => rpc("eth_getTransactionCount", ["0xD8d6F226E874eE8257Ac2600f4C2B0A0A8d9c1d0", "latest"]));
+        document.getElementById("blockByNum").addEventListener("click", () => rpc("eth_getBlockByNumber", ["latest", false]));
+        document.getElementById("client").addEventListener("click", () => rpc("web3_clientVersion"));
+
+        const ACCOUNT = "0xD8d6F226E874eE8257Ac2600f4C2B0A0A8d9c1d0";
+        const SWEEP = [
+            ["eth_chainId", []],
+            ["net_version", []],
+            ["eth_blockNumber", []],
+            ["eth_gasPrice", []],
+            ["eth_getBalance", [ACCOUNT, "latest"]],
+            ["eth_getTransactionCount", [ACCOUNT, "latest"]],
+            ["eth_getBlockByNumber", ["latest", false]],
+            ["eth_getCode", [ACCOUNT, "latest"]],
+            ["eth_call", [{ to: "0x0000000000000000000000000000000000000000", data: "0x" }, "latest"]],
+            ["web3_clientVersion", []],
+        ];
+
+        document.getElementById("sweep").addEventListener("click", async () => {
+            const out = {};
+            for (const [method, params] of SWEEP) {
+                try {
+                    const value = await window.ethereum.request({ method, params });
+                    out[method] = typeof value === "string" ? value : value;
+                } catch (e) {
+                    out[method] = "ERR: " + (e && e.message ? e.message : String(e));
+                }
+            }
+            document.getElementById("result").textContent = JSON.stringify(out, null, 2);
+            logLine("sweep", Object.keys(out).length + " calls completed");
         });
 
         function toHex(str) {

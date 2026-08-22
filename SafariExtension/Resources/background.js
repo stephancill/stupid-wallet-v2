@@ -130,7 +130,7 @@
                 method,
                 params: message.params,
                 origin: originFrom(sender),
-                chainId: "0x1",
+                chainId: "1",
             });
             if (!prepared.ok) {
                 sendResponse({ error: { code: 4001, message: prepared.error } });
@@ -145,7 +145,24 @@
             return;
         }
 
-        sendResponse({ error: { code: -32601, message: "Not implemented in prototype" } });
+        // Generic passthrough: forward every other method unchanged to the active RPC
+        // through the single native resolver. Node results and structured errors return
+        // untouched.
+        const passthrough = await native({
+            action: "passthrough",
+            method,
+            params: message.params ?? [],
+            origin: originFrom(sender),
+            chainId: "1",
+        });
+        if (passthrough.ok && passthrough.data && passthrough.data.result !== undefined) {
+            sendResponse(passthrough.data.result);
+            return;
+        }
+        const nodeError = passthrough ? passthrough.error : { code: -32603, message: "no response" };
+        const code = nodeError && typeof nodeError === "object" && nodeError.code
+            ? nodeError.code : -32603;
+        sendResponse({ error: nodeError, code });
     }
 
     function getPending(sendResponse) {

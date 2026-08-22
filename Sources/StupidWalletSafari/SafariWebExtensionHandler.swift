@@ -45,6 +45,22 @@ private enum Server {
     case "me":
       return success(["account": .string(service.account.address)])
 
+    case "passthrough":
+      let method = envelope.method ?? ""
+      guard !method.isEmpty else { return failure("missing method") }
+      let outcome = await service.passthrough(
+        method: method,
+        params: envelope.params ?? .array([]),
+        chainID: envelope.chainId ?? "1"
+      )
+      switch outcome {
+      case .result(let value):
+        return success(["result": value])
+      case .nodeError(let nodeError):
+        // Preserve the structured node error object; it has no "data" envelope.
+        return .object(["ok": .bool(false), "error": nodeError])
+      }
+
     case "list":
       do {
         let summaries = try await service.list()

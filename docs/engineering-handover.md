@@ -341,6 +341,12 @@ Every method not explicitly handled or denied is forwarded unchanged to the acti
 endpoint. This includes ordinary `eth_*`, `net_*`, `web3_*`, and provider-specific node
 methods. Do not add read methods to an allowlist merely to make a dapp work.
 
+Routed passthrough is native: the extension's background worker dispatches unhandled
+methods to the `passthrough` native action, which `WalletService` forwards through the one
+`RPCResolver`/`RPCClient` (so reads, sends, polling, and passthrough share the same
+endpoint hierarchy). Structured node errors and `null` results return untouched to the
+page.
+
 The proxy must preserve:
 
 - Arbitrary nested JSON objects and arrays.

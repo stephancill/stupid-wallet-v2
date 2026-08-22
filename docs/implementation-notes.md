@@ -99,6 +99,40 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Live RPC Passthrough Sweep Verified
+
+### Summary
+
+- Wired the Gate 2 native passthrough into the Safari extension. Previously the
+  background worker returned `-32601` for every generic `eth_*`/`net_*`/`web3_*` method;
+  it now dispatches unhandled methods to a new native `passthrough` action, which
+  `WalletService` routes through the single `RPCResolver`/`RPCClient` to
+  `https://evm.stupidtech.net/v1/{chainId}`. Structured node results and errors return
+  untouched.
+- Extended `PrototypeDapp` with per-call buttons plus a `Sweep all RPCs` button that
+  fires a batch of read methods and prints the composite JSON.
+
+### Why
+
+- Demonstrate that the JSON-RPC core from Gate 2 actually passes arbitrary node methods
+  through in the live extension rather than failing as unsupported.
+
+### Verification
+
+- On the simulator the `Sweep all RPCs` button returned live data through the extension:
+  `eth_chainId → 0x1`, `net_version → 1`, `eth_blockNumber → 0x189d444`, `eth_gasPrice →
+  0x8733869`, `eth_getBalance → 0x0`, `eth_getTransactionCount → 0x0`, and a full
+  `eth_getBlockByNumber` block object (parent beacon block root, hashes, validator
+  indexes, withdrawals) — all JSON-RPC pass-through from `evm.stupidtech.net`.
+
+### Follow-Up / Notes
+
+- iOS Safari caches extension service workers across app reinstall and even simulator
+  uninstall, so JS changes sometimes need an extension re-toggle or a clean simulator to
+  pick up. Recording this so it is not mistaken for a packaging regression.
+- `personal_sign` still uses the mock signer; Gate 3 replaces it with real secp256k1 and
+  shared-keychain storage.
+
 ## 2026-08-22 - Gate 2 Simulator Smoke Test
 
 ### Summary
