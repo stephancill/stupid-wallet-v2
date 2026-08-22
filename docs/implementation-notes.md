@@ -99,6 +99,47 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Gate 3 Primitives: Vendored secp256k1 + Ethereum Core
+
+### Summary
+
+- Vendored `libsecp256k1` at tag `v0.5.1` (commit `642c885b`) into `third-party/` and
+  added a `CSecp256k1` SwiftPM C target. SwiftPM cannot run the upstream autotools
+  configure, so the three needed translation units are `#include`d through thin shims
+  (`shim_secp256k1.c`, `shim_precomputed_ecmult*.c`); `ENABLE_MODULE_RECOVERY` and
+  `ENABLE_MODULE_ECDH` are set. Public headers are copied to the target's `include/`.
+  Provenance and adaptation recorded in `THIRD_PARTY_NOTICES.md`.
+- Added project-owned primitives in `StupidWalletCore`:
+  - `Keccak` (Keccak-256; fixed a rho/pi destination-index bug).
+  - RLP encoder (`RLP`), `Hex`, EIP-55 checksum, `EthereumKeypair`/`EthereumSigner`
+    (recoverable sign + address recovery), `MessageHash` (EIP-191, EIP-712 struct hash),
+    and legacy + EIP-1559 transaction serialization (`Transaction`).
+  - `KeychainKeyStore`: new-format keys in the shared keychain with
+    `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` + a `.userPresence` access control.
+
+### Why
+
+- Gate 3 is the key/Ethereum core required before any real signing can be trusted.
+
+### Verification
+
+- `swift test` (41 tests / 11 suites pass) including independent vectors:
+  - Keccak-256 of `""` and `"abc"` match `cast keccak`.
+  - secp256k1 private key 1 derives the generator point and the known address
+    `0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf`.
+  - EIP-55 known vector, EIP-191 empty-digest matched via `cast keccak`.
+  - RLP spec vectors; zero/invalid keys rejected; sign->recover round-trips the address.
+  - Legacy and EIP-1559 payloads encode and sign->recover the sender.
+- `stupid-app build` produces `StupidWallet.app` including the vendored C target.
+
+### Follow-Up
+
+- Gate 3 remainder is device-bound: pin cross-implementation legacy/EIP-1559 transaction
+  hash vectors, then prove `KeychainKeyStore` user-presence key release + the shared
+  keychain access group on a physical device. The mock signer in `WalletService` stays
+  until Gate 5 wires the real `KeychainKeyStore` + `EthereumSigner` into the approval
+  path.
+
 ## 2026-08-22 - Live RPC Passthrough Sweep Verified
 
 ### Summary

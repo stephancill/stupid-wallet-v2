@@ -36,6 +36,16 @@ casing fix); `RPCClient` preserves arbitrary results, `null`, and structured err
 `RPCResolver` defaults every chain to `https://evm.stupidtech.net/v1/{chainId}`; and
 `RPCOverrideValidator` rejects malformed, insecure, unreachable, and wrong-chain
 endpoints. `WalletService.passthrough` tunnels unhandled methods through the one resolver.
+
+Gate 3 (key and Ethereum primitives) is in progress with the cryptography and
+serialization core landed: vendored `libsecp256k1` (v0.5.1) builds as the `CSecp256k1`
+SwiftPM C target; project-owned Keccak-256, RLP, EIP-191, EIP-712 struct hashing, and
+legacy/EIP-1559 transaction serialization; key generation, address derivation, EIP-55,
+recoverable signing, and recovery through the vendored target — all verified against
+independent vectors or cross-checked with `cast`. New-format key storage in the shared
+keychain (`KeychainKeyStore`, `.userPresence` + `ThisDeviceOnly`) is implemented but not
+yet proven on a physical device, and cross-implementation transaction hash vectors are
+still outstanding.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, and a mock signer plus a fresh-`LAContext` local
   authentication boundary.
@@ -47,10 +57,11 @@ endpoints. `WalletService.passthrough` tunnels unhandled methods through the one
 - An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
 - `PrototypeDapp/index.html` for driving requests from Safari.
 
-The prototype is not gate-complete past Gate 2; it preserves the identity, security, and
-documentation rules, is signed for a physical device, and its Safari messaging/popup/
-Face ID lifecycle and JSON/RPC proxy behavior have been proven. Production work must
-complete the remaining gates before release.
+The prototype is not gate-complete past Gate 2, with Gate 3 primitives in progress; it
+preserves the identity, security, and documentation rules, is signed for a physical
+device, and its Safari messaging/popup/Face ID lifecycle, JSON/RPC proxy behavior, and
+native key/transaction primitives work. Production work must finish Gate 3 and the
+remaining gates before release.
 
 The existing implementation in `../ios-wallet` is a behavior and migration reference,
 not a codebase to copy wholesale. It contains useful feature work, protocol handling,
@@ -696,10 +707,16 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Implement Gate 3 (key and Ethereum primitives): vendor the pinned `libsecp256k1` C
-   target, add key generation / public-key / address / signing / recovery plus Keccak,
-   RLP, EIP-191, EIP-712, and transaction serialization, each with independent known
-   vectors, and move key storage to the shared-keychain user-presence format.
+1. Finish Gate 3: pin cross-implementation transaction (legacy and EIP-1559) signing-hash
+   vectors, then prove on a physical device that new-format keys stored via
+   `KeychainKeyStore` require Face ID or passcode (no auth reuse, no plaintext), and that
+   the shared keychain access group is readable by both the app and the extension.
+2. Gate 4 (upgrade migration) — read the old Secure Enclave ECIES ciphertext through
+   Security and migrate to the new format with an authenticated sign-and-recover proof.
+3. Gate 5 (canonical approval protocol) — replace the mock signer with the real
+   `KeychainKeyStore` + `EthereumSigner` path and prove popup approvals bind to canonical
+   pending records.
+4. Gate 6 and later per the implementation gates.
 
 ## Reference Sources
 

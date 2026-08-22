@@ -20,7 +20,17 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "StupidWalletCore"
+            name: "CSecp256k1",
+            path: "Sources/CSecp256k1",
+            publicHeadersPath: "include",
+            cSettings: [
+                .define("ENABLE_MODULE_RECOVERY"),
+                .define("ENABLE_MODULE_ECDH"),
+            ]
+        ),
+        .target(
+            name: "StupidWalletCore",
+            dependencies: ["CSecp256k1"]
         ),
         .target(
             name: "StupidWallet",
