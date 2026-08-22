@@ -1,6 +1,6 @@
-import SwiftUI
 import Security
 import StupidWalletCore
+import SwiftUI
 
 struct ContentView: View {
   @State private var phase: String = "Idle"
@@ -24,7 +24,8 @@ struct ContentView: View {
       }
       .buttonStyle(.borderedProminent)
       Text(phase).font(.caption).foregroundStyle(.secondary)
-      Text(log).font(.caption2).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+      Text(log).font(.caption2).multilineTextAlignment(.leading).frame(
+        maxWidth: .infinity, alignment: .leading)
     }
     .padding()
   }
@@ -51,17 +52,20 @@ struct ContentView: View {
     defer { secret = [UInt8](repeating: 0, count: secret.count) }
 
     let pair: EthereumKeypair
-    do { pair = try EthereumKeypair.from(secret: secret) }
-    catch { return ["FAIL: keypair derivation"] }
+    do { pair = try EthereumKeypair.from(secret: secret) } catch {
+      return ["FAIL: keypair derivation"]
+    }
     lines.append("address \(pair.address)")
 
-    do { try store.save(key: secret, account: account) }
-    catch { return ["FAIL: keychain save (\(error))"] }
+    do { try store.save(key: secret, account: account) } catch {
+      return ["FAIL: keychain save (\(error))"]
+    }
     lines.append("save ok")
 
     let loaded: [UInt8]
-    do { loaded = try store.load(account: account) }
-    catch { return ["FAIL: keychain load (\(error)) → user-presence not granted"] }
+    do { loaded = try store.load(account: account) } catch {
+      return ["FAIL: keychain load (\(error)) → user-presence not granted"]
+    }
     guard loaded == secret else { return ["FAIL: round-trip mismatch"] }
     lines.append("load ok — Face ID/passcode released the key")
 

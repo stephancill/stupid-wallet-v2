@@ -99,6 +99,44 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Gate 4 Migration: State Machine + Security Backend
+
+### Summary
+
+- Added `WalletMigration` (Gate 4), a hermetic-testable state machine over an
+  `OldWalletBackend` abstraction, plus `SecurityWalletBackend`, the production backend
+  that reads the old app's persisted format:
+  - checksummed address in App Group defaults (`"walletAddress"`)
+  - ECIES ciphertext in a generic-password keychain item keyed by the address
+  - a Secure Enclave P-256 key tagged by the address, decrypted with
+    `.eciesEncryptionCofactorVariableIVX963SHA256AESGCM` (presents the device-owner
+    prompt automatically).
+- The orchestrator runs only when no new-format wallet exists, derives the address from
+  the decrypted key and requires case-insensitive equality with the persisted address,
+  saves in the new format (pending), then requires an authenticated sign-and-recover
+  self-test before marking completion. Old keychain material is retained until an
+  explicit idempotent cleanup. Failed and cancelled attempts never complete.
+
+### Why
+
+- Gate 4 is the identity-continuity release blocker: the rebuild must migrate an
+  installed old wallet to the new format in place, without re-import.
+
+### Verification
+
+- `swift test`: 54 tests / 12 suites pass, including 11 migration tests (success +
+  re-derived address match; no old wallet; idempotency; skip when new wallet exists;
+  malformed ciphertext; wrong address; user cancellation; save failure; self-test
+  failure; idempotent cleanup).
+- `stupid-app build` produces the app including the new core.
+
+### Follow-Up
+
+- The on-device half of Gate 4 (an actual old-release wallet upgraded in place, address
+  unchanged, new-format signature verifies) depends on having an old-format wallet
+  installed and is a physical run; the state machine and the Security ECIES/secure-enclave
+  read path are in place and hermetically covered.
+
 ## 2026-08-22 - Gate 3 Complete: Keychain User-Presence Proved On-Device
 
 ### Summary

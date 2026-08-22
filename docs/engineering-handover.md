@@ -47,6 +47,16 @@ cross-implementation vector byte-for-byte; the EIP-1559 preimage/hash cross-chec
 `.userPresence` + `ThisDeviceOnly`) was proven on a physical device: Face ID/passcode
 released a self-test key on an on-device generate → save → reload-with-authentication →
 re-derive → sign+recover run.
+
+Gate 4 (upgrade migration) code is in place with the device step outstanding: a
+hermetic-testable `WalletMigration` state machine plus `SecurityWalletBackend` that reads
+the old persisted format (address in defaults, ECIES ciphertext in a generic-password
+item, Secure Enclave P-256 decrypt with
+`.eciesEncryptionCofactorVariableIVX963SHA256AESGCM`), re-derives and compares the
+address, saves in the new format, requires an authenticated sign-and-recover proof before
+completion, and retains old material until explicit cleanup. Migration unit tests cover
+detection, malformed/wrong/cancelled cases, idempotency, and cleanup safety. The physical
+in-place upgrade of a real old-format wallet remains to be run.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, and a mock signer plus a fresh-`LAContext` local
   authentication boundary.
@@ -58,10 +68,11 @@ re-derive → sign+recover run.
 - An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
 - `PrototypeDapp/index.html` for driving requests from Safari.
 
-The prototype is not gate-complete past Gate 3; it preserves the identity, security, and
-documentation rules, is signed for a physical device, and its Safari messaging/popup/Face
-ID lifecycle, JSON/RPC proxy behavior, and native key/transaction/authentication-primitive
-works. Production work must complete the remaining gates before release.
+The prototype is not gate-complete past Gate 3, with Gate 4 migration core landed and its
+device step outstanding; it preserves the identity, security, and documentation rules, is
+signed for the physical device, and its Safari messaging/popup/Face ID, JSON/RPC proxy,
+key/transaction/crypto primitives, and old-format readable path all work. Production work
+must finish Gate 4 and the remaining gates before release.
 
 The existing implementation in `../ios-wallet` is a behavior and migration reference,
 not a codebase to copy wholesale. It contains useful feature work, protocol handling,
@@ -707,8 +718,10 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Gate 4 (upgrade migration) — read the old Secure Enclave ECIES ciphertext through
-   Security and migrate to the new format with an authenticated sign-and-recover proof.
+1. Finish Gate 4 with a physical in-place migration run: upgrade a real old-format wallet,
+   assert the address is unchanged, and confirm a new-format authenticated signature
+   verifies against that address (the state machine and Security/ECIES backend are done
+   and hermetically tested).
 2. Gate 5 (canonical approval protocol) — replace the mock signer with the real
    `KeychainKeyStore` + `EthereumSigner` path and prove popup approvals bind to canonical
    pending records.
