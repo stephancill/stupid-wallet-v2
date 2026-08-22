@@ -50,6 +50,171 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-22 - Simulator Full Approval Loop Proven
+
+### Summary
+
+- Two fixes were needed to run the complete Gate 5 approval flow on the iOS simulator:
+  1. `UserDefaults(suiteName:)` for `sw2.walletAddress` wrote into each process's own
+     sandbox on the simulator, so the app set it but the Safari extension read an empty
+     place. Introduced `WalletStore`, which persists the active EIP-55 address as a small
+     file (`wallet-address.conf`) in the shared App Group container via
+     `containerURL(forSecurityApplicationGroupIdentifier:)` — the same mechanism the
+     pending-request store already uses — and routed `WalletFactory`, `KeychainSigner`,
+     the migration's `SecurityWalletBackend`, and the extension handler through it
+     (with a UserDefaults fallback for pre-existing wallets).
+  2. The extension handler now builds the `WalletService`/signer lazily per native
+     message instead of once at init, so a wallet created/migrated after the extension
+     process was launched is picked up (previously it froze with "no wallet key").
+
+### Verification (iOS simulator, fresh install)
+
+- After the CLI entitlements fix plus these, "Connect" drove the toolbar popup "Stupid
+  Wallet / Ethereum / Connect site" and **Approve resolved eth_requestAccounts** to the
+  account array, with no Face ID.
+- "Personal sign" surfaced the canonical "Sign message" card (From/Account/Chain/Message +
+  warning); **Approve triggered a single Face ID/passcode prompt** and resolved to a real
+  65-byte EIP-191 signature in the dapp Result, consumed from the App Group pending store.
+- The shared App Group pending records (`PendingRequests/*.json`) are written by the
+  extension and readable on the host, confirming cross-process persistence.
+- `swift test`: 66 tests / 14 suites pass; `stupid-app` build and doctor clean.
+
+### Follow-Up
+
+- Typed-data, send, add/switch chain, and reject paths are implemented and unit-tested;
+  driving the remaining kinds through the simulator popup is additional manual exercising.
+- The physical device remains the authoritative surface for provisioning/keychain
+  continuity, but the simulator now exercises the full approval loop.
+
+## 2026-08-22 - Simulator Keychain Fix (stupid-app ad-hoc entitlements)
+
+### Summary
+
+- Root-caused why keychain on the iOS simulator failed with `-34018 (errSecMissingEntitlement)`
+  for signing/self-test and "Create a wallet": `stupid-app`'s simulator ad-hoc signing used
+  plain `codesign --sign -` with no `--entitlements`, so the installed app had no
+  `com.apple.security.application-groups` and no default keychain access. On the
+  simulator the security daemon refused the read/write.
+- Fixed in the `stupid-app` CLI (`Sources/stupid-app/RunCommand.swift`): the simulator
+  ad-hoc pass now substitutes project entitlements with `$(AppIdentifierPrefix)` removed,
+  keeps `com.apple.security.application-groups`, and drops `keychain-access-groups`
+  entirely (a team-less keychain group triggers `SBMainWorkspace` launch denial; the
+  simulator grants the default bundle-id keychain group without that entitlement).
+- Rebuilt `stupid-app`, reinstalled it to `~/.local/bin`, and reinstalled the app on the
+  preferred simulator.
+
+### Verification
+
+- On a fresh-not-erased simulator, tapping "Run keychain proof" now logs PASS (address,
+  save ok, load ok — "Face ID/passcode released the key", re-derived address matches).
+- "Create a wallet" saves a real `.userPresence` key and logs `Created wallet <address>`.
+- `swift test`: 66 tests / 14 suites pass.
+- Without these simulator entitlements the same flows fail with `saveFailed` and the
+  underlying reason was `errSecMissingEntitlement` (`-34018`).
+
+### Follow-Up
+
+- The Safari extension injection on the simulator still requires a manual enable (Settings
+  → Safari → Extensions), which is a user-driven iOS step rather than a code path.
+- The physical device (real signing) embeds full entitlements already and remains the
+  authoritative Gate 3/5 surface.
+
+### Summary
+
+- **Two Face ID prompts on one signature** were traced to the `.userPresence` keychain
+  access control firing on two separate reads: `prepare` → `Signer.hasKey()` →
+  `KeychainKeyStore.contains()`, and `approve` → `signDigest` → `KeychainKeyStore.load()`.
+  Both are `SecItem*` reads of a `.userPresence` item, so iOS presents Face ID twice.
+  Fix: `KeychainSigner.hasKey()` no longer touches the keychain at all — it resolves the
+  wallet's existence from the non-secret App Group default (`sw2.walletAddress`, written
+  by create and migration). Only `signDigest` → `load()` (actual signing) presents the
+  single Face ID prompt. Connect / chain-change requests never sign, so they show no Face
+  ID; only message/typed-data/send show exactly one prompt.
+- **`accounts.join is not a function` / `sig.slice is not a function`** were the real,
+  reproducible root cause: `background.js` lower-cased the JSON-RPC method
+  (`eth_requestAccounts` → `eth_requestaccounts`) but `APPROVAL_METHODS`/`DENIED_METHODS`
+  held mixed-case strings, so every approval method fell through to RPC passthrough and
+  the dapp received a node error object where it expected an array/string. The sets are
+  now lowercase, matching the casing fix already applied to native `MethodPolicy`.
+- **`[object Object]` errors**: native structured errors (`{code,message}`) were wrapped
+  a second time (`message: prepared.error` nests the object) and the bridge resolved the
+  non-pending branch as `ok:true`. Background now replies through a stable envelope
+  `{ __envelope:true, ok, result|pendingId|error }`; `bridge.js` decodes it and surfaces
+  structured EIP-1193 `{message,code}` to the page provider. Native errors now reach the
+  dapp as readable messages.
+- Added `WalletFactory` (create a brand-new wallet in the new format) so a fresh install
+  has a key for `KeychainSigner` and a "Create a wallet" button in the app. Reuses the
+  same keychain service and App Group default key as migration.
+
+### Verification
+
+- `swift test`: 66 tests / 14 suites pass (added `WalletFactoryTests`; all Approval core).
+- `node --check` passes for all four extension scripts.
+- `stupid-app build` produces the app + extension appex; `stupid-app run --network`
+  installs and launches on the physical iPhone.
+- **Simulator (fresh install, current extension):** connect stays pending awaiting the
+  toolbar popup (no `accounts.join`), native errors (`[object Object]` / HTTP 530)
+  surface as readable messages, and the eth_blockNumber passthrough round-trips provider
+  → bridge → worker → native → RPC with structured transport errors preserved.
+
+### Follow-Up
+
+- The `.userPresence` signing step initially failed on the simulator with `-34018`; this
+  was the missing simulator entitlements (fixed in the CLI and verified, see the
+  "Simulator Keychain Fix" entry above), not a lack of passcode. On the simulator the
+  keychain self-test and wallet creation now both work through Face ID / passcode.
+- Simulator egress to `evm.stupidtech.net` returns HTTP 530 (sim network/edge), unrelated
+  to the extension; the failure is propagated correctly.
+
+## 2026-08-22 - Gate 5: Canonical Approval Protocol + Real Signing
+
+### Summary
+
+- Replaced the fixed mock signer and the mock account with an injected `Signing`
+  protocol. Production uses `KeychainSigner`, which loads the new-format key from the
+  shared keychain (via `KeychainKeyStore`) and signs with the vendored secp256k1;
+  `UnavailableSigner` reports `notReady` when no key exists so the wallet fails loudly.
+- Added `RequestKind` (connect, message, typed-data, send, chain, denied, passthrough)
+  and per-kind canonical summaries (`ApprovalSummary.title/rows`); `WalletService.Summary`
+  now carries `kind`, `title`, ordered `rows`, and a `queued` flag.
+- Pending requests now persist under the shared App Group
+  (`PendingRequestStore.defaultAppGroup`) so the app and extension share durable records
+  and approvals survive service-worker suspension.
+- Approval is bound to request ID, kind, method, origin, chain, `payloadDigest`, expiry,
+  and unconsumed state. On approve, native code recomputes the canonical digest
+  (`CanonicalRequest` = keccak of request ID + canonical sorted-keys params) and rejects
+  any mutation; it rejects expired/queued/already-handled cases and recomputes the
+  signable digest (EIP-191, EIP-712, or transaction signing payload) before signing.
+- One active approval at a time in creation order (oldest approvable); the rest are
+  `queued`. `reject` maps to EIP-1193 `4001` and never signs.
+- Handler error mapping now covers 4100/4001/-32000/-32602/4200/4900. Background worker
+  classifies connect/sign/send/chain as approvals, denies unsafe methods with 4200, and
+  passes everything else through.
+- Popup renders canonical per-kind cards from native summaries (icon, title, host, rows,
+  queued state, danger warning) and submits only request ID + decision.
+- Added `EIP712` (v4 typed-data hashing) and `RequestExecutor` (pure digest/result
+  derivation per kind).
+
+### Verification
+
+- `swift test`: 63 tests / 13 suites pass. New `ApprovalTests` cover approve+consume,
+  duplicate approval, method-not-approved, max-with-unwanted deny, payload mutation
+  (bindingMismatch), expiry, queue order (oldest approvable, queued rejected), reject
+  (never consumed, 4001), and per-kind summaries.
+- `swift format --in-place --recursive Sources Tests` succeeded.
+- `stupid-app build` produces `StupidWallet.app` including the vendored C target and the
+  extension appex (arm64 ios min 17.0 sdk 26.1).
+- `node --check` passes for all four extension scripts.
+- All Route/tests for the JSON/RPC core still pass unmodified.
+
+### Follow-Up
+
+- Run the physical-device Gate 5 proof: drive each approval kind through the Safari
+  popup on an iPhone with a migrated wallet present, confirm popup > Face ID > sign /
+  reject binds to the canonical record, `4001` on reject, and queueing.
+- Wire wallet create/import (Gate 6) so a brand-new install has a key for the
+  `KeychainSigner` to sign with, and add transaction submission.
+
 ## 2026-08-22 - Scoped macOS Safari Surface
 
 ### Summary

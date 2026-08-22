@@ -18,9 +18,18 @@
     <h1>Test Dapp</h1>
     <p id="connectState">Not connected.</p>
     <p id="utfState">No provider injected yet.</p>
-    <button id="connect">eth_requestAccounts</button>
+
+    <h3>Approval kinds</h3>
+    <button id="connect">① Connect wallet</button>
+    <button id="sign">② Personal sign</button>
+    <button id="typed">Typed-data (EIP-712)</button>
+    <button id="send">Send transaction</button>
+    <button id="addChain">Add network</button>
+    <button id="switchChain">Switch network</button>
+    <button id="denied">Denied: eth_sign</button>
+
+    <h3>Read-only passthrough</h3>
     <button id="chain">eth_chainId</button>
-    <button id="sign">personal_sign</button>
     <button id="block">eth_blockNumber</button>
     <button id="gas">eth_gasPrice</button>
     <button id="balance">eth_getBalance</button>
@@ -76,6 +85,99 @@
             try { show(await window.ethereum.request({ method: "eth_chainId" })); }
             catch (e) { errorShow(e); }
         });
+        document.getElementById("typed").addEventListener("click", async () => {
+            try {
+                const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+                const address = accounts && accounts[0];
+                const sig = await window.ethereum.request({
+                    method: "eth_signTypedData_v4",
+                    params: [address, JSON.stringify({
+                        types: {
+                            EIP712Domain: [
+                                { name: "name", type: "string" },
+                                { name: "version", type: "string" },
+                                { name: "chainId", type: "uint256" },
+                                { name: "verifyingContract", type: "address" },
+                            ],
+                            Mail: [
+                                { name: "from", type: "Person" },
+                                { name: "to", type: "Person" },
+                                { name: "contents", type: "string" },
+                            ],
+                            Person: [
+                                { name: "name", type: "string" },
+                                { name: "wallet", type: "address" },
+                            ],
+                        },
+                        primaryType: "Mail",
+                        domain: {
+                            name: "Stupid Wallet Test",
+                            version: "1",
+                            chainId: 1,
+                            verifyingContract: "0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC",
+                        },
+                        message: {
+                            from: { name: "Cow", wallet: address },
+                            to: { name: "Bob", wallet: "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB" },
+                            contents: "Hello, Bob!",
+                        },
+                    })],
+                });
+                show(sig);
+                logLine("eth_signTypedData_v4", sig ? sig.slice(0, 20) + "…" : sig);
+            } catch (e) { errorShow(e); }
+        });
+        document.getElementById("send").addEventListener("click", async () => {
+            try {
+                const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+                const result = await window.ethereum.request({
+                    method: "eth_sendTransaction",
+                    params: [{
+                        from: accounts[0],
+                        to: "0x0000000000000000000000000000000000000001",
+                        value: "0x0",
+                        data: "0x",
+                    }],
+                });
+                show(result);
+                logLine("eth_sendTransaction", String(result).slice(0, 20) + "…");
+            } catch (e) { errorShow(e); }
+        });
+        document.getElementById("addChain").addEventListener("click", async () => {
+            try {
+                const result = await window.ethereum.request({
+                    method: "wallet_addEthereumChain",
+                    params: [{
+                        chainId: "0x89",
+                        chainName: "Polygon",
+                        nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
+                        rpcUrls: ["https://evm.stupidtech.net/v1/137"],
+                    }],
+                });
+                logLine("wallet_addEthereumChain", "sent");
+            } catch (e) { errorShow(e); }
+        });
+        document.getElementById("switchChain").addEventListener("click", async () => {
+            try {
+                const result = await window.ethereum.request({
+                    method: "wallet_switchEthereumChain",
+                    params: [{ chainId: "0x1" }],
+                });
+                logLine("wallet_switchEthereumChain", "sent");
+            } catch (e) { errorShow(e); }
+        });
+        if (document.getElementById("denied")) {
+            document.getElementById("denied").addEventListener("click", async () => {
+                try {
+                    await window.ethereum.request({ method: "eth_sign", params: ["0x", "0x00"] });
+                    logLine("eth_sign", "should NOT have resolved");
+                } catch (e) {
+                    logLine("eth_sign denied", `${e && e.code} · ${e && e.message}`);
+                    document.getElementById("result").textContent =
+                        "Denied: " + (e && e.code) + " " + (e && e.message);
+                }
+            });
+        }
         document.getElementById("sign").addEventListener("click", async () => {
             try {
                 const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });

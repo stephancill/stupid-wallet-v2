@@ -5,6 +5,44 @@
     const pending = new Map(); // requestId -> { sendResponse }
     let account = null;
 
+    // Method kinds that require the native approval surface. `eth_requestAccounts` is a
+    // connect; chain/switch/add/typed-data/send also approve. Everything else is
+    // classified locally or passed through.
+    const APPROVAL_METHODS = new Set([
+        "eth_requestaccounts",
+        "wallet_connect",
+        "personal_sign",
+        "eth_signtypeddata_v4",
+        "eth_sendtransaction",
+        "eth_addethereumchain",
+        "wallet_addethereumchain",
+        "wallet_switchethereumchain",
+        // Explicitly unsafe and intentionally unsupported:
+        "eth_sign",
+        "eth_signtransaction",
+        "eth_signtypeddata",
+        "eth_signtypeddata_v1",
+        "eth_signtypeddata_v3",
+    ]);
+    // These never reach an approval surface; they are unsupported on purpose.
+    const DENIED_METHODS = new Set([
+        "eth_sign",
+        "eth_signtransaction",
+        "eth_signtypeddata",
+        "eth_signtypeddata_v1",
+        "eth_signtypeddata_v3",
+    ]);
+    // With these methods the native handler returns a result that is not a signature;
+    // reject must map to EIP-1193 4001 and never present a signature.
+    const NON_SIGNING_APPROVALS = new Set([
+        "eth_requestaccounts",
+        "wallet_connect",
+        "eth_sendtransaction",
+        "eth_addethereumchain",
+        "wallet_addethereumchain",
+        "wallet_switchethereumchain",
+    ]);
+
     function originFrom(sender) {
         if (sender && sender.origin) return sender.origin;
         if (sender && sender.tab && sender.tab.url) {
@@ -17,7 +55,6 @@
         return "unknown";
     }
 
-    // The flat native envelope matches the app's SafariWebExtensionHandler.
     function native({ action, method, params, origin, chainId, payload } = {}) {
         const message = { action };
         if (method !== undefined) message.method = method;
@@ -69,14 +106,21 @@
                         payload: { requestId: message.requestId },
                     });
                     if (approved.ok && approved.data) {
-                        sendResponse({ ok: true, signature: approved.data.signature });
+                        sendResponse({ ok: true, result: approved.data.result });
                     } else {
-                        sendResponse({ ok: false, error: approved.error || "approval failed" });
+                        sendResponse({
+                            ok: false,
+                            error: approved.error || "approval failed",
+                            code: (approved.error && approved.error.code) || undefined,
+                        });
                     }
                     return;
                 case "popup.reject":
-                    await native({ action: "reject", payload: { requestId: message.requestId } });
-                    sendResponse({ ok: true });
+                    const rejected = await native({
+                        action: "reject",
+                        payload: { requestId: message.requestId },
+                    });
+                    sendResponse({ ok: !!rejected.ok });
                     return;
                 case "popup.resolve": {
                     const entry = pending.get(message.requestId);
@@ -106,25 +150,43 @@
         }
     }
 
-    async function route(message, sender, sendResponse) {
-        const method = message.method;
-        const me = await native({ action: "me" });
-        if (me.ok && me.data) account = me.data.account;
+    // The worker always replies to the bridge with a stable envelope so the bridge never
+    // guesses success vs failure. `result` preserves any JSON value, `error` carries only
+    // a structured EIP-1193 error (`{ code, message, data? }`).
+    function envelope(sendResponse, value) {
+        sendResponse({ __envelope: true, ...value });
+    }
 
-        if (method === "eth_accounts" || method === "eth_requestAccounts") {
-            sendResponse(account ? [account] : []);
+    async function route(message, sender, sendResponse) {
+        const method = (message.method || "").toLowerCase();
+
+        // Read-only account/chain reads resolve locally with the injected account.
+        if (method === "eth_accounts") {
+            const me = await native({ action: "me" });
+            envelope(sendResponse, { ok: true, result: me.ok && me.data ? [me.data.account] : [] });
             return;
         }
         if (method === "eth_chainId") {
-            sendResponse("0x1");
+            envelope(sendResponse, { ok: true, result: "0x1" });
             return;
         }
         if (method === "net_version") {
-            sendResponse("1");
+            envelope(sendResponse, { ok: true, result: "1" });
             return;
         }
 
-        if (method === "personal_sign") {
+        // Explicitly unsafe signing methods are always denied with EIP-1193 4200 and
+        // never reach authentication or signing.
+        if (DENIED_METHODS.has(method)) {
+            envelope(sendResponse, {
+                ok: false,
+                error: { code: 4200, message: "Method not supported by Stupid Wallet" },
+            });
+            return;
+        }
+
+        // Connect / signing / sending / chain-change methods are canonical approvals.
+        if (APPROVAL_METHODS.has(method)) {
             const prepared = await native({
                 action: "prepare",
                 method,
@@ -133,15 +195,17 @@
                 chainId: "1",
             });
             if (!prepared.ok) {
-                sendResponse({ error: { code: 4001, message: prepared.error } });
+                const code = (prepared.error && prepared.error.code) || 4001;
+                const msg = (prepared.error && prepared.error.message) || String(prepared.error || "approval failed");
+                envelope(sendResponse, { ok: false, error: { code, message: msg } });
                 return;
             }
             const requestId = prepared.data.requestId;
             pending.set(requestId, { sendResponse });
             setBadge(String(pending.size));
-            // Hand the requestId to the bridge immediately; the bridge then polls
-            // the native store for the result, so completion survives worker suspension.
-            sendResponse({ __pendingId: requestId });
+            // Hand the requestId to the bridge immediately; the bridge then polls the
+            // native store for the result, so completion survives worker suspension.
+            envelope(sendResponse, { ok: true, pendingId: requestId });
             return;
         }
 
@@ -156,13 +220,18 @@
             chainId: "1",
         });
         if (passthrough.ok && passthrough.data && passthrough.data.result !== undefined) {
-            sendResponse(passthrough.data.result);
+            envelope(sendResponse, { ok: true, result: passthrough.data.result });
             return;
         }
-        const nodeError = passthrough ? passthrough.error : { code: -32603, message: "no response" };
-        const code = nodeError && typeof nodeError === "object" && nodeError.code
-            ? nodeError.code : -32603;
-        sendResponse({ error: nodeError, code });
+        const nodeError = passthrough ? passthrough.error
+            : { code: -32603, message: "no response" };
+        let e;
+        if (nodeError && typeof nodeError === "object" && nodeError.code !== undefined) {
+            e = nodeError;
+        } else {
+            e = { code: -32603, message: String(nodeError) };
+        }
+        envelope(sendResponse, { ok: false, error: e });
     }
 
     function getPending(sendResponse) {

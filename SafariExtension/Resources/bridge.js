@@ -16,10 +16,16 @@
             .sendMessage({ type: "ethereum.request", method: data.method, params: data.params })
             .then(
                 (result) => {
-                    if (result && typeof result.__pendingId === "string") {
-                        pollPending(data.id, result.__pendingId);
+                    if (!result || result.__envelope !== true) {
+                        respond(data.id, false, "Unexpected extension response");
+                        return;
+                    }
+                    if (result.ok && result.pendingId) {
+                        pollPending(data.id, result.pendingId);
+                    } else if (result.ok) {
+                        respond(data.id, true, result.result);
                     } else {
-                        respond(data.id, true, result);
+                        respond(data.id, false, errorShape(result.error));
                     }
                 },
                 (error) => respond(data.id, false, errorMessage(error))
@@ -109,9 +115,25 @@ async function pollPending(id, requestId) {
 
     function respond(id, ok, payload) {
         const message = { __channel: DST_CHANNEL, id, ok };
-        if (ok) message.result = payload;
-        else message.error = payload;
+        if (ok) {
+            message.result = payload;
+        } else {
+            if (payload && typeof payload === "object" && payload.code !== undefined) {
+                message.error = payload.message || "Stupid Wallet error";
+                message.code = payload.code;
+            } else {
+                message.error = payload;
+            }
+        }
         window.postMessage(message, "*");
+    }
+
+    // Normalize a structured error into `{ message, code }` for the page provider.
+    function errorShape(err) {
+        if (err && typeof err === "object") {
+            return { message: err.message || String(err), code: err.code };
+        }
+        return { message: String(err || "Unknown error") };
     }
 
     function errorMessage(error) {

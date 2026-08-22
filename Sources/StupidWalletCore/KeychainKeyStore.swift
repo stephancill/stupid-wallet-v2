@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// Shared secure storage for new-format wallet key material.
@@ -14,7 +15,7 @@ import Security
 /// continuity is proven in the device gates.
 public final class KeychainKeyStore: Sendable {
   public enum StorageError: Error, Equatable {
-    case saveFailed
+    case saveFailed(OSStatus = 0)
     case readFailed
     case notFound
     case deleteFailed
@@ -39,7 +40,7 @@ public final class KeychainKeyStore: Sendable {
       &accessError
     )
     guard accessControl != nil else {
-      throw StorageError.saveFailed
+      throw StorageError.saveFailed()
     }
 
     var query: [String: Any] = [
@@ -52,29 +53,66 @@ public final class KeychainKeyStore: Sendable {
     query[kSecAttrAccessGroup as String] = accessGroup
 
     let status = SecItemAdd(query as CFDictionary, nil)
-    guard status == errSecSuccess else { throw StorageError.saveFailed }
+    guard status == errSecSuccess else { throw StorageError.saveFailed(status) }
   }
 
-  /// Reads and auto-decrypts the key. Callers must present a fresh, valid authenticated
-  /// `LAContext` (or follow Security framework callback authentication) and release the
-  /// returned bytes promptly.
+  /// Reads and auto-decrypts the key with a fresh, authenticated `LAContext` bound to the
+  /// read. Release the returned bytes promptly. Yes, presents the device-owner Face ID /
+  /// passcode prompt once per call.
   public func load(account: String) throws -> [UInt8] {
+    let context = LAContext()
+    context.localizedReason = "Unlock your wallet to sign"
     var query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
       kSecReturnData as String: true,
       kSecMatchLimit as String: kSecMatchLimitOne,
+      kSecUseAuthenticationContext as String: context,
+      kSecUseAuthenticationUI as String: kSecUseAuthenticationUIAllow,
     ]
     query[kSecAttrAccessGroup as String] = accessGroup
 
     var item: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &item)
+    context.invalidate()
     guard status == errSecSuccess, let data = item as? Data else {
       throw storageError(status)
     }
     let key = [UInt8](data)
     return key
+  }
+
+  /// Whether a key exists for `account` without attempting to release its bytes. This is
+  /// an existence probe only: it does not present the device-owner prompt, unlike
+  /// `load`, so it is safe to call ahead of an approval.
+  public func contains(account: String) -> Bool {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: false,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    query[kSecAttrAccessGroup as String] = accessGroup
+    return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+  }
+
+  /// All accounts that have a key stored under this service and access group.
+  /// Used to discover the active wallet's signing key for its insecure-against-each-key
+  /// exclusive read path when no registry entry exists yet.
+  public func accounts() -> [String] {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecReturnAttributes as String: true,
+      kSecMatchLimit as String: kSecMatchLimitAll,
+    ]
+    query[kSecAttrAccessGroup as String] = accessGroup
+    var result: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    guard status == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
+    return items.compactMap { $0[kSecAttrAccount as String] as? String }
   }
 
   public func delete(account: String) {

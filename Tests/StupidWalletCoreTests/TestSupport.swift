@@ -51,3 +51,19 @@ func httpResponse(_ status: Int = 200) -> HTTPURLResponse {
     url: URL(string: "https://example.com/rpc")!, statusCode: status,
     httpVersion: "HTTP/1.1", headerFields: nil)!
 }
+
+/// Deterministic signing stub for approval tests: returns a fixed 65-byte signature.
+struct StubSigner: Signing {
+  var account: String
+  var hasKeyValue = true
+  init(account: String = "0x1234567890abcdef1234567890abcdef12345678") {
+    self.account = account
+  }
+  func hasKey() -> Bool { hasKeyValue }
+  func signDigest(_ digest: [UInt8]) throws -> [UInt8] {
+    guard hasKeyValue else { throw SigningError.missingKey(account: account) }
+    var sig = [UInt8](repeating: 0, count: 65)
+    sig[64] = 27 + (digest[0] & 0x01)
+    return sig
+  }
+}

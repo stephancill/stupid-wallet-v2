@@ -1,7 +1,8 @@
 import Foundation
 
 /// Canonical, one-time pending signing request. Crucially the popup never supplies
-/// signing params; native code reloads this persisted record and verifies it.
+/// signing params; native code reloads this persisted record, recomputes the digest, and
+/// verifies it matches the record before signing.
 public struct WalletPendingRequest: Sendable, Codable, Equatable {
   public enum Status: String, Sendable, Codable {
     case pending
@@ -11,11 +12,13 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
   }
 
   public let id: UUID
+  public let kind: RequestKind
   public let method: String
   public let origin: String
   public let chainId: String
   public let account: String
   public let params: JSONValue
+  public let payloadDigest: String
   public let createdAt: Date
   public let expiresAt: Date
   public var status: Status
@@ -25,22 +28,26 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
 
   public init(
     id: UUID = UUID(),
+    kind: RequestKind,
     method: String,
     origin: String,
     chainId: String,
     account: String,
     params: JSONValue,
+    payloadDigest: String,
     createdAt: Date = Date(),
     expiresAt: Date = Date().addingTimeInterval(600),
     status: Status = .pending,
     result: JSONValue? = nil
   ) {
     self.id = id
+    self.kind = kind
     self.method = method
     self.origin = origin
     self.chainId = chainId
     self.account = account
     self.params = params
+    self.payloadDigest = payloadDigest
     self.createdAt = createdAt
     self.expiresAt = expiresAt
     self.status = status
@@ -48,14 +55,23 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
   }
 }
 
-/// Persists pending requests inside the extension process sandbox.
-/// In production this should move under the shared App Group container.
+/// Persists pending requests under the shared App Group container so the app and
+/// extension read/write the same durable records across processes and service-worker
+/// suspension. Falls back to the extension process sandbox only when no App Group ID is
+/// configured (e.g. in hermetic tests that pass an explicit directory).
 public actor PendingRequestStore {
+  public static let defaultAppGroup = "group.co.za.stephancill.stupid-wallet"
+  private static let fallbackAppGroup = defaultAppGroup
+
   private let directory: URL
 
-  public init(directory: URL? = nil) {
+  public init(directory: URL? = nil, appGroupID: String = PendingRequestStore.defaultAppGroup) {
     if let directory {
       self.directory = directory
+    } else if let container = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: appGroupID
+    ) {
+      self.directory = container.appendingPathComponent("PendingRequests")
     } else {
       let base = FileManager.default.urls(
         for: .applicationSupportDirectory, in: .userDomainMask

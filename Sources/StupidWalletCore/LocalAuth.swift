@@ -29,7 +29,7 @@ public enum LocalAuthenticator {
 
   #if canImport(LocalAuthentication)
     private static func runDevicePolicy(
-      reason: String, completion: @escaping (Swift.Result<Void, Error>) -> Void
+      reason: String, completion: @escaping @Sendable (Swift.Result<Void, Error>) -> Void
     ) {
       let context = LAContext()
       context.localizedReason = reason

@@ -65,6 +65,7 @@ public struct SecurityWalletBackend: OldWalletBackend {
       throw WalletMigrationFailure.saveFailed
     }
     defaults().set(account, forKey: constants.newWalletKey)
+    WalletStore.setAddress(account, appGroup: appGroup)
   }
 
   public func loadKey(account: String) throws -> [UInt8] {
@@ -135,7 +136,7 @@ public struct SecurityWalletBackend: OldWalletBackend {
 
   private struct BackendConstants {
     let oldAddressKey = "walletAddress"
-    let newWalletKey = "sw2.walletAddress"
+    let newWalletKey = WalletFactory.walletAddressKey
     let migratedKey = "sw2.authenticatedMigration"
     let pendingKey = "sw2.authenticatedMigration.pending"
   }

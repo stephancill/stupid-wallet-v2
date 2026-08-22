@@ -23,6 +23,19 @@ struct ContentView: View {
         Task { await runSelfTest() }
       }
       .buttonStyle(.borderedProminent)
+      Button("Create a wallet") {
+        phase = "Running"
+        log = ""
+        Task { @MainActor in
+          do {
+            let address = try WalletFactory.create()
+            log = "Created wallet\naddress \(address)"
+          } catch {
+            log = "FAIL: \(error)"
+          }
+          phase = "Done"
+        }
+      }
       Button("Run 4-old→new migration") {
         phase = "Running"
         log = ""

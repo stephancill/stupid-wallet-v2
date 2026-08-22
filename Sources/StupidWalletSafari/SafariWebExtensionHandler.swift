@@ -6,11 +6,27 @@ import StupidWalletCore
 /// Each message is a JSON envelope under `SFExtensionMessageKey`. This handler is an
 /// orchestrator only; it never reimplements policy, serialization, or signing.
 public final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
-  private let service: WalletService
-
   public override init() {
-    service = WalletService()
     super.init()
+  }
+
+  /// Builds the `Signing` capability from the wallet state at the moment of the request.
+  /// The active account is resolved lazily from the App Group default so a wallet created
+  /// (or migrated) after the extension process was launched is picked up, and so the
+  /// `.keychain` `.usePresence` item is never touched for an existence probe.
+  private static func makeSigning() -> any Signing {
+    let store = KeychainKeyStore()
+    // The active address is read from the shared App Group file first (works reliably
+    // across app and extension processes), with a UserDefaults fallback for pre-existing
+    // wallets written before the file store existed.
+    let address =
+      WalletStore.activeAddress()
+      ?? UserDefaults(suiteName: PendingRequestStore.defaultAppGroup)?
+      .string(forKey: WalletFactory.walletAddressKey)
+    if let address {
+      return KeychainSigner(account: address, store: store)
+    }
+    return UnavailableSigner()
   }
 
   public func beginRequest(with context: NSExtensionContext) {
@@ -23,7 +39,8 @@ public final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandli
     }
 
     let envelope = Envelope.parse(message)
-    let service = self.service
+    // A fresh service per native message resolves the current wallet account lazily.
+    let service = WalletService(signing: Self.makeSigning())
     let box = ContextBox(context)
     Task {
       let response = await Server.dispatch(service: service, envelope: envelope)
@@ -43,7 +60,7 @@ private enum Server {
   static func dispatch(service: WalletService, envelope: Envelope) async -> JSONValue {
     switch envelope.action {
     case "me":
-      return success(["account": .string(service.account.address)])
+      return success(["account": .string(service.account)])
 
     case "passthrough":
       let method = envelope.method ?? ""
@@ -64,20 +81,7 @@ private enum Server {
     case "list":
       do {
         let summaries = try await service.list()
-        let items = summaries.map { summary -> JSONValue in
-          var o: [String: JSONValue] = [
-            "id": .string(summary.id),
-            "method": .string(summary.method),
-            "origin": .string(summary.origin),
-            "chainId": .string(summary.chainId),
-            "account": .string(summary.account),
-          ]
-          if let message = summary.message {
-            o["message"] = .string(message)
-          }
-          return .object(o)
-        }
-        return success(["pending": .array(items)])
+        return success(["pending": .array(summaries.map(summaryJSON))])
       } catch {
         return failure("list failed")
       }
@@ -93,34 +97,38 @@ private enum Server {
           chainId: envelope.chainId ?? "1"
         )
         return success(["requestId": .string(id.uuidString)])
+      } catch WalletError.methodNotApproved {
+        return errorJSON(4200, "Method not approved")
+      } catch WalletError.notReady {
+        return errorJSON(4900, "No wallet key is available yet")
       } catch {
         return failure("prepare failed")
       }
 
     case "summary":
       guard let uuid = envelope.requestID() else { return failure("invalid requestId") }
-      do {
-        let summary = try await service.summary(for: uuid)
-        var object: [String: JSONValue] = [
-          "id": .string(summary.id),
-          "method": .string(summary.method),
-          "origin": .string(summary.origin),
-          "chainId": .string(summary.chainId),
-          "account": .string(summary.account),
-        ]
-        if let message = summary.message {
-          object["message"] = .string(message)
-        }
-        return success(object)
-      } catch {
-        return failure("summary failed")
+      guard let summary = try? await service.summarize(request: uuid) else {
+        return failure("not found")
       }
+      return successObject(summaryJSON(summary))
 
     case "approve":
       guard let uuid = envelope.requestID() else { return failure("invalid requestId") }
       do {
-        let signature = try await service.approve(request: uuid)
-        return success(["signature": signature])
+        let result = try await service.approve(request: uuid)
+        return success(["result": result])
+      } catch WalletError.notFound {
+        return errorJSON(4100, "Request no longer exists")
+      } catch WalletError.alreadyConsumed {
+        return errorJSON(4001, "Request already handled")
+      } catch WalletError.expired {
+        return errorJSON(4001, "Request expired")
+      } catch WalletError.queued {
+        return errorJSON(-32000, "An earlier request must be handled first")
+      } catch WalletError.bindingMismatch {
+        return errorJSON(-32602, "Request payload changed")
+      } catch WalletError.authCancelled {
+        return errorJSON(4001, "User rejected")
       } catch {
         return failure("approve failed")
       }
@@ -150,12 +158,43 @@ private enum Server {
     }
   }
 
+  private static func summaryJSON(_ summary: WalletService.Summary) -> JSONValue {
+    .object([
+      "id": .string(summary.id),
+      "kind": .string(summary.kind),
+      "method": .string(summary.method),
+      "origin": .string(summary.origin),
+      "chainId": .string(summary.chainId),
+      "account": .string(summary.account),
+      "title": .string(summary.title),
+      "queued": .bool(summary.queued),
+      "rows": .array(
+        summary.rows.map {
+          .object(["label": .string($0.label), "value": .string($0.value)])
+        }),
+    ])
+  }
+
   static func success(_ data: [String: JSONValue]) -> JSONValue {
     .object(["ok": .bool(true), "data": .object(data)])
   }
 
+  static func successObject(_ object: JSONValue) -> JSONValue {
+    .object(["ok": .bool(true), "data": object])
+  }
+
   static func failure(_ message: String) -> JSONValue {
     .object(["ok": .bool(false), "error": .string(message)])
+  }
+
+  static func errorJSON(_ code: Int, _ message: String) -> JSONValue {
+    .object([
+      "ok": .bool(false),
+      "error": .object([
+        "code": .number(Double(code)),
+        "message": .string(message),
+      ]),
+    ])
   }
 }
 

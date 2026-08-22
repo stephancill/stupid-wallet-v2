@@ -48,18 +48,46 @@ cross-implementation vector byte-for-byte; the EIP-1559 preimage/hash cross-chec
 released a self-test key on an on-device generate → save → reload-with-authentication →
 re-derive → sign+recover run.
 
-Gate 4 (upgrade migration) code is in place with the device step outstanding: a
-hermetic-testable `WalletMigration` state machine plus `SecurityWalletBackend` that reads
-the old persisted format (address in defaults, ECIES ciphertext in a generic-password
-item, Secure Enclave P-256 decrypt with
-`.eciesEncryptionCofactorVariableIVX963SHA256AESGCM`), re-derives and compares the
-address, saves in the new format, requires an authenticated sign-and-recover proof before
-completion, and retains old material until explicit cleanup. Migration unit tests cover
-detection, malformed/wrong/cancelled cases, idempotency, and cleanup safety. The physical
-in-place upgrade of a real old-format wallet remains to be run.
+Gate 4 (upgrade migration) exit conditions are met on a physical device: an old-format
+wallet installed on the iPhone was upgraded in place by the new app, the recovered
+address matched the old wallet, and a new-format authenticated signature verified against
+it. The migration state machine plus `SecurityWalletBackend` read the old persisted
+format (address in defaults, ECIES ciphertext in a generic-password item, Secure Enclave
+P-256 decrypt with `.eciesEncryptionCofactorVariableIVX963SHA256AESGCM`), required an
+authenticated sign-and-recover proof before completion, and retained old material until
+explicit cleanup. A duplicate decrypt was removed so a successful run shows exactly two
+Face ID/passcode prompts.
+
+Gate 5 (canonical approval protocol) code is in place with download device steps:
+- Pending requests move into the shared App Group
+  (`PendingRequestStore.defaultAppGroup = group.co.za.stephancill.stupid-wallet`), so the
+  app and extension read/write the same durable records and pending requests survive
+  service-worker suspension.
+- The canonical review surface (`RequestKind`, `WalletPendingRequest.kind` and
+  `payloadDigest`) renders per-kind native summaries via `ApprovalSummary.title/rows` for
+  connect, message, typed-data, send, and chain requests. `WalletService.Summary` carries
+  `kind`, `title`, ordered `rows`, a `queued` flag, and the active-head queue.
+- Approval is bound to request ID, kind, method, origin, chain, `payloadDigest` (keccak
+  of the request ID + canonical sorted-key params), expiry, and unconsumed state. On
+  approve, native code reloads the canonical record, rejects if expired/queued/non-pending,
+  recomputes the digest and rejects `bindingMismatch` on any mutation, recomputes the
+  signable digest (`RequestExecutor`), authenticates, signs, and atomically consumes.
+- One active approval at a time in creation order: only the oldest pending record can be
+  approved; earlier ones throw `queued`. Reject marks `rejected`, maps to EIP-1193 `4001`
+  in the handler, and never invokes signing.
+- Signing is now real: `Signing` is an injected protocol; production uses
+  `KeychainSigner` (loads the shared-key new-format key and signs through the vendored
+  secp256k1). `UnavailableSigner` reports not-ready loudly when no key exists.
+- Error mapping in `SafariWebExtensionHandler` covers not-found (4100), already-consumed/
+  expired/auth-cancelled (4001), queued/binding-mismatch (‑32000/‑32602), and
+  not-ready (4900). Denied methods never prepare.
+
+The physical half of Gate 5 (popup approvals on a device binding to canonical records)
+remains to be run, so the gate's "prove popup approvals bind" step is outstanding until
+that is done.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
-  a canonical pending-request store, and a mock signer plus a fresh-`LAContext` local
-  authentication boundary.
+  a canonical pending-request store, real `Signing` (KeychainSigner) plus fresh-`LAContext`
+  keychain access as the single device-owner authentication boundary.
 - `StupidWalletSafari`: a native Safari Web Extension handler (`NSExtensionRequestHandling`)
   that bridges flat JSON envelopes to `StupidWalletCore`.
 - A Safari Web Extension resource set (`manifest.json`, MAIN-world `provider.js`,
@@ -68,11 +96,23 @@ in-place upgrade of a real old-format wallet remains to be run.
 - An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
 - `PrototypeDapp/index.html` for driving requests from Safari.
 
-The prototype is not gate-complete past Gate 3, with Gate 4 migration core landed and its
-device step outstanding; it preserves the identity, security, and documentation rules, is
-signed for the physical device, and its Safari messaging/popup/Face ID, JSON/RPC proxy,
-key/transaction/crypto primitives, and old-format readable path all work. Production work
-must finish Gate 4 and the remaining gates before release.
+As of Gate 5 fixing: the signing path reads the `.userPresence` keychain exactly once, only
+at the moment of signing; `Signer.hasKey()` resolves the active wallet from the non-secret
+shared App Group file (`WalletStore.wallet-address.conf`) and never presents Face ID.
+`WalletService`/signer are built lazily per native message so a wallet created after the
+extension started is resolved. The background ↔ bridge boundary uses a stable envelope so
+structured EIP-1193 errors surface on the dapp; the method casing is normalized in
+`background.js` so approval methods do not fall through to RPC passthrough. `WalletFactory`
+creates a new wallet at runtime.
+
+The prototype is not fully gate-complete past Gate 5: the connect and personal_sign
+approval loop (popup card → Face ID → signature) is now proven on the iOS simulator, with
+typed-data/send/chain and the reject path implemented and unit-tested but not yet driven
+through the popup. It preserves the identity, security, and documentation rules and its
+Safari messaging/popup/Face ID, JSON/RPC proxy, key/transaction/crypto primitives,
+old-format migration, canonical approval protocol, and real keychain signing all work.
+The physical device remains the authoritative surface for provisioning and keychain-group
+continuity.
 
 The existing implementation in `../ios-wallet` is a behavior and migration reference,
 not a codebase to copy wholesale. It contains useful feature work, protocol handling,
@@ -84,13 +124,14 @@ boundaries are intentionally being redesigned.
 The prototype is deliberately mock in several places and must not be confused with
 gate-proven behavior:
 
-- Pending requests are stored in the extension handler's Application Support directory for
-  convenience; production moves them under the shared App Group container.
-- `personal_sign` returns a deterministic, clearly-labeled mock signature (no secp256k1).
+- Pending requests are stored in the shared App Group container.
+- `personal_sign`, `eth_signTypedData_v4`, and `eth_sendTransaction` sign through the real
+  `KeychainSigner` (shared-keychain key + vendored secp256k1). On a fresh install with no
+  key present, signing reports `notReady` rather than mocking.
 - The Face ID/passcode step is a real `LAContext` device-owner prompt on both device and
-  simulator; the simulator shows the genuine system authentication prompt.
-- The service worker keeps its pending map in memory; durable cross-suspension routing is
-  deferred to Gate 5.
+  simulator. On-device popup->approval proof for the full Gate 5 set is still outstanding.
+- The service worker keeps its pending map in memory for completion routing; durable
+  delivery across suspension is verified by the native store + polling.
 
 ## Product Goal
 
@@ -718,14 +759,14 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Finish Gate 4 with a physical in-place migration run: upgrade a real old-format wallet,
-   assert the address is unchanged, and confirm a new-format authenticated signature
-   verifies against that address (the state machine and Security/ECIES backend are done
-   and hermetically tested).
-2. Gate 5 (canonical approval protocol) — replace the mock signer with the real
-   `KeychainKeyStore` + `EthereumSigner` path and prove popup approvals bind to canonical
-   pending records.
-3. Gate 6 and later per the implementation gates.
+1. Finish Gate 5's physical proof: on the iPhone, drive connect/message/typed-data/
+   send/chain approvals through the Safari popup and confirm each binds to its canonical
+   pending record, rejects map to `4001`, and the queued policy holds. Confirm the shared
+   App Group pending store is readable by both the app and extension.
+2. Gate 6 (Secure Wallet Core): add create/import/backup flows, site connect/disconnect
+   grants keyed by normalized origin, and real transaction broadcast so
+   `eth_sendTransaction` submits rather than returning a signed payload.
+3. Gate 7 and later per the implementation gates.
 
 ## Reference Sources
 
