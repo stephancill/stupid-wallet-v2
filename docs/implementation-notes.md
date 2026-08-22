@@ -99,6 +99,28 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Device Launch Confirmed
+
+### Summary
+
+- The installed rebuild launched on the physical iPhone (icon tap), closing the
+  "launch over tunnel" caveat recorded earlier the same day. The device now runs the
+  `Stupid Wallet` foreground app with the Safari extension appex installed and signed.
+
+### Why
+
+- The physical device is the only credible surface for the Gate 1 popup + Face ID proof.
+
+### Verification
+
+- Confirmed manually on-device that the app opens.
+
+### Follow-Up
+
+- Continue Gate 1: enable the Safari extension in device Settings, drive
+  `PrototypeDapp`, and verify EIP-6963 discovery, the toolbar popup, `LAContext`
+  prompt, and signature completion while Safari stays foregrounded.
+
 ## 2026-08-22 - Device Signing Unblocked (Entitlement Fix)
 
 ### Summary
