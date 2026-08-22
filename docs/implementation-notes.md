@@ -99,6 +99,37 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Gate 3 Cross-Implementation Transaction Vectors
+
+### Summary
+
+- Verified legacy and EIP-1559 transaction signing preimages against independent
+  implementations.
+- Legacy: the canonical signing preimage for the EIP-155 example tx matched a
+  cross-implementation vector byte-for-byte, and its hash `daf5a779…` agreed across viem
+  and `cast keccak`.
+- EIP-1559: produced the canonical 12-field preimage (empty access list `c0`); hashing it
+  with `cast keccak` independently reproduces the pinned digest. (viem's `toRlp` renders an
+  empty array as `80` rather than `c0`, so it is not a reliable EIP-1559 access-list
+  oracle; the canonical bytes were cross-checked via `cast keccak` instead.)
+- Fixed a real encoding bug found by the vectors: integer zero must be RLP-encoded as an
+  empty byte string (`0x80`), not a single `0x00` byte, in quantity fields such as nonce.
+
+### Why
+
+- Gate 3 requires every serialization primitive to pass cross-implementation vectors.
+
+### Verification
+
+- `swift test`: 43 tests / 11 suites pass. Legacy payload bytes and digest and the
+  EIP-1559 payload bytes/digest are pinned against `cast keccak`; the legacy vector also
+  matches viem exactly.
+
+### Follow-Up
+
+- Gate 3's only outstanding item is physical: prove `KeychainKeyStore` user-presence key
+  release + shared-access-group continuity for app and extension on a device.
+
 ## 2026-08-22 - Gate 3 Primitives: Vendored secp256k1 + Ethereum Core
 
 ### Summary

@@ -42,10 +42,10 @@ serialization core landed: vendored `libsecp256k1` (v0.5.1) builds as the `CSecp
 SwiftPM C target; project-owned Keccak-256, RLP, EIP-191, EIP-712 struct hashing, and
 legacy/EIP-1559 transaction serialization; key generation, address derivation, EIP-55,
 recoverable signing, and recovery through the vendored target — all verified against
-independent vectors or cross-checked with `cast`. New-format key storage in the shared
-keychain (`KeychainKeyStore`, `.userPresence` + `ThisDeviceOnly`) is implemented but not
-yet proven on a physical device, and cross-implementation transaction hash vectors are
-still outstanding.
+independent vectors or cross-checked with `cast`; the legacy transaction verification
+preimage matched a cross-implementation vector byte-for-byte. New-format key storage in
+the shared keychain (`KeychainKeyStore`, `.userPresence` + `ThisDeviceOnly`) is
+implemented but not yet proven on a physical device.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, and a mock signer plus a fresh-`LAContext` local
   authentication boundary.
@@ -707,10 +707,10 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Finish Gate 3: pin cross-implementation transaction (legacy and EIP-1559) signing-hash
-   vectors, then prove on a physical device that new-format keys stored via
-   `KeychainKeyStore` require Face ID or passcode (no auth reuse, no plaintext), and that
-   the shared keychain access group is readable by both the app and the extension.
+1. Finish Gate 3 with the device-bound proof: confirm on a physical device that new-format
+   keys stored via `KeychainKeyStore` require Face ID or passcode (no auth reuse, no
+   plaintext), and that the shared keychain access group is writable/readable by both the
+   app and the Safari extension.
 2. Gate 4 (upgrade migration) — read the old Secure Enclave ECIES ciphertext through
    Security and migrate to the new format with an authenticated sign-and-recover proof.
 3. Gate 5 (canonical approval protocol) — replace the mock signer with the real

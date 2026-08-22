@@ -152,11 +152,11 @@ public struct EIP1559Transaction: Sendable {
 }
 
 extension RLP {
-  /// Normalizes an integer byte array to minimal big-endian form (strip leading zeros).
+  /// Normalizes an integer byte array to minimal big-endian form. Canonical zero is an
+  /// empty byte string (RLP 0x80), not a 0x00 byte.
   static func trimQuantity(_ bytes: [UInt8]) -> [UInt8] {
     var bytes = bytes
     while bytes.first == 0 { bytes.removeFirst() }
-    if bytes.isEmpty { return [0x00] }
     return bytes
   }
 }

@@ -36,6 +36,18 @@ struct EIP1559TransactionTests {
     let recovered = try EthereumSigner.recoverAddress(digest: digest, signature: signature)
     #expect(recovered == pair.address)
   }
+
+  @Test("EIP-1559 preimage (chain 1, empty access list) hashes to the canonical digest")
+  func crossImpl() throws {
+    let payload = try tx().signingPayload()
+    #expect(
+      Hex.encode(payload) == "02f20180843b9aca008477359400825208943535353535353535353535353535"
+        + "353535353535880de0b6b3a764000080c0808080")
+    // Cross-checked independently via `cast keccak` over the canonical bytes.
+    #expect(
+      Hex.encode(Keccak.keccak256(payload))
+        == "1cd747edb94994e95abd451af0167d0ec952ba615a8b628eb3ac905a4a583cb9")
+  }
 }
 
 struct LegacyTransactionTests {
@@ -64,5 +76,16 @@ struct LegacyTransactionTests {
     let signature = try EthereumSigner.sign(digest: digest, keypair: pair)
     let recovered = try EthereumSigner.recoverAddress(digest: digest, signature: signature)
     #expect(recovered == pair.address)
+  }
+
+  @Test("legacy preimage matches the viem cross-implementation vector")
+  func _canonical() throws {
+    let payload = try tx().signingPayload()
+    #expect(
+      Hex.encode(payload) == "ec098504a817c800825208943535353535353535353535353535353535353535"
+        + "880de0b6b3a764000080018080")
+    #expect(
+      Hex.encode(Keccak.keccak256(payload))
+        == "daf5a779ae972f972197303d7b574746c7ef83eadac0f2791ad23db92e4c8e53")
   }
 }
