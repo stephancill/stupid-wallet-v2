@@ -24,6 +24,14 @@ public enum Hex {
     }
     return bytes
   }
+
+  public static func quantityData(hex: String) -> [UInt8]? {
+    var cleaned = hex.lowercased()
+    if cleaned.hasPrefix("0x") { cleaned.removeFirst(2) }
+    guard !cleaned.isEmpty, cleaned.allSatisfy({ $0.isHexDigit }) else { return nil }
+    if !cleaned.count.isMultiple(of: 2) { cleaned.insert("0", at: cleaned.startIndex) }
+    return data(cleaned)
+  }
 }
 
 /// Ethereum account keys derived through the vendored secp256k1 target.

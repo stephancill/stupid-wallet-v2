@@ -22,8 +22,8 @@ struct ApprovalTests {
   private func prepareMessage(
     _ svc: WalletService,
     params: JSONValue = .array([
-      .string("0x1234"),
       .string("0x" + Data("hello".utf8).map { String(format: "%02x", $0) }.joined()),
+      .string("0x1234"),
     ])
   ) async throws -> UUID {
     try await svc.prepare(
@@ -77,8 +77,8 @@ struct ApprovalTests {
       chainId: original.chainId,
       account: original.account,
       params: .array([
-        .string("0x1234"),
         .string("0x" + Data("evil".utf8).map { String(format: "%02x", $0) }.joined()),
+        .string("0x1234"),
       ]),
       payloadDigest: original.payloadDigest,
       createdAt: original.createdAt,
@@ -177,5 +177,62 @@ struct ApprovalTests {
     let summary = try await svc.summarize(request: id)
     #expect(summary?.kind == "send")
     #expect(summary?.title == "Send transaction")
+  }
+
+  @Test("personal_sign with standard [messageHex, address] params signs the message")
+  func standardPersonalSignParams() async throws {
+    let svc = service()
+    let message = "standard order message"
+    let messageHex = "0x" + Data(message.utf8).map { String(format: "%02x", $0) }.joined()
+    let id = try await svc.prepare(
+      method: "personal_sign",
+      params: .array([
+        .string(messageHex),
+        .string("0x1234567890abcdef1234567890abcdef12345678"),
+      ]),
+      origin: "https://dapp.example")
+    let result = try await svc.approve(request: id)
+    #expect(result.stringValue?.hasPrefix("0x") == true)
+    // The summary displays the decoded UTF-8 message from params[0].
+    let summary = try await svc.summarize(request: id)
+    #expect(summary?.rows.contains { $0.label == "Message" && $0.value == message } == true)
+  }
+
+  @Test("eth_signTypedData_v4 accepts the standard [address, jsonString] params")
+  func standardTypedDataParams() async throws {
+    let svc = service()
+    let typedJSON = """
+      {"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"}],"Mail":[{"name":"contents","type":"string"}]},"primaryType":"Mail","domain":{"name":"Test","version":"1","chainId":1},"message":{"contents":"Hello, Bob!"}}
+      """
+    let id = try await svc.prepare(
+      method: "eth_signTypedData_v4",
+      params: .array([
+        .string("0x1234567890abcdef1234567890abcdef12345678"),
+        .string(typedJSON),
+      ]),
+      origin: "https://dapp.example")
+    let result = try await svc.approve(request: id)
+    #expect(result.stringValue?.hasPrefix("0x") == true)
+    let summary = try await svc.summarize(request: id)
+    #expect(summary?.rows.contains { $0.label == "Domain" && $0.value == "Test" } == true)
+  }
+
+  @Test("wallet_addEthereumChain accepts standard [chainObject] params")
+  func standardChainParams() async throws {
+    let svc = service()
+    let id = try await svc.prepare(
+      method: "wallet_addEthereumChain",
+      params: .array([
+        .object([
+          "chainId": .string("0x89"),
+          "chainName": .string("Polygon"),
+          "rpcUrls": .array([.string("https://evm.stupidtech.net/v1/137")]),
+        ])
+      ]),
+      origin: "https://dapp.example")
+    let summary = try await svc.summarize(request: id)
+    #expect(summary?.title == "Add network")
+    #expect(summary?.rows.contains { $0.label == "Chain ID" && $0.value == "0x89" } == true)
+    #expect(summary?.rows.contains { $0.label == "Name" && $0.value == "Polygon" } == true)
   }
 }

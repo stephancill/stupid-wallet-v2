@@ -84,7 +84,7 @@ public enum ApprovalSummary {
 
   private static func messageDisplay(_ params: JSONValue) -> String {
     guard case .array(let a) = params, a.count >= 2,
-      case .string(let hex) = a[1]
+      case .string(let hex) = a[0]
     else { return "Unavailable" }
     let cleaned = hex.hasPrefix("0x") ? String(hex.dropFirst(2)) : hex
     guard let bytes = Hex.data(cleaned) else { return hex }
@@ -92,26 +92,59 @@ public enum ApprovalSummary {
   }
 
   private static func typedDomain(_ params: JSONValue) -> String {
-    guard case .object(let o) = params, let domain = o["domain"] else { return "Unavailable" }
+    guard let object = typedObject(params),
+      let domain = object["domain"]
+    else { return "Unavailable" }
     if case .object(let d) = domain, let name = d["name"]?.stringValue { return name }
     return "Unavailable"
   }
 
   private static func typedVerifyingContract(_ params: JSONValue) -> String? {
-    guard case .object(let o) = params, let domain = o["domain"] else { return nil }
+    guard let object = typedObject(params),
+      let domain = object["domain"]
+    else { return nil }
     if case .object(let d) = domain, let c = d["verifyingContract"]?.stringValue, !c.isEmpty {
       return c
     }
     return nil
   }
 
+  /// Unwraps standard `[address, jsonString]` params or accepts a bare object.
+  private static func typedObject(_ params: JSONValue) -> [String: JSONValue]? {
+    switch params {
+    case .object(let object):
+      return object
+    case .array(let array) where array.count >= 2:
+      guard case .string(let json) = array[1],
+        let data = json.data(using: .utf8),
+        case .object(let object)? = try? JSONDecoder().decode(JSONValue.self, from: data)
+      else { return nil }
+      return object
+    default:
+      return nil
+    }
+  }
+
   private static func addedChainID(_ params: JSONValue) -> String? {
-    guard case .object(let o) = params else { return nil }
-    return o["addedChainID"]?.stringValue ?? o["chainID"]?.stringValue
+    let object = firstObjectAny(params)
+    guard let object else { return nil }
+    return object["addedChainID"]?.stringValue ?? object["chainID"]?.stringValue
+      ?? object["chainId"]?.stringValue
   }
   private static func addedChainName(_ params: JSONValue) -> String? {
-    guard case .object(let o) = params else { return nil }
-    return o["chainName"]?.stringValue
+    let object = firstObjectAny(params)
+    guard let object else { return nil }
+    return object["chainName"]?.stringValue
+  }
+
+  /// First object in either a bare object or a single-element array, matching both the
+  /// canonical record form and standard EIP-1193 `[object]` params.
+  private static func firstObjectAny(_ params: JSONValue) -> [String: JSONValue]? {
+    if case .object(let object) = params { return object }
+    guard case .array(let array) = params, case .object(let object)? = array.first else {
+      return nil
+    }
+    return object
   }
 
   private static func dataDigest(_ data: String) -> String {
@@ -128,19 +161,59 @@ public enum ApprovalSummary {
 public actor WalletService {
   public nonisolated let store: PendingRequestStore
   public nonisolated let signing: any Signing
+  public nonisolated let connectedSites: ConnectedSitesStore
   nonisolated let resolver: RPCResolver
   nonisolated let rpcClient: RPCClient
 
   public init(
     store: PendingRequestStore? = nil,
     signing: any Signing,
+    connectedSites: ConnectedSitesStore? = nil,
     resolver: RPCResolver = RPCResolver(),
     rpcClient: RPCClient = RPCClient()
   ) {
     self.signing = signing
     self.store = store ?? PendingRequestStore()
+    self.connectedSites = connectedSites ?? ConnectedSitesStore()
     self.resolver = resolver
     self.rpcClient = rpcClient
+  }
+
+  /// Hermetic-test initializer that also isolates the connection-grant store.
+  public init(
+    store: PendingRequestStore?,
+    signing: any Signing,
+    grantsSuite: String
+  ) {
+    self.signing = signing
+    self.store = store ?? PendingRequestStore()
+    self.connectedSites = ConnectedSitesStore(suiteName: grantsSuite)
+    self.resolver = RPCResolver()
+    self.rpcClient = RPCClient()
+  }
+
+  // MARK: Connection grants
+
+  /// Whether this origin already has a connection grant to the active account.
+  public nonisolated func isConnected(origin: String) async -> Bool {
+    await connectedSites.isConnected(origin: origin, address: signing.account)
+  }
+
+  /// All persisted connection grants.
+  public func connectedSitesList() async -> [ConnectedSite] {
+    await connectedSites.all()
+  }
+
+  /// Grants a connection and binds it to the active account. Idempotent.
+  public func connect(origin: String) async {
+    await connectedSites.connect(
+      site: ConnectedSite(domain: Origin.downHost(of: origin), address: signing.account)
+    )
+  }
+
+  /// Revokes a connection. Idempotent.
+  public func disconnect(origin: String) async {
+    await connectedSites.disconnect(origin: origin)
   }
 
   public nonisolated var account: String { signing.account }
@@ -271,6 +344,13 @@ public actor WalletService {
     record.status = .consumed
     record.result = result
     try await store.insert(record)
+    // A successful connect/chain-approval content grant establishes the durable
+    // connection so a subsequent eth_requestAccounts from the same origin short-circuits.
+    if record.kind == .connect {
+      await connectedSites.connect(
+        site: ConnectedSite(domain: Origin.downHost(of: record.origin), address: record.account)
+      )
+    }
     return result
   }
 

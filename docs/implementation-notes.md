@@ -50,7 +50,168 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
-## 2026-08-22 - Simulator Full Approval Loop Proven
+## 2026-08-22 - Wagmi Dapp Simulator E2E Completed
+
+### Summary
+
+- Completed the new wagmi dapp flow on the preferred iOS simulator: connect,
+  `personal_sign`, `eth_signTypedData_v4`, `eth_sendTransaction`, chain rejection and
+  approval, `wallet_disconnect`, and reconnect authorization.
+- Fixed the post-connect upstream failure: `background.js` lowercased methods but compared
+  chain ID against mixed-case `eth_chainId`, so wagmi's follow-up chain query incorrectly
+  reached RPC passthrough. The comparison now uses `eth_chainid`.
+- Added `Hex.quantityData(hex:)` and routed transaction quantity fields through it. This
+  accepts canonical odd-nibble JSON-RPC quantities such as viem's `0x0` while retaining
+  strict even-length parsing for calldata and byte fields. Existing legacy/EIP-1559
+  cross-implementation vectors now use canonical no-leading-zero quantities.
+- Updated the test dapp to await and report connect results, skip wagmi's optional
+  permissions probe, provide deterministic complete legacy transaction fields, and call
+  `wallet_disconnect` before clearing wagmi state. Bumped the WebExtension manifest to
+  `0.1.1` to invalidate stale simulator service-worker state after resource changes.
+
+### Verification
+
+- `swift format --in-place` completed for the changed Swift files.
+- `swift test`: 75 tests in 15 suites passed, including unchanged transaction preimage
+  bytes and digests with canonical odd-nibble quantity inputs.
+- `stupid-app doctor`: 0 failures and 0 warnings.
+- Repeated `stupid-app run --simulator --udid <preferred-simulator>` runs assembled,
+  installed, and launched the app and Safari extension successfully.
+- `PrototypeDapp`: `bunx oxfmt --write src/App.tsx`, `bunx oxlint .`, and `bun run build`
+  passed. `node --check` passed for the extension scripts.
+- Simulator popup/OCR results:
+  - connect resolved to the account and wagmi reported chain 1;
+  - message and typed-data approvals each returned a 65-byte signature;
+  - the complete legacy transaction returned a signed raw payload (broadcast remains
+    intentionally unimplemented);
+  - rejecting chain switch returned EIP-1193 `4001`, then approving it resolved chain 1;
+  - `wallet_disconnect` returned true and restored the Connect button;
+  - reconnect created a fresh canonical connect request, proving grant revocation.
+- Failed/incomplete transaction attempts were rejected through the popup's normal Cancel
+  path before retrying; persisted pending files were never edited to bypass policy.
+
+### Follow-Up
+
+- Repeat the complete flow on the physical iPhone to close Gate 5's authoritative popup,
+  authentication, keychain-group, and lifecycle proof.
+- Gate 6 must prepare missing transaction fields from RPC and broadcast the signed payload;
+  the dapp currently supplies deterministic fields only to exercise canonical signing.
+
+## 2026-08-22 - Wagmi Dapp Simulator E2E Blocked After Connect Approval
+
+### Summary
+
+- Rebuilt, installed, and launched the current app and extension on the preferred iOS
+  simulator, then served the new wagmi dapp on loopback and exercised connect through the
+  Safari toolbar popup.
+- Native preparation and review worked: the popup rendered the canonical connect card,
+  approval consumed the matching App Group pending record, and a repeat account request
+  did not create another pending record, consistent with a persisted connection grant.
+- The dapp did not enter wagmi's connected state after approval. Updated its connect
+  button to await `connectAsync` through the existing result/error reporter; this exposed
+  an EIP-1193 `-32603` upstream RPC failure instead of leaving the failure invisible.
+- An orphaned earlier localhost request initially occupied the queue head. It was rejected
+  through the normal popup path; no persisted files were edited to bypass policy.
+
+### Verification
+
+- `stupid-app doctor`: 0 failures and 0 warnings.
+- `stupid-app run --simulator --udid <preferred-simulator>`: app and extension assembled,
+  installed, and launched successfully.
+- `swift test`: 75 tests in 15 suites passed.
+- `PrototypeDapp`: `bunx oxfmt --write src/App.tsx`, `bunx oxlint .`, and `bun run build`
+  passed; Vite served the dapp at `http://127.0.0.1:5173/`.
+- Simulator OCR confirmed the canonical connect card, normal rejection of the orphaned
+  request, approval of the active loopback request, and removal of the pending notice.
+  The consumed record contained the approved account-array result.
+- The awaited wagmi mutation displayed `eth_requestAccounts failed: -32603 All upstrea…`;
+  the remaining text was clipped by the simulator viewport. UI automation was stopped
+  after the subsequent scroll interaction stalled.
+
+### Follow-Up
+
+- Capture the complete connector error and determine whether wagmi's
+  `wallet_requestPermissions` probe is incorrectly reaching generic RPC passthrough and
+  contaminating connect. Connection must not depend on an upstream node implementing a
+  wallet-owned permissions method.
+- Re-run personal-sign, typed-data, transaction, chain-switch, reject, and disconnect only
+  after the dapp reaches connected state. `eth_sendTransaction` is still expected to
+  return a signed raw payload rather than broadcast in the current Gate 6 implementation.
+
+## 2026-08-22 - Connected-Site Grants + EIP-1193 Standard Params + Wagmi Dapp
+
+### Summary
+
+- **Connected-site grants (Gate 6 head start):** added `ConnectedSitesStore` +
+  `ConnectedSite` to `StupidWalletCore`, persisting dapp connection grants in the SAME
+  shared App Group `UserDefaults` key the legacy app used (`connectedSites`,
+  `[hostname: {address, connectedAt}]` ISO-8601 with fractional-seconds tolerance). The
+  shipped new app therefore sees entrenched users' existing connections with no migration.
+  Persisted identity is the lowercased hostname (legacy shape); `Origin.normalize`
+  (scheme+port) remains available in memory for review/validation.
+- **Approval flow now establishes the grant:** `WalletService.approve` records a
+  connection when a `.connect` kind (`eth_requestAccounts`/`wallet_connect`) is approved.
+  Added `WalletService.isConnected/connect/disconnect/connectedSitesList`, native handler
+  actions `isConnected`, `listSites`, `disconnectSite`, and background.js gating:
+  - `eth_accounts` returns `[]` when the origin has no grant (rather than always the
+    account).
+  - `eth_requestAccounts`/`wallet_connect` short-circuit to the account when a grant
+    exists — fixes "the popup shows a connect card ahead of my signature request" on the
+    physical device, which was the queued duplicate connect from the dapp's unconditional
+    `eth_requestAccounts` re-call.
+  - `wallet_disconnect` revokes the grant.
+- **Standard EIP-1193 param shapes accepted natively:** `personal_sign` params are
+  `[messageHex, address]` (message first) as viem/wagmi and MetaMask send them; the
+  signable digest, summary message row, and tests were corrected to this order.
+  `eth_signTypedData_v4` accepts `[address, jsonString]` (unwraps to the EIP-712 object
+  the hasher consumes; bare-object canonical form still accepted for hermetic tests).
+  `wallet_addEthereumChain`/`wallet_switchEthereumChain` summaries accept `[chainObject]`
+  and read the standard `chainId` key. This unblocks driving typed-data/send/chain through
+  a real dapp.
+- **Test dapp rewritten:** `PrototypeDapp` is now a wagmi (v3) + viem + React + Vite app
+  scaffolded with `bun create wagmi --template vite-react --bun`, with hooks for connect
+  (`injected()` connector through the Safari-extension provider), `personal_sign`,
+  `eth_signTypedData_v4`, `eth_sendTransaction` (value 0n to a burn address),
+  `wallet_switchEthereumChain` (→ chain 1), and disconnect. Dev server runs `--host` on
+  port 5173 for the physical iPhone. oxlint/oxfmt clean; `tsc && vite build` passes.
+- Extension JavaScript was formatted with oxfmt (no repo formatter was configured) and
+  re-checked with `node --check`.
+
+### Why
+
+- The physical-device Gate 5 proof surfaced a UX blocker: after connecting, every signing
+  button in the old dapp re-called `eth_requestAccounts`, enqueueing a second connect
+  approval ahead of the signature. The wallet had no durable notion of "connected", so it
+  could not skip the duplicate approval. The old app solved this with App Group
+  `UserDefaults` "connectedSites" grants gated in the extension; the product decision was
+  to replicate that system (shared key, shared shape) rather than invent a new store.
+- viem/wagmi send standard EIP-1193 params; the prototype's non-standard shapes would have
+  failed typed-data, chain, and message flows when driven from the real dapp.
+
+### Verification
+
+- `stupid-app build`: clean; app + extension signed in place.
+- `swift test`: 75 tests / 15 suites pass, including new standard-param approval tests and
+  ConnectedSitesTests (grant, idempotent disconnect, refresh-on-reconnect, grant after
+  connect approval, no grant after message approval, service-level disconnect).
+- `PrototypeDapp`: `bun run build` (tsc + vite) passes; oxlint 0 warnings / 0 errors;
+  dev server served at `http://<localhost>:5173` and `http://192.168.111.114:5173`.
+- `node --check` passes on all `SafariExtension/Resources/*.js`.
+- `stupid-app run --network` installed + launched the app and extension on the physical
+  iPhone.
+
+### Follow-Up
+
+- Drive the wagmi dapp end-to-end on the physical device: connect once, then
+  personal_sign / typed-data / send / switch should each show exactly one approval card
+  with no duplicate connect, and `wallet_disconnect` should revoke so
+  `eth_accounts` returns `[]`.
+- Gate 6 app-side connected-apps list/disconnect UI is still outstanding (native
+  `listSites`/`disconnectSite` actions exist and are ready to back it).
+- Connection grants are hostname-keyed to preserve the legacy format; Safari profile
+  binding and scheme/port separation remain open (documented risk).
+- `eth_sendTransaction` still returns the signed raw transaction rather than broadcasting;
+  real submission is Gate 6 work.
 
 ### Summary
 

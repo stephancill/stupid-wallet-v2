@@ -58,7 +58,8 @@ authenticated sign-and-recover proof before completion, and retained old materia
 explicit cleanup. A duplicate decrypt was removed so a successful run shows exactly two
 Face ID/passcode prompts.
 
-Gate 5 (canonical approval protocol) code is in place with download device steps:
+Gate 5 (canonical approval protocol) code is in place, and the grant + standard-params
+work is done:
 - Pending requests move into the shared App Group
   (`PendingRequestStore.defaultAppGroup = group.co.za.stephancill.stupid-wallet`), so the
   app and extension read/write the same durable records and pending requests survive
@@ -78,6 +79,17 @@ Gate 5 (canonical approval protocol) code is in place with download device steps
 - Signing is now real: `Signing` is an injected protocol; production uses
   `KeychainSigner` (loads the shared-key new-format key and signs through the vendored
   secp256k1). `UnavailableSigner` reports not-ready loudly when no key exists.
+- Durable connection grants replicate the legacy model: `ConnectedSitesStore` reads/writes
+  the shared App Group `UserDefaults` key `connectedSites`
+  (`[hostname: {address, connectedAt}]`, same shape as the old app) so shipped users' prior
+  connections carry over with no migration. Approving a `.connect` request establishes the
+  grant; `eth_accounts` returns `[]` without a grant, `eth_requestAccounts`/`wallet_connect`
+  short-circuit to the account when a grant exists, and `wallet_disconnect` revokes it.
+  Native actions: `isConnected`, `listSites`, `disconnectSite`.
+- Native approval accepts standard EIP-1193 params throughout: `personal_sign` as
+  `[messageHex, address]`, `eth_signTypedData_v4` as `[address, jsonString]` (unwrapped to
+  the EIP-712 object), and chain methods as `[chainObject]` reading the standard `chainId`
+  key.
 - Error mapping in `SafariWebExtensionHandler` covers not-found (4100), already-consumed/
   expired/auth-cancelled (4001), queued/binding-mismatch (‑32000/‑32602), and
   not-ready (4900). Denied methods never prepare.
@@ -94,7 +106,10 @@ that is done.
   isolated-world `bridge.js`, MV3 `background.js`, and `popup.html`/`css`/`js`) packaged at
   the appex root through `stupid-app.yml` `extensions:`/`resources:`.
 - An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
-- `PrototypeDapp/index.html` for driving requests from Safari.
+- `PrototypeDapp/` — a wagmi v3 + viem + React + Vite test dapp (`bun create wagmi
+  --template vite-react`) exercising connect, `personal_sign`, `eth_signTypedData_v4`,
+  `eth_sendTransaction`, `wallet_switchEthereumChain`, and disconnect against the injected
+  provider. Dev server runs `--host` on port 5173 for the physical iPhone.
 
 As of Gate 5 fixing: the signing path reads the `.userPresence` keychain exactly once, only
 at the moment of signing; `Signer.hasKey()` resolves the active wallet from the non-secret
@@ -105,10 +120,13 @@ structured EIP-1193 errors surface on the dapp; the method casing is normalized 
 `background.js` so approval methods do not fall through to RPC passthrough. `WalletFactory`
 creates a new wallet at runtime.
 
-The prototype is not fully gate-complete past Gate 5: the connect and personal_sign
-approval loop (popup card → Face ID → signature) is now proven on the iOS simulator, with
-typed-data/send/chain and the reject path implemented and unit-tested but not yet driven
-through the popup. It preserves the identity, security, and documentation rules and its
+The prototype is not fully gate-complete past Gate 5, but the complete wagmi flow is now
+proven on the iOS simulator: connect; personal-sign and typed-data signatures; complete
+legacy transaction signing (returns the signed raw payload, not broadcast); chain-change
+approval and `4001` rejection; and disconnect followed by a fresh connect approval. The
+run fixed a JavaScript casing bug that sent `eth_chainId` to passthrough and a transaction
+quantity parser that rejected canonical odd-nibble JSON-RPC quantities such as `0x0`.
+It preserves the identity, security, and documentation rules and its
 Safari messaging/popup/Face ID, JSON/RPC proxy, key/transaction/crypto primitives,
 old-format migration, canonical approval protocol, and real keychain signing all work.
 The physical device remains the authoritative surface for provisioning and keychain-group
@@ -260,6 +278,8 @@ The first usable milestone includes:
 - `eth_signTypedData_v4`.
 - `eth_sendTransaction` with legacy and EIP-1559 serialization.
 - Confirmed `wallet_addEthereumChain` and `wallet_switchEthereumChain`.
+- Durable site connect/disconnect grants (legacy `connectedSites` key) with
+  eth_accounts/eth_requestAccounts gating; app-side connected-apps list UI pending.
 - Generic passthrough for all methods not explicitly handled or denied.
 - Stupidtech default RPC resolution and validated per-chain user overrides.
 - SQLite-backed transaction and signature activity.
@@ -551,7 +571,11 @@ should be incorporated when available so grants do not silently cross Safari pro
 
 SQLite remains appropriate for activity and pending-request state when transactional
 consumption is required. UserDefaults is acceptable only for small preference values
-that do not require atomic multi-field updates.
+that do not require atomic multi-field updates. Connected-site grants intentionally
+reuse the legacy App Group `UserDefaults` key `connectedSites`
+(`[hostname: {address, connectedAt}]`) so pre-existing connections survive an upgrade;
+this is a locked compatibility exception, and grants are treated as sensitive user data
+even though they are not key material.
 
 ## Dependency Policy
 
@@ -748,6 +772,10 @@ device identifiers, or sensitive signing payloads.
   focused design before implementation.
 - **Safari profiles:** Verify availability and stability of `SFExtensionProfileKey` on
   all supported iOS versions before making profile binding mandatory.
+- **Grant identity precision:** connection grants persist as legacy lowercased hostnames
+  (no scheme/port separation, no profile binding) to preserve the old `connectedSites`
+  format. A future migration to scheme+port+profile grants is possible but must not break
+  the shared key's readability by the old app during the transition.
 - **Chain metadata:** Universal RPC support does not provide names, symbols, explorers,
   or icons. Keep metadata optional until a small trustworthy source is chosen.
 - **Transaction preview:** A secure confirmation must display enough canonical detail
@@ -759,13 +787,16 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Finish Gate 5's physical proof: on the iPhone, drive connect/message/typed-data/
-   send/chain approvals through the Safari popup and confirm each binds to its canonical
-   pending record, rejects map to `4001`, and the queued policy holds. Confirm the shared
-   App Group pending store is readable by both the app and extension.
-2. Gate 6 (Secure Wallet Core): add create/import/backup flows, site connect/disconnect
-   grants keyed by normalized origin, and real transaction broadcast so
-   `eth_sendTransaction` submits rather than returning a signed payload.
+1. Finish Gate 5's physical proof on the iPhone using the wagmi dapp: drive
+   connect/message/typed-data/send/chain approvals through the Safari popup and confirm
+   each binds to its canonical pending record, that re-connect after a grant does not
+   enqueue a duplicate approval, rejects map to `4001`, and the queued policy holds.
+   Confirm the shared App Group connected-sites and pending stores are readable by both
+   the app and extension.
+2. Gate 6 (Secure Wallet Core): app-side connected-apps list/disconnect UI (native
+   `listSites`/`disconnectSite` actions exist), create/import/backup flows, and real
+   transaction broadcast so `eth_sendTransaction` submits rather than returning a signed
+   payload.
 3. Gate 7 and later per the implementation gates.
 
 ## Reference Sources

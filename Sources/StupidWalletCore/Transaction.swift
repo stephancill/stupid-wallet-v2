@@ -35,10 +35,10 @@ public struct LegacyTransaction: Sendable {
 
   private func rlpFields() throws -> [RLP.Item] {
     guard
-      let nonceBytes = Hex.data(nonce),
-      let gasPriceBytes = Hex.data(gasPrice),
-      let gasLimitBytes = Hex.data(gasLimit),
-      let valueBytes = Hex.data(value),
+      let nonceBytes = Hex.quantityData(hex: nonce),
+      let gasPriceBytes = Hex.quantityData(hex: gasPrice),
+      let gasLimitBytes = Hex.quantityData(hex: gasLimit),
+      let valueBytes = Hex.quantityData(hex: value),
       let dataBytes = Hex.data(data)
     else { throw EncodingError.badQuantity }
 
@@ -108,11 +108,11 @@ public struct EIP1559Transaction: Sendable {
 
   private func signingFields() throws -> [RLP.Item] {
     guard
-      let nonceBytes = Hex.data(nonce),
-      let priBytes = Hex.data(maxPriorityFeePerGas),
-      let feeBytes = Hex.data(maxFeePerGas),
-      let limitBytes = Hex.data(gasLimit),
-      let valueBytes = Hex.data(value),
+      let nonceBytes = Hex.quantityData(hex: nonce),
+      let priBytes = Hex.quantityData(hex: maxPriorityFeePerGas),
+      let feeBytes = Hex.quantityData(hex: maxFeePerGas),
+      let limitBytes = Hex.quantityData(hex: gasLimit),
+      let valueBytes = Hex.quantityData(hex: value),
       let dataBytes = Hex.data(data)
     else { throw EncodingError.badField }
 

@@ -7,10 +7,10 @@ struct EIP1559TransactionTests {
   // A representative transfer (mainnet), deterministic and re-encodable.
   private func tx() -> EIP1559Transaction {
     EIP1559Transaction(
-      chainId: 1, nonce: "0x00",
+      chainId: 1, nonce: "0x0",
       maxPriorityFeePerGas: "0x3b9aca00", maxFeePerGas: "0x77359400",
       gasLimit: "0x5208", to: "0x3535353535353535353535353535353535353535",
-      value: "0x0de0b6b3a7640000", data: "0x")
+      value: "0xde0b6b3a7640000", data: "0x")
   }
 
   @Test("type-2 payload starts with the 0x02 envelope byte")
@@ -53,9 +53,9 @@ struct EIP1559TransactionTests {
 struct LegacyTransactionTests {
   private func tx() -> LegacyTransaction {
     LegacyTransaction(
-      nonce: "0x09", gasPrice: "0x04a817c800", gasLimit: "0x5208",
+      nonce: "0x9", gasPrice: "0x4a817c800", gasLimit: "0x5208",
       to: "0x3535353535353535353535353535353535353535",
-      value: "0x0de0b6b3a7640000", data: "0x", chainId: 1)
+      value: "0xde0b6b3a7640000", data: "0x", chainId: 1)
   }
 
   @Test("legacy payload RLP list prefix")

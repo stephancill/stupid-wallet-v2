@@ -17,7 +17,7 @@ public enum RequestExecutor {
     case .message:
       return MessageHash.eip191(message: try selfMessage(request.params))
     case .typedData:
-      return try EIP712.prefixedHash(of: request.params)
+      return try EIP712.prefixedHash(of: typedDataParams(request.params))
     case .send:
       return try transactionDigest(request)
     case .connect:
@@ -51,13 +51,31 @@ public enum RequestExecutor {
 
   // MARK: message
 
-  /// params = [address, messageHex].
+  /// params = [messageHex, address] (standard EIP-1193 `personal_sign` order, as sent by
+  /// viem/wagmi and MetaMask). The message is the first element, a hex-encoded string.
   private static func selfMessage(_ params: JSONValue) throws -> Data {
     guard case .array(let array) = params, array.count >= 2,
-      case .string(let hex) = array[1],
+      case .string(let hex) = array[0],
       let bytes = Hex.data(hex)
     else { throw ApprovalError.badParams }
     return Data(bytes)
+  }
+
+  // MARK: typed data
+
+  /// Standard `eth_signTypedData_v4` params are `[address, jsonString]` (viem/wagmi,
+  /// MetaMask). Unwrap the serialized EIP-712 object the hasher consumes.
+  private static func typedDataParams(_ params: JSONValue) throws -> JSONValue {
+    if case .array(let array) = params, array.count >= 2,
+      case .string(let json) = array[1],
+      let data = json.data(using: .utf8),
+      let object = try? JSONDecoder().decode(JSONValue.self, from: data)
+    {
+      return object
+    }
+    // Accept a bare object too (canonical pending-record form used by hermetic tests).
+    if case .object = params { return params }
+    throw ApprovalError.badParams
   }
 
   // MARK: transaction

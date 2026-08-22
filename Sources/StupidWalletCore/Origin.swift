@@ -22,4 +22,10 @@ public enum Origin {
     guard let raw, let url = URL(string: raw) else { return raw ?? "unknown" }
     return url.host?.lowercased() ?? raw
   }
+
+  /// The lowercased host usable as a persisted connection key. Returns a best-effort
+  /// hostname for an arbitrary raw string so legacy/unknown values remain addressable.
+  public static func downHost(of raw: String?) -> String {
+    displayHost(raw)
+  }
 }

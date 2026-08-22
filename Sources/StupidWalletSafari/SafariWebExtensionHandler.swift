@@ -62,6 +62,26 @@ private enum Server {
     case "me":
       return success(["account": .string(service.account)])
 
+    case "isConnected":
+      let origin = envelope.origin ?? "unknown"
+      return success(["connected": .bool(await service.isConnected(origin: origin))])
+
+    case "listSites":
+      let sites = await service.connectedSitesList()
+      return success([
+        "sites": .array(sites.map {
+          .object([
+            "domain": .string($0.domain),
+            "address": .string($0.address),
+          ])
+        })
+      ])
+
+    case "disconnectSite":
+      let origin = envelope.origin ?? "unknown"
+      await service.disconnect(origin: origin)
+      return success(["ok": .bool(true)])
+
     case "passthrough":
       let method = envelope.method ?? ""
       guard !method.isEmpty else { return failure("missing method") }
