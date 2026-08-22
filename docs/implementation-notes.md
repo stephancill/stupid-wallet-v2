@@ -99,6 +99,46 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Device Signing Unblocked (Entitlement Fix)
+
+### Summary
+
+- After Gate 0, attempted to deploy the rebuild to a physical iPhone over the network.
+  `stupid-app` device signing failed with `Entitlement 'keychain-access-groups value
+  mismatch'`: the source uses `$(AppIdentifierPrefix)<bundle>.` keychain groups, but the
+  `stupid-app` `EntitlementDeriver` passed that Xcode token through literally and did a
+  rigid array-equality reconciliation against the development profile's `TEAM.*` wildcard.
+- Fixed in the CLI: `EntitlementDeriver` now expands `$(AppIdentifierPrefix)` to the
+  concrete `<teamID>.` prefix and wildcard-matches `TEAM.*` authorizations (tree
+  `802631f` in `../stupid-ios-dev`). On the Mac host I rebuilt and reinstalled the CLI
+  binary, and my storage then contains development profiles targeting the physical
+  device's UDID.
+- The app then **packaged, installed, and was verified** on the iPhone over the network
+  tunnel. The post-install auto-launch could not run because the remote device does not
+  offer the CoreDevice launch service (`com.apple.coredevice.appservice`) over the
+  network tunnel.
+
+### Why
+
+- This was the Gate 1 login dev risk that blocking the physical-device debut explained in
+  the handover's Recommended Next Work and the phys-device test strategy.
+
+### Verification
+
+- `stupid-app signing setup --kind development` registered production app and extension
+  bundle IDs + App Group capability and minted development profiles for the target device
+  UDID.
+- `stupid-app run --network` reported `Installed and verified the application over the
+  network.` The IPA packaged with both nested appex and app signed.
+- Launch over the tunnel failed with a CoreDevice launch-service error; trusting the
+  app's first manual open on the device or a USB launch is still required.
+
+### Follow-Up
+
+- Launch the installed app on the device (tap the icon or attach over USB) to complete the
+  Gate 1 physical proof of the toolbar popup + Face ID flow.
+- When the DeviceType is audited, prefer a USB run for the documented Gate-1 launch step.
+
 ## 2026-08-22 - Gate 0 Complete: Production Identities Restored
 
 ### Summary
