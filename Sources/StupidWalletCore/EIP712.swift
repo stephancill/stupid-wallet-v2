@@ -155,8 +155,12 @@ public enum EIP712 {
         throw ApprovalError.badParams
       }
       return bytes
-    case _ where base.hasPrefix("uint") || base.hasPrefix("int"):
+    case _ where base.hasPrefix("uint"):
       let bits = Int(base.dropFirst(4)) ?? 256
+      guard bits >= 8, bits <= 256, bits.isMultiple(of: 8) else { throw ApprovalError.badParams }
+      return try unsignedIntegerValue(value, bits: bits)
+    case _ where base.hasPrefix("int"):
+      let bits = Int(base.dropFirst(3)) ?? 256
       guard bits >= 8, bits <= 256, bits.isMultiple(of: 8) else { throw ApprovalError.badParams }
       let integer = try integerValue(value)
       return uint256(integer)
@@ -179,6 +183,48 @@ public enum EIP712 {
     default:
       throw ApprovalError.badParams
     }
+  }
+
+  private static func unsignedIntegerValue(_ value: JSONValue, bits: Int) throws -> [UInt8] {
+    let bytes: [UInt8]
+    switch value {
+    case .string(let string) where string.lowercased().hasPrefix("0x"):
+      guard let parsed = Hex.quantityData(hex: string) else { throw ApprovalError.badParams }
+      bytes = parsed
+    case .string(let string):
+      bytes = try decimalBytes(string)
+    case .number(let number)
+    where number.isFinite && number >= 0 && number.rounded() == number
+      && number <= 9_007_199_254_740_991:
+      bytes = try decimalBytes(String(format: "%.0f", number))
+    default:
+      throw ApprovalError.badParams
+    }
+
+    let significant = Array(bytes.drop(while: { $0 == 0 }))
+    guard significant.count <= 32 else { throw ApprovalError.badParams }
+    let encoded = [UInt8](repeating: 0, count: 32 - significant.count) + significant
+    let unusedBytes = (256 - bits) / 8
+    guard encoded.prefix(unusedBytes).allSatisfy({ $0 == 0 }) else {
+      throw ApprovalError.badParams
+    }
+    return encoded
+  }
+
+  private static func decimalBytes(_ string: String) throws -> [UInt8] {
+    guard !string.isEmpty else { throw ApprovalError.badParams }
+    var bytes = [UInt8](repeating: 0, count: 32)
+    for character in string.utf8 {
+      guard character >= 48, character <= 57 else { throw ApprovalError.badParams }
+      var carry = Int(character - 48)
+      for index in stride(from: 31, through: 0, by: -1) {
+        let value = Int(bytes[index]) * 10 + carry
+        bytes[index] = UInt8(value & 0xff)
+        carry = value >> 8
+      }
+      guard carry == 0 else { throw ApprovalError.badParams }
+    }
+    return bytes
   }
 
   private static func uint256(_ value: Int) -> [UInt8] {

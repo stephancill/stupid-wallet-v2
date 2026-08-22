@@ -15,7 +15,7 @@ import type { EIP1193Provider } from "viem";
 const TYPED_DATA_DOMAIN = {
   name: "Stupid Wallet Test",
   version: "1",
-  chainId: 1,
+  chainId: 8453,
 } as const;
 
 const TYPED_DATA_TYPES = {
@@ -146,11 +146,8 @@ export default function App() {
           onClick={() =>
             run("eth_sendTransaction", () =>
               sendTransactionAsync({
-                to: "0x0000000000000000000000000000000000000001",
+                to: address!,
                 value: 0n,
-                nonce: 0,
-                gas: 21_000n,
-                gasPrice: 1_000_000_000n,
                 data: "0x",
               }),
             )
@@ -164,9 +161,11 @@ export default function App() {
         <h2>4. Network</h2>
         <button
           disabled={!isConnected || busy}
-          onClick={() => run("wallet_switchEthereumChain", () => switchChainAsync({ chainId: 1 }))}
+          onClick={() =>
+            run("wallet_switchEthereumChain", () => switchChainAsync({ chainId: 8453 }))
+          }
         >
-          wallet_switchEthereumChain (→1)
+          wallet_switchEthereumChain (→ Base)
         </button>
       </section>
 

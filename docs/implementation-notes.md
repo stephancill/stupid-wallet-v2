@@ -50,6 +50,346 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Repository-Wide Debugging Skill
+
+### Summary
+
+- Added `skills/stupid-wallet-debugging/SKILL.md`, an evidence-first workflow covering the
+  dapp/provider, isolated bridge, background worker, toolbar popup, native extension
+  handler, WalletCore, App Group state, keychain authentication, RPC routing, signing,
+  broadcast, and independent chain verification.
+- Added project `opencode.json` registration for the root `skills/` directory so OpenCode
+  discovers the repository skill after restart.
+- Added an `AGENTS.md` requirement to read the skill for relevant investigations and to
+  update it whenever debugging reveals a reusable command, failure signature, stack
+  boundary, simulator interaction, or safety rule.
+- The skill records known operational sharp edges without exposing user-linked wallet
+  activity: Safari worker caching, exact passthrough method casing, durable request-state
+  interpretation, popup scrolling, multi-request dapp flows, structured errors, EIP-712
+  width handling, and safe on-chain verification.
+
+### Verification
+
+- The skill creator's `quick_validate.py` reported `Skill is valid!`.
+- `git diff --check` passed and no generated placeholder resources remain.
+
+### Follow-Up
+
+- Keep the skill current as the app gains activity storage, receipt polling, additional
+  wallet methods, and macOS Safari support.
+
+## 2026-08-23 - Permit2 Typed-Data And Popup Error Fix
+
+### Summary
+
+- Investigated `[object Object]` appearing above Uniswap's Permit2 approval card. The
+  popup stringified a structured native error instead of reading its `message` property.
+- The preceding on-chain token allowance transaction had succeeded; the subsequent
+  Permit2 `eth_signTypedData_v4` request failed because EIP-712 integer parsing converted
+  values through host `Int`. Permit2 uses maximum `uint160` allowance plus `uint48` fields.
+- Added full-width unsigned decimal/hex parsing into 32-byte EIP-712 words with declared
+  width enforcement, fixed popup error-message extraction, and bumped the extension
+  manifest to `0.1.9`.
+
+### Verification
+
+- A Permit2 digest vector with maximum `uint160` and `uint48` values matches viem
+  byte-for-byte.
+- `swift format` and `oxfmt` completed; `oxlint` and `node --check` passed.
+- `swift test`: 100 tests in 18 suites passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` installed and launched the
+  `0.1.9` extension.
+
+### Follow-Up
+
+- The user redirected the session to documentation work before the post-fix live
+  USDC-to-ETH Permit2 approval could be retried. Complete that simulator verification
+  before claiming the reverse swap works end to end.
+
+## 2026-08-23 - Permit2 Typed Data Fix And Reverse Swap
+
+### Summary
+
+- Reproduced `[object Object]` above a Uniswap Permit2 approval card. The popup stringified
+  a structured native error instead of reading its `message`; it now displays structured
+  errors correctly.
+- The underlying `eth_signTypedData_v4` request failed because EIP-712 integer parsing used
+  host `Int`. Permit2 supplied a maximum `uint160` allowance plus `uint48` expiration and
+  nonce fields. Unsigned integers now parse decimal or hex into 32-byte values and reject
+  values outside the declared `uintN` width.
+- Bumped the extension manifest to `0.1.9`, completed the authorized Permit2 signature, and
+  completed a small USDC-to-ETH swap on Base.
+
+### Verification
+
+- Pinned the exact Permit2 digest against viem `hashTypedData`; the new `uint160`/`uint48`
+  vector passed.
+- Added a service-level regression proving the standard `[address, jsonString]` Permit2
+  request signs and reaches `consumed`.
+- `swift test`: 101 tests in 18 suites passed.
+- Extension `oxfmt`, `oxlint`, and `node --check` passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` installed and launched the
+  `0.1.9` extension. The live popup signed Permit2 without an error toast, then reviewed
+  and broadcast the swap transaction.
+- The first broadcast returned a hash but was absent from the configured and independent
+  Base nodes; latest and pending nonces were equal, proving it had not propagated. A fresh
+  canonical replacement used the same nonce and mined successfully. The receipt status was
+  `0x1`, transfer logs showed the exact authorized USDC input, and balances reflected the
+  expected token decrease and native output net of gas.
+
+### Follow-Up
+
+- Durable activity and receipt polling should distinguish a returned broadcast hash from
+  observed network propagation and surface dropped transactions instead of treating the
+  immediate RPC response as final lifecycle success.
+
+## 2026-08-22 - Uniswap Passthrough Casing Fix And Live Swap
+
+### Summary
+
+- Superseded the earlier cache-only diagnosis. Repeated Uniswap attempts showed that the
+  failure was deterministic when the app needed a fresh `eth_blockNumber` read: the
+  background worker lowercased the method for classification and forwarded
+  `eth_blocknumber` to the case-sensitive Base RPC.
+- Changed generic passthrough to forward the page's original method spelling unchanged.
+  Wallet-owned classification remains case-insensitive. Bumped the WebExtension manifest
+  to `0.1.8` to ensure Safari loads the corrected worker, and removed all temporary
+  diagnostics.
+- Executed the authorized small ETH-to-USDC Base swap through Uniswap, canonical popup
+  review, authenticated key release, raw transaction broadcast, and dapp completion.
+
+### Verification
+
+- Before the fix, live diagnostics showed `eth_blockNumber` returning an upstream error
+  and Uniswap never called a send method or created a pending record.
+- `oxfmt`, `oxlint`, and `node --check` passed for the extension resources.
+- `swift test`: 99 tests in 17 suites passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` installed and launched the
+  corrected `0.1.8` extension.
+- The same Base ETH/USDC URL and input immediately created a canonical type-2 transaction.
+  Approval consumed the request and returned a transaction hash. Independent Base RPC
+  checks confirmed the expected sender and native value, receipt status `0x1`, and a USDC
+  transfer of approximately the quoted output to the simulator wallet.
+
+### Follow-Up
+
+- Add a dependency-free JavaScript routing test harness so exact method preservation is
+  covered automatically; the current live Uniswap regression and syntax/lint checks cover
+  this fix operationally.
+- `wallet_requestPermissions` and `wallet_getCapabilities` remain unsupported probes and
+  pass through unchanged. Uniswap tolerates their errors and uses `eth_sendTransaction`.
+
+## 2026-08-22 - Uniswap Base Swap Worker Cache Invalidation
+
+### Summary
+
+- Reproduced an immediate Uniswap ETH-to-USDC swap failure on Base. The failing attempt
+  created no native pending request, so it failed before canonical review, signing, or
+  broadcast.
+- Reopened the swap with Base ETH and USDC selected through URL parameters and captured
+  the provider behavior without retaining request data. Uniswap's actual swap request was
+  a standard EIP-1559 `eth_sendTransaction` already supported by the current native core.
+- A fresh install under a new WebExtension manifest version made the same amount and
+  transaction reach the canonical Safari popup immediately. Bumped the final manifest to
+  `0.1.5` so Safari invalidates the stale `0.1.3` service worker; temporary diagnostics
+  were removed before the final build.
+
+### Verification
+
+- `swift test`: 99 tests in 17 suites passed.
+- Extension resources: `oxfmt`, `oxlint`, and `node --check` passed with no
+  warnings or errors.
+- `stupid-app doctor`: 0 failures and 0 warnings.
+- `stupid-app run --simulator --udid <preferred-simulator>` installed and launched the
+  versioned extension.
+- Simulator Safari loaded
+  `https://app.uniswap.org/swap?chain=base&inputCurrency=NATIVE&outputCurrency=<base-usdc>`;
+  entering `0.0001` ETH and confirming Uniswap's review created a canonical Base send
+  request and displayed the native transaction popup. The request was cancelled rather
+  than approved, so verification spent no funds.
+
+### Follow-Up
+
+- Uniswap also probes `wallet_requestPermissions` and `wallet_getCapabilities`; these are
+  not required for its ordinary `eth_sendTransaction` fallback and remain outside the
+  currently handled method subset. Add them only with reviewed EIP-2255/EIP-5792 behavior,
+  not as dapp-specific stubs.
+
+## 2026-08-22 - Persisted Active Chain And Approved Switching
+
+### Summary
+
+- Added `ChainStore`, which persists the normalized decimal active chain in the shared App
+  Group and defaults only a genuinely missing first-run file to mainnet. Malformed or
+  unavailable persistence fails loudly.
+- Native state now authoritatively answers `eth_chainId`/`net_version` and selects the chain
+  for prepare and passthrough; JavaScript-supplied chain metadata is ignored.
+- Approved `wallet_switchEthereumChain` persists its target, while
+  `wallet_addEthereumChain` remains consent-only. Chain changes require a connected origin
+  at both preparation and approval.
+- Added stale-request rejection (`4901`), a global advisory switch lock, and a write-ahead
+  journal that recovers the previous or target chain from durable request consumption after
+  interruption. This prevents readers from observing an uncommitted switch.
+- Added canonical cross-tab `chainChanged` delivery, initial provider bootstrap from native
+  state, and recovery-time rebroadcast. The provider no longer announces a guessed chain.
+- Restored the wagmi fixture to mainnet + Base and bumped the extension manifest to `0.1.3`.
+
+### Verification
+
+- `swift test`: 99 tests in 17 suites passed, including persistence/normalization,
+  add-versus-switch semantics, unauthorized preparation, authorization revocation before
+  approval, stale queued requests, switch journal recovery, and lock exclusion.
+- `PrototypeDapp`: `oxlint` and `bun run build` passed; extension `oxfmt`, `oxlint`, and
+  `node --check` passed.
+- `stupid-app doctor`: 0 failures and 0 warnings.
+- `stupid-app run --simulator --udid <preferred-simulator>` installed and launched the app
+  and manifest `0.1.3` extension.
+- Simulator Safari started the connected dapp on chain 1, rendered a canonical Ethereum
+  “Switch network” popup for Base, approved without key access, updated wagmi to chain 8453,
+  and persisted decimal `8453` in the shared App Group.
+- After Safari reload, reconnect used the existing grant and reported chain 8453, confirming
+  extension restart/bootstrap reads native persisted state rather than a worker constant.
+
+### Follow-Up
+
+- Add SQLite transaction activity and receipt polling.
+- The legacy hostname-only grant remains a locked compatibility limitation: it does not yet
+  separate scheme, effective port, or Safari profile for chain-change authorization.
+
+## 2026-08-22 - Live Base Transaction Accepted
+
+### Summary
+
+- Temporarily switched the injected provider and wagmi fixture from hardcoded mainnet to
+  Base (`8453` / `0x2105`) for a funded simulator send proof; bumped the WebExtension
+  manifest to `0.1.2` to invalidate stale worker state.
+- Changed the dapp transaction to a zero-value self-transfer and removed its deterministic
+  nonce, gas, and gas-price fields so native RPC preparation supplied all three.
+- Completed the full simulator flow through Safari popup review and keychain-backed signing.
+  The wallet broadcast the signed transaction and the dapp resolved to the node-returned
+  transaction hash.
+
+### Verification
+
+- Base RPC showed the simulator test account had sufficient native ETH before the test.
+- `swift test`: 91 tests in 16 suites passed.
+- `PrototypeDapp`: `oxfmt`, `oxlint`, and `bun run build` passed.
+- Extension resources: `oxfmt`, `oxlint`, and `node --check` passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` assembled, installed, and
+  launched the Base-configured app and extension.
+- The native pending record contained canonical Base fields populated by RPC preparation:
+  nonce `0x0`, gas limit `0x5208`, and a node-provided legacy gas price. The popup displayed
+  Base, the self-transfer destination, nonce, gas limit, and gas price before approval.
+- `cast tx <tx-hash> --rpc-url https://evm.stupidtech.net/v1/8453 --json` confirmed chain
+  `0x2105`, zero value, empty calldata, the expected recovered simulator signer, and the
+  returned hash.
+- `cast receipt <tx-hash> --rpc-url https://evm.stupidtech.net/v1/8453 --json` returned
+  status `0x1` and gas used `0x5208` (21,000).
+
+### Follow-Up
+
+- Replace the temporary Base compile-time constant with persisted active-chain state and
+  make approved chain switches update it.
+- Add SQLite transaction activity and receipt polling now that the live receipt path is
+  proven. Physical-device broadcasting remains a separate optional verification.
+
+## 2026-08-22 - Gate 6 Transaction Preparation And Broadcast
+
+### Summary
+
+- Added canonical `eth_sendTransaction` preparation through the shared RPC resolver:
+  missing nonce, gas limit, and legacy or EIP-1559 fees are fetched before the pending
+  request is persisted and bound.
+- Added complete signed legacy and type-2 serialization. Approval now submits the raw
+  transaction through `eth_sendRawTransaction` and returns the node's 32-byte transaction
+  hash instead of returning signature bytes.
+- Corrected the EIP-1559 signing preimage to contain the nine unsigned fields only. The
+  previous implementation incorrectly appended empty `yParity`, `r`, and `s` fields.
+- Added nonce, gas limit, and fee rows to the canonical popup summary. Malformed or
+  account/chain-mismatched transactions fail before persistence.
+- Added durable terminal failure state and structured error persistence so a node or
+  transport submission failure reaches the polling dapp instead of leaving it pending.
+- Added cross-process advisory locking for approve/reject, signer-to-record account
+  revalidation, approval-time semantic revalidation, strict supported-field and alias
+  handling, explicit contract-creation review text, and returned-hash verification.
+- Structured RPC error data is preserved through immediate preparation failures and
+  persisted broadcast failures; expired requests now terminate browser polling.
+- Removed unused worker bindings surfaced by JavaScript linting.
+
+### Why
+
+- Gate 6 requires `eth_sendTransaction` to prepare, sign, broadcast, and return a
+  transaction hash through the same resolver used by generic RPC traffic. Preparation
+  must happen before approval so the displayed and signed transaction are identical.
+
+### Verification
+
+- `swift test`: 91 tests in 16 suites passed, including missing-field preparation,
+  legacy and EIP-1559 fee handling, malformed-input rejection, successful broadcast,
+  durable structured submission errors, signer replacement, atomic claims, unsupported
+  fields, alias conflicts, hash mismatch, persisted-request revalidation, and signed raw
+  transaction vectors.
+- viem `serializeTransaction`, `keccak256`, and `signTransaction` independently matched
+  the corrected EIP-1559 preimage/hash and complete legacy/type-2 signed bytes.
+- `swift format` completed for changed Swift files. `swift format lint --recursive Sources
+  Tests` reported only pre-existing warnings in unrelated files.
+- `oxfmt`, `oxlint`, and `node --check` passed for the changed extension worker.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build`
+  succeeded.
+- `stupid-app run --network --udid <device> --sudo /usr/bin/sudo` signed the app and nested
+  extension and installed the final build on the physical iPhone. The first final run
+  verified installation but CoreDevice returned no launch output; an immediate retry
+  installed and launched the same current build successfully.
+
+### Follow-Up
+
+- Deliberately submit a funded physical-device transaction and confirm recovered signer,
+  returned hash, network acceptance, and receipt. This verification was not triggered
+  automatically because it spends gas.
+- Add SQLite activity logging and receipt polling, then continue the remaining Gate 6 app
+  flows.
+
+## 2026-08-22 - Gate 5 Physical-Device Proof Completed
+
+### Summary
+
+- Completed the Gate 5 wagmi approval flow on the physical iPhone through the Safari
+  toolbar popup: connect, message, typed-data, transaction, and chain approvals.
+- Confirmed reconnect after an existing grant did not enqueue a duplicate approval,
+  rejection returned EIP-1193 `4001`, and concurrent requests followed creation-order
+  queueing.
+- Gate 5 is now complete; the maintained next work advances to Gate 6.
+
+### Verification
+
+- Served the wagmi dapp from Bun/Vite on the local network and loaded it in iPhone Safari.
+- Manually exercised the complete popup flow on the physical device and confirmed the
+  expected approval, rejection, reconnect, and queue behavior.
+
+### Follow-Up
+
+- Begin Gate 6 with transaction preparation and broadcast, wallet import/backup, and the
+  connected-sites app UI.
+
+## 2026-08-22 - Current Build Deployed To Physical iPhone
+
+### Summary
+
+- Built, development-signed, installed, and launched the current app and nested Safari
+  extension on the paired physical iPhone over the network.
+
+### Verification
+
+- `stupid-app doctor` completed with 0 failures and 0 warnings.
+- `stupid-app device list` found the saved network pairing.
+- `stupid-app run --network --udid <device> --sudo /usr/bin/sudo` assembled and signed
+  the app and extension, packaged the IPA, installed it, and launched the production app
+  bundle successfully.
+
+### Follow-Up
+
+- Drive the physical-device wagmi approval flow to finish Gate 5.
+
 ## 2026-08-22 - Wagmi Dapp Simulator E2E Completed
 
 ### Summary

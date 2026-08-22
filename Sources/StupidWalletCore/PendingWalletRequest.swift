@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Canonical, one-time pending signing request. Crucially the popup never supplies
@@ -9,6 +10,7 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     case consumed
     case rejected
     case expired
+    case failed
   }
 
   public let id: UUID
@@ -23,6 +25,7 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
   public let expiresAt: Date
   public var status: Status
   public var result: JSONValue?
+  public var error: JSONValue?
 
   public var isExpired: Bool { Date() > expiresAt }
 
@@ -38,7 +41,8 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     createdAt: Date = Date(),
     expiresAt: Date = Date().addingTimeInterval(600),
     status: Status = .pending,
-    result: JSONValue? = nil
+    result: JSONValue? = nil,
+    error: JSONValue? = nil
   ) {
     self.id = id
     self.kind = kind
@@ -52,6 +56,7 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     self.expiresAt = expiresAt
     self.status = status
     self.result = result
+    self.error = error
   }
 }
 
@@ -85,6 +90,23 @@ public actor PendingRequestStore {
   public func insert(_ request: WalletPendingRequest) throws {
     let data = try JSONEncoder().encode(request)
     try data.write(to: fileURL(for: request.id), options: [.atomic])
+  }
+
+  /// Cross-instance/process one-time claim. Each Safari native message creates a fresh
+  /// service/store actor, so actor isolation alone cannot prevent concurrent approvals.
+  public nonisolated func claim(_ id: UUID) -> Int32? {
+    let descriptor = open(claimURL(for: id).path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else { return nil }
+    guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+      close(descriptor)
+      return nil
+    }
+    return descriptor
+  }
+
+  public nonisolated func releaseClaim(_ descriptor: Int32) {
+    _ = flock(descriptor, LOCK_UN)
+    _ = close(descriptor)
   }
 
   public func record(_ id: UUID) throws -> WalletPendingRequest? {
@@ -137,5 +159,9 @@ public actor PendingRequestStore {
 
   private func fileURL(for id: UUID) -> URL {
     directory.appendingPathComponent(id.uuidString + ".json")
+  }
+
+  private nonisolated func claimURL(for id: UUID) -> URL {
+    directory.appendingPathComponent(id.uuidString + ".claim")
   }
 }

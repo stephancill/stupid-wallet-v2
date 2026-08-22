@@ -6,6 +6,18 @@
 (() => {
   const SRC_CHANNEL = "__stupid-wallet:request";
   const DST_CHANNEL = "__stupid-wallet:response";
+  const EVENT_CHANNEL = "__stupid-wallet:event";
+
+  browser.runtime.onMessage.addListener((message) => {
+    if (message?.type !== "wallet.chainChanged" || typeof message.chainIdHex !== "string") {
+      return;
+    }
+    postChainChanged(message.chainIdHex);
+  });
+
+  browser.runtime.sendMessage({ type: "wallet.getChain" }).then((chain) => {
+    if (chain && typeof chain.chainIdHex === "string") postChainChanged(chain.chainIdHex);
+  });
 
   window.addEventListener("message", (event) => {
     if (event.source !== window) return;
@@ -36,6 +48,10 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  function postChainChanged(chainId) {
+    window.postMessage({ __channel: EVENT_CHANNEL, event: "chainChanged", value: chainId }, "*");
+  }
+
   async function pollPending(id, requestId) {
     for (let attempt = 0; attempt < 600; attempt++) {
       await sleep(1000);
@@ -45,7 +61,7 @@
           type: "ethereum.status",
           id: requestId,
         });
-      } catch (err) {
+      } catch {
         continue; // worker waking up; retry
       }
       if (reply && reply.__resolved) {
@@ -55,7 +71,7 @@
       }
       if (reply && reply.__error) {
         hideNotice();
-        respond(id, false, { message: reply.__error, code: reply.code });
+        respond(id, false, { message: reply.__error, code: reply.code, data: reply.data });
         return;
       }
       if (reply && reply.__missing) {
@@ -108,7 +124,7 @@
     notice = null;
     try {
       el.remove();
-    } catch (e) {
+    } catch {
       /* ignore */
     }
   }
@@ -121,6 +137,7 @@
       if (payload && typeof payload === "object" && payload.code !== undefined) {
         message.error = payload.message || "Stupid Wallet error";
         message.code = payload.code;
+        if (payload.data !== undefined) message.data = payload.data;
       } else {
         message.error = payload;
       }
@@ -131,7 +148,7 @@
   // Normalize a structured error into `{ message, code }` for the page provider.
   function errorShape(err) {
     if (err && typeof err === "object") {
-      return { message: err.message || String(err), code: err.code };
+      return { message: err.message || String(err), code: err.code, data: err.data };
     }
     return { message: String(err || "Unknown error") };
   }

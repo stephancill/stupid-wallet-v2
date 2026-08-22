@@ -1,7 +1,6 @@
 import Foundation
 
-/// Canonical Ethereum transaction encodings for Gate 3 signing. Only serialization and
-/// signing-payload production live here; submission happens in a later gate.
+/// Canonical Ethereum transaction encodings for signing and raw transaction submission.
 public enum EncodingError: Error { case badQuantity, badTo, badField }
 
 /// Legacy (pre-1559) transaction with EIP-155 replay protection.
@@ -30,6 +29,18 @@ public struct LegacyTransaction: Sendable {
   /// Signing payload = RLP(nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0).
   public func signingPayload() throws -> [UInt8] {
     let fields = try rlpFields()
+    return RLP.encode(.list(fields))
+  }
+
+  /// Signed EIP-155 transaction = RLP(nonce, gasPrice, gasLimit, to, value, data, v, r, s).
+  public func signedPayload(signature: [UInt8]) throws -> [UInt8] {
+    let parts = try SignatureParts(signature)
+    var fields = Array(try rlpFields().prefix(6))
+    fields.append(contentsOf: [
+      .string(Self.chainIDBytes(chainId * 2 + 35 + parts.yParity)),
+      .string(parts.r),
+      .string(parts.s),
+    ])
     return RLP.encode(.list(fields))
   }
 
@@ -100,13 +111,25 @@ public struct EIP1559Transaction: Sendable {
   }
 
   /// Signing payload = 0x02 ‖ RLP(chainId, nonce, maxPri, maxFee, gasLimit, to, value,
-  /// data, [], 0, 0).
+  /// data, []).
   public func signingPayload() throws -> [UInt8] {
-    let rlp = try signingFields()
+    let rlp = try transactionFields()
     return [0x02] + RLP.encode(.list(rlp))
   }
 
-  private func signingFields() throws -> [RLP.Item] {
+  /// Signed type-2 transaction = 0x02 ‖ RLP(unsigned fields, yParity, r, s).
+  public func signedPayload(signature: [UInt8]) throws -> [UInt8] {
+    let parts = try SignatureParts(signature)
+    var fields = try transactionFields()
+    fields.append(contentsOf: [
+      .string(parts.yParity == 0 ? [] : [UInt8(parts.yParity)]),
+      .string(parts.r),
+      .string(parts.s),
+    ])
+    return [0x02] + RLP.encode(.list(fields))
+  }
+
+  private func transactionFields() throws -> [RLP.Item] {
     guard
       let nonceBytes = Hex.quantityData(hex: nonce),
       let priBytes = Hex.quantityData(hex: maxPriorityFeePerGas),
@@ -133,9 +156,6 @@ public struct EIP1559Transaction: Sendable {
       .string(RLP.trimQuantity(valueBytes)),
       .string(dataBytes),
       .list([]),  // empty access list
-      .string([]),  // yParity 0
-      .string([]),  // r 0
-      .string([]),  // s 0
     ])
     return fields
   }
@@ -148,6 +168,21 @@ public struct EIP1559Transaction: Sendable {
       v >>= 8
     } while v > 0
     return bytes
+  }
+}
+
+private struct SignatureParts {
+  let r: [UInt8]
+  let s: [UInt8]
+  let yParity: Int
+
+  init(_ signature: [UInt8]) throws {
+    guard signature.count == 65, signature[64] == 27 || signature[64] == 28 else {
+      throw EncodingError.badField
+    }
+    r = RLP.trimQuantity(Array(signature[0..<32]))
+    s = RLP.trimQuantity(Array(signature[32..<64]))
+    yParity = Int(signature[64] - 27)
   }
 }
 

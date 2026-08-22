@@ -94,6 +94,19 @@ struct EIP55Tests {
   }
 }
 
+struct EIP712Tests {
+  @Test("Permit2 uint160 and uint48 values match viem")
+  func permit2IntegerWidths() throws {
+    let json = """
+      {"types":{"PermitSingle":[{"name":"details","type":"PermitDetails"},{"name":"spender","type":"address"},{"name":"sigDeadline","type":"uint256"}],"PermitDetails":[{"name":"token","type":"address"},{"name":"amount","type":"uint160"},{"name":"expiration","type":"uint48"},{"name":"nonce","type":"uint48"}],"EIP712Domain":[{"name":"name","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}]},"domain":{"name":"Permit2","chainId":"8453","verifyingContract":"0x000000000022d473030f116ddee9f6b43ac78ba3"},"primaryType":"PermitSingle","message":{"details":{"token":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","amount":"1461501637330902918203684832716283019655932542975","expiration":"1790027953","nonce":"0"},"spender":"0xfdf682f51fe81aa4898f0ae2163d8a55c127fbc7","sigDeadline":"1787437753"}}
+      """
+    let typedData = try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+    #expect(
+      Hex.encode(try EIP712.prefixedHash(of: typedData))
+        == "bd66d964dead637a052ac706937c5e3f27b286c5a36a01d55db65c14f4a09fde")
+  }
+}
+
 struct RLPTests {
   @Test("empty string encodes to 0x80")
   func emptyString() {

@@ -13,10 +13,18 @@ struct ApprovalTests {
     return PendingRequestStore(directory: dir)
   }
 
+  private static func tmpChainStore() -> ChainStore {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ApprovalChainTests-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return ChainStore(directory: directory)
+  }
+
   private func service(
     _ store: PendingRequestStore? = nil, signer: any Signing = StubSigner()
   ) -> WalletService {
-    WalletService(store: store ?? Self.tmpStore(), signing: signer)
+    WalletService(
+      store: store ?? Self.tmpStore(), signing: signer, chainStore: Self.tmpChainStore())
   }
 
   private func prepareMessage(
@@ -93,7 +101,8 @@ struct ApprovalTests {
   @Test("an expired request becomes expired and is not signable")
   func expiryRejected() async throws {
     let store = Self.tmpStore()
-    let svc = WalletService(store: store, signing: StubSigner())
+    let chainStore = Self.tmpChainStore()
+    let svc = WalletService(store: store, signing: StubSigner(), chainStore: chainStore)
     let id = UUID()
     let record = WalletPendingRequest(
       id: id,
@@ -110,7 +119,7 @@ struct ApprovalTests {
     )
     try await store.insert(record)
     await #expect(throws: WalletError.expired) {
-      try await WalletService(store: store, signing: StubSigner()).approve(
+      try await WalletService(store: store, signing: StubSigner(), chainStore: chainStore).approve(
         request: id)
     }
     let status = await svc.status(for: id)
@@ -217,9 +226,29 @@ struct ApprovalTests {
     #expect(summary?.rows.contains { $0.label == "Domain" && $0.value == "Test" } == true)
   }
 
+  @Test("Permit2 typed data approves and consumes with wide unsigned integers")
+  func permit2TypedDataParams() async throws {
+    let svc = service()
+    let typedJSON = """
+      {"types":{"PermitSingle":[{"name":"details","type":"PermitDetails"},{"name":"spender","type":"address"},{"name":"sigDeadline","type":"uint256"}],"PermitDetails":[{"name":"token","type":"address"},{"name":"amount","type":"uint160"},{"name":"expiration","type":"uint48"},{"name":"nonce","type":"uint48"}],"EIP712Domain":[{"name":"name","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}]},"domain":{"name":"Permit2","chainId":"8453","verifyingContract":"0x000000000022d473030f116ddee9f6b43ac78ba3"},"primaryType":"PermitSingle","message":{"details":{"token":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","amount":"1461501637330902918203684832716283019655932542975","expiration":"1790027953","nonce":"0"},"spender":"0xfdf682f51fe81aa4898f0ae2163d8a55c127fbc7","sigDeadline":"1787437753"}}
+      """
+    let id = try await svc.prepare(
+      method: "eth_signTypedData_v4",
+      params: .array([
+        .string("0x1234567890abcdef1234567890abcdef12345678"),
+        .string(typedJSON),
+      ]),
+      origin: "https://dapp.example")
+
+    let result = try await svc.approve(request: id)
+    #expect(result.stringValue?.hasPrefix("0x") == true)
+    #expect(await svc.status(for: id)?.status == "consumed")
+  }
+
   @Test("wallet_addEthereumChain accepts standard [chainObject] params")
   func standardChainParams() async throws {
     let svc = service()
+    await svc.connect(origin: "https://dapp.example")
     let id = try await svc.prepare(
       method: "wallet_addEthereumChain",
       params: .array([
@@ -234,5 +263,23 @@ struct ApprovalTests {
     #expect(summary?.title == "Add network")
     #expect(summary?.rows.contains { $0.label == "Chain ID" && $0.value == "0x89" } == true)
     #expect(summary?.rows.contains { $0.label == "Name" && $0.value == "Polygon" } == true)
+  }
+
+  @Test("approval rejects a signer that no longer matches the persisted account")
+  func signerReplacementRejected() async throws {
+    let store = Self.tmpStore()
+    let original = WalletService(
+      store: store, signing: StubSigner(account: "0x1234567890abcdef1234567890abcdef12345678"),
+      connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
+      chainStore: Self.tmpChainStore())
+    let id = try await prepareMessage(original)
+    let replacement = WalletService(
+      store: store, signing: StubSigner(account: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"),
+      connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
+      chainStore: original.chainStore)
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await replacement.approve(request: id)
+    }
+    #expect(await replacement.status(for: id)?.status == "pending")
   }
 }

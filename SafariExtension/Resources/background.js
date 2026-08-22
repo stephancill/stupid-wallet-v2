@@ -3,7 +3,6 @@
 // completion back to the requesting tab once the popup resolves the request.
 (() => {
   const pending = new Map(); // requestId -> { sendResponse }
-  let account = null;
 
   // Method kinds that require the native approval surface. `eth_requestAccounts` is a
   // connect; chain/switch/add/typed-data/send also approve. Everything else is
@@ -32,23 +31,12 @@
     "eth_signtypeddata_v1",
     "eth_signtypeddata_v3",
   ]);
-  // With these methods the native handler returns a result that is not a signature;
-  // reject must map to EIP-1193 4001 and never present a signature.
-  const NON_SIGNING_APPROVALS = new Set([
-    "eth_requestaccounts",
-    "wallet_connect",
-    "eth_sendtransaction",
-    "eth_addethereumchain",
-    "wallet_addethereumchain",
-    "wallet_switchethereumchain",
-  ]);
-
   function originFrom(sender) {
     if (sender && sender.origin) return sender.origin;
     if (sender && sender.tab && sender.tab.url) {
       try {
         return new URL(sender.tab.url).origin;
-      } catch (e) {
+      } catch {
         /* ignore */
       }
     }
@@ -76,9 +64,33 @@
   function setBadge(text) {
     try {
       browser.action.setBadgeText({ text });
-    } catch (e) {
+    } catch {
       /* ignore */
     }
+  }
+
+  async function activeChain() {
+    const response = await native({ action: "chain" });
+    if (!response.ok || !response.data) return null;
+    if (response.data.recoveredSwitch) publishChain(response.data);
+    return response.data;
+  }
+
+  function publishChain(chain) {
+    browser.tabs.query({}, (tabs) => {
+      for (const tab of tabs || []) {
+        if (tab.id === undefined) continue;
+        browser.tabs.sendMessage(tab.id, {
+          type: "wallet.chainChanged",
+          chainIdHex: chain.chainIdHex,
+        });
+      }
+    });
+  }
+
+  async function broadcastChainChanged() {
+    const chain = await activeChain();
+    if (chain) publishChain(chain);
   }
 
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -93,6 +105,11 @@
           return await route(message, sender, sendResponse);
         case "ethereum.status":
           return await status(message, sendResponse);
+        case "wallet.getChain": {
+          const chain = await activeChain();
+          sendResponse(chain || { error: "Active chain unavailable" });
+          return;
+        }
         case "popup.getPending":
           return getPending(sendResponse);
         case "popup.list":
@@ -101,11 +118,22 @@
           sendResponse(nativeList.ok && nativeList.data ? nativeList.data.pending : []);
           return;
         case "popup.approve":
+          const approvalSummary = await native({
+            action: "summary",
+            payload: { requestId: message.requestId },
+          });
           const approved = await native({
             action: "approve",
             payload: { requestId: message.requestId },
           });
           if (approved.ok && approved.data) {
+            if (
+              approvalSummary.ok &&
+              approvalSummary.data &&
+              approvalSummary.data.method.toLowerCase() === "wallet_switchethereumchain"
+            ) {
+              await broadcastChainChanged();
+            }
             sendResponse({ ok: true, result: approved.data.result });
           } else {
             sendResponse({
@@ -176,11 +204,23 @@
       return;
     }
     if (method === "eth_chainid") {
-      envelope(sendResponse, { ok: true, result: "0x1" });
+      const chain = await activeChain();
+      envelope(
+        sendResponse,
+        chain
+          ? { ok: true, result: chain.chainIdHex }
+          : { ok: false, error: { code: -32603, message: "Active chain unavailable" } },
+      );
       return;
     }
     if (method === "net_version") {
-      envelope(sendResponse, { ok: true, result: "1" });
+      const chain = await activeChain();
+      envelope(
+        sendResponse,
+        chain
+          ? { ok: true, result: chain.chainId }
+          : { ok: false, error: { code: -32603, message: "Active chain unavailable" } },
+      );
       return;
     }
 
@@ -217,18 +257,29 @@
 
     // Connect / signing / sending / chain-change methods are canonical approvals.
     if (APPROVAL_METHODS.has(method)) {
+      const chain = await activeChain();
+      if (!chain) {
+        envelope(sendResponse, {
+          ok: false,
+          error: { code: -32603, message: "Active chain unavailable" },
+        });
+        return;
+      }
       const prepared = await native({
         action: "prepare",
         method,
         params: message.params,
         origin: pageOrigin,
-        chainId: "1",
+        chainId: chain.chainId,
       });
       if (!prepared.ok) {
         const code = (prepared.error && prepared.error.code) || 4001;
         const msg =
           (prepared.error && prepared.error.message) || String(prepared.error || "approval failed");
-        envelope(sendResponse, { ok: false, error: { code, message: msg } });
+        envelope(sendResponse, {
+          ok: false,
+          error: { code, message: msg, data: prepared.error && prepared.error.data },
+        });
         return;
       }
       const requestId = prepared.data.requestId;
@@ -243,12 +294,20 @@
     // Generic passthrough: forward every other method unchanged to the active RPC
     // through the single native resolver. Node results and structured errors return
     // untouched.
+    const chain = await activeChain();
+    if (!chain) {
+      envelope(sendResponse, {
+        ok: false,
+        error: { code: -32603, message: "Active chain unavailable" },
+      });
+      return;
+    }
     const passthrough = await native({
       action: "passthrough",
-      method,
+      method: message.method,
       params: message.params ?? [],
       origin: originFrom(sender),
-      chainId: "1",
+      chainId: chain.chainId,
     });
     if (passthrough.ok && passthrough.data && passthrough.data.result !== undefined) {
       envelope(sendResponse, { ok: true, result: passthrough.data.result });
@@ -293,11 +352,36 @@
       setBadge(String(pending.size));
     }
     if (res.data.status === "consumed") {
+      const summary = await native({ action: "summary", payload: { requestId: message.id } });
+      if (
+        summary.ok &&
+        summary.data &&
+        summary.data.method.toLowerCase() === "wallet_switchethereumchain"
+      ) {
+        await broadcastChainChanged();
+      }
       sendResponse({ __resolved: true, result: res.data.result });
       return;
     }
     if (res.data.status === "rejected") {
       sendResponse({ __error: "User rejected", code: 4001 });
+      return;
+    }
+    if (res.data.status === "failed") {
+      pending.delete(message.id);
+      setBadge(String(pending.size));
+      const error = res.data.error || {};
+      sendResponse({
+        __error: error.message || "Transaction submission failed",
+        code: error.code || -32603,
+        data: error.data,
+      });
+      return;
+    }
+    if (res.data.status === "expired") {
+      pending.delete(message.id);
+      setBadge(String(pending.size));
+      sendResponse({ __error: "Request expired", code: 4001 });
       return;
     }
     sendResponse({ __pending: true });

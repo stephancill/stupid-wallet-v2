@@ -50,7 +50,7 @@
     const host = document.createElement("div");
     try {
       host.textContent = new URL(data.origin || "").host || data.origin || "unknown";
-    } catch (e) {
+    } catch {
       host.textContent = data.origin || "unknown";
     }
     host.className = "sub";
@@ -121,7 +121,7 @@
       if (reply && reply.error) {
         const toast = document.createElement("div");
         toast.className = "toast";
-        toast.textContent = reply.message || String(reply.error);
+        toast.textContent = reply.message || reply.error?.message || String(reply.error);
         tray.insertBefore(toast, tray.firstChild);
         button.disabled = false;
         return;
@@ -150,7 +150,10 @@
     if (reply && reply.length > 0) {
       const first = reply[0].data || reply[0] || {};
       const chainId = first.chainId;
-      if (chainId) chainPill.textContent = chainId === "1" ? "Ethereum" : `Chain ${chainId}`;
+      if (chainId) {
+        chainPill.textContent =
+          chainId === "1" ? "Ethereum" : chainId === "8453" ? "Base" : `Chain ${chainId}`;
+      }
     }
   }
 

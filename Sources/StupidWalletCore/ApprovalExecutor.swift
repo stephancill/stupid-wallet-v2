@@ -40,12 +40,22 @@ public enum RequestExecutor {
       // eth_requestAccounts / wallet_connect resolve to the account list.
       return .array([.string(request.account)])
     case .chain:
-      return .bool(true)
+      return .null
     case .send:
-      // The signed raw transaction bytes are returned for broadcast.
-      return .string("0x" + Hex.encode(signature))
+      return .string("0x" + Hex.encode(try signedTransaction(signature: signature, for: request)))
     case .denied, .passthrough:
       throw ApprovalError.notSignable(request.method)
+    }
+  }
+
+  /// Serializes the authenticated signature into the exact raw transaction submitted to
+  /// `eth_sendRawTransaction`.
+  public static func signedTransaction(
+    signature: [UInt8], for request: WalletPendingRequest
+  ) throws -> [UInt8] {
+    switch try transaction(request) {
+    case .legacy(let transaction): return try transaction.signedPayload(signature: signature)
+    case .eip1559(let transaction): return try transaction.signedPayload(signature: signature)
     }
   }
 
@@ -84,38 +94,50 @@ public enum RequestExecutor {
   /// digest (legacy or EIP-1559) for the transaction, mixing the request ID in so the
   /// digest is bound to the pending record.
   private static func transactionDigest(_ request: WalletPendingRequest) throws -> [UInt8] {
+    let payload: [UInt8]
+    switch try transaction(request) {
+    case .legacy(let transaction): payload = try transaction.signingPayload()
+    case .eip1559(let transaction): payload = try transaction.signingPayload()
+    }
+    return Keccak.keccak256(payload)
+  }
+
+  private enum ParsedTransaction {
+    case legacy(LegacyTransaction)
+    case eip1559(EIP1559Transaction)
+  }
+
+  private static func transaction(_ request: WalletPendingRequest) throws -> ParsedTransaction {
     guard case .array(let items) = request.params,
       case .object(let tx) = items.first
     else { throw ApprovalError.badParams }
 
     func h(_ key: String) -> String { tx[key]?.stringValue ?? "" }
     let chainID = tx["chainId"]?.intValue ?? 1
-    let payload: [UInt8]
     if tx["type"]?.stringValue == "0x2" || (!h("maxFeePerGas").isEmpty) {
-      let tx = EIP1559Transaction(
-        chainId: chainID,
-        nonce: h("nonce"),
-        maxPriorityFeePerGas: h("maxPriorityFeePerGas"),
-        maxFeePerGas: h("maxFeePerGas"),
-        gasLimit: h("gas"),
-        to: h("to").isEmpty ? nil : h("to"),
-        value: h("value"),
-        data: h("data")
-      )
-      payload = try tx.signingPayload()
+      return .eip1559(
+        EIP1559Transaction(
+          chainId: chainID,
+          nonce: h("nonce"),
+          maxPriorityFeePerGas: h("maxPriorityFeePerGas"),
+          maxFeePerGas: h("maxFeePerGas"),
+          gasLimit: h("gas"),
+          to: h("to").isEmpty ? nil : h("to"),
+          value: h("value"),
+          data: h("data")
+        ))
     } else {
-      let tx = LegacyTransaction(
-        nonce: h("nonce"),
-        gasPrice: h("gasPrice"),
-        gasLimit: h("gas"),
-        to: h("to").isEmpty ? nil : h("to"),
-        value: h("value"),
-        data: h("data"),
-        chainId: chainID
-      )
-      payload = try tx.signingPayload()
+      return .legacy(
+        LegacyTransaction(
+          nonce: h("nonce"),
+          gasPrice: h("gasPrice"),
+          gasLimit: h("gas"),
+          to: h("to").isEmpty ? nil : h("to"),
+          value: h("value"),
+          data: h("data"),
+          chainId: chainID
+        ))
     }
-    return Keccak.keccak256(payload)
   }
 }
 

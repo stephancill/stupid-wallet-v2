@@ -62,6 +62,18 @@ private enum Server {
     case "me":
       return success(["account": .string(service.account)])
 
+    case "chain":
+      guard let state = try? await service.activeChainState(),
+        let hex = ChainStore.hexChainID(state.chainID)
+      else {
+        return errorJSON(-32603, "Invalid active chain")
+      }
+      return success([
+        "chainId": .string(state.chainID),
+        "chainIdHex": .string(hex),
+        "recoveredSwitch": .bool(state.recoveredSwitch),
+      ])
+
     case "isConnected":
       let origin = envelope.origin ?? "unknown"
       return success(["connected": .bool(await service.isConnected(origin: origin))])
@@ -69,12 +81,13 @@ private enum Server {
     case "listSites":
       let sites = await service.connectedSitesList()
       return success([
-        "sites": .array(sites.map {
-          .object([
-            "domain": .string($0.domain),
-            "address": .string($0.address),
-          ])
-        })
+        "sites": .array(
+          sites.map {
+            .object([
+              "domain": .string($0.domain),
+              "address": .string($0.address),
+            ])
+          })
       ])
 
     case "disconnectSite":
@@ -85,10 +98,13 @@ private enum Server {
     case "passthrough":
       let method = envelope.method ?? ""
       guard !method.isEmpty else { return failure("missing method") }
+      guard let activeChainID = try? await service.activeChainID() else {
+        return errorJSON(4900, "Active chain is unavailable")
+      }
       let outcome = await service.passthrough(
         method: method,
         params: envelope.params ?? .array([]),
-        chainID: envelope.chainId ?? "1"
+        chainID: activeChainID
       )
       switch outcome {
       case .result(let value):
@@ -109,18 +125,27 @@ private enum Server {
     case "prepare":
       let method = envelope.method ?? ""
       guard !method.isEmpty else { return failure("missing method") }
+      guard let activeChainID = try? await service.activeChainID() else {
+        return errorJSON(4900, "Active chain is unavailable")
+      }
       do {
         let id = try await service.prepare(
           method: method,
           params: envelope.params ?? .array([]),
           origin: envelope.origin ?? "unknown",
-          chainId: envelope.chainId ?? "1"
+          chainId: activeChainID
         )
         return success(["requestId": .string(id.uuidString)])
       } catch WalletError.methodNotApproved {
         return errorJSON(4200, "Method not approved")
       } catch WalletError.notReady {
         return errorJSON(4900, "No wallet key is available yet")
+      } catch WalletError.invalidParams {
+        return errorJSON(-32602, "Invalid transaction parameters")
+      } catch WalletError.unauthorized {
+        return errorJSON(4100, "Origin is not connected")
+      } catch WalletError.rpc(let error) {
+        return .object(["ok": .bool(false), "error": error])
       } catch {
         return failure("prepare failed")
       }
@@ -149,6 +174,8 @@ private enum Server {
         return errorJSON(-32602, "Request payload changed")
       } catch WalletError.authCancelled {
         return errorJSON(4001, "User rejected")
+      } catch WalletError.rpc(let error) {
+        return .object(["ok": .bool(false), "error": error])
       } catch {
         return failure("approve failed")
       }
@@ -159,6 +186,9 @@ private enum Server {
         var object: [String: JSONValue] = ["status": .string(status.status)]
         if let result = status.result {
           object["result"] = result
+        }
+        if let error = status.error {
+          object["error"] = error
         }
         return success(object)
       }

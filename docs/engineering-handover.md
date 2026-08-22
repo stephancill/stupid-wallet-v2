@@ -41,12 +41,18 @@ Gate 3 (key and Ethereum primitives) exit conditions are met: vendored `libsecp2
 (v0.5.1) builds as the `CSecp256k1` SwiftPM C target; project-owned Keccak-256, RLP,
 EIP-191, EIP-712 struct hashing, and legacy/EIP-1559 transaction serialization; key
 generation, address derivation, EIP-55, sign, and recovery through the vendored target —
-all verified against independent vectors (the legacy transaction preimage matched a
-cross-implementation vector byte-for-byte; the EIP-1559 preimage/hash cross-checked with
-`cast keccak`). New-format key storage in the shared keychain (`KeychainKeyStore`,
+all verified against independent vectors. Legacy and EIP-1559 signing preimages, hashes,
+and complete signed raw transactions now match viem byte-for-byte; this corrected the
+earlier type-2 preimage, which incorrectly included empty signature fields. New-format key
+storage in the shared keychain (`KeychainKeyStore`,
 `.userPresence` + `ThisDeviceOnly`) was proven on a physical device: Face ID/passcode
 released a self-test key on an on-device generate → save → reload-with-authentication →
 re-derive → sign+recover run.
+
+EIP-712 unsigned integer encoding accepts the full 256-bit value range and enforces each
+declared `uintN` width without converting through host `Int`. A Permit2 vector containing
+maximum `uint160` allowance and `uint48` fields matches viem's digest. Popup approval errors
+extract structured native/RPC `message` text rather than rendering `[object Object]`.
 
 Gate 4 (upgrade migration) exit conditions are met on a physical device: an old-format
 wallet installed on the iPhone was upgraded in place by the new app, the recovered
@@ -58,8 +64,8 @@ authenticated sign-and-recover proof before completion, and retained old materia
 explicit cleanup. A duplicate decrypt was removed so a successful run shows exactly two
 Face ID/passcode prompts.
 
-Gate 5 (canonical approval protocol) code is in place, and the grant + standard-params
-work is done:
+Gate 5 (canonical approval protocol) exit conditions are met, including the grant +
+standard-params work:
 - Pending requests move into the shared App Group
   (`PendingRequestStore.defaultAppGroup = group.co.za.stephancill.stupid-wallet`), so the
   app and extension read/write the same durable records and pending requests survive
@@ -94,9 +100,35 @@ work is done:
   expired/auth-cancelled (4001), queued/binding-mismatch (‑32000/‑32602), and
   not-ready (4900). Denied methods never prepare.
 
-The physical half of Gate 5 (popup approvals on a device binding to canonical records)
-remains to be run, so the gate's "prove popup approvals bind" step is outstanding until
-that is done.
+- The physical-device wagmi flow was completed through the Safari popup for connect,
+  message, typed-data, send, and chain approvals. Reconnect after a grant did not enqueue
+  a duplicate approval, rejection returned `4001`, and concurrent requests followed the
+  documented queue order.
+
+Gate 6 is underway. `eth_sendTransaction` now fills missing nonce, gas limit, and legacy
+or EIP-1559 fee fields through the shared resolver before persisting the canonical request;
+the popup summary shows the prepared nonce/gas/fees. Approval signs a canonical legacy or
+type-2 raw transaction, submits it with `eth_sendRawTransaction`, and resolves to the
+32-byte transaction hash. Structured node/transport submission failures become durable
+terminal request errors so polling does not strand the dapp promise. Approval/rejection
+uses an OS advisory lock across handler/store instances, binds the current signer back to
+the persisted account, revalidates transaction semantics at approval, rejects unsupported
+or ambiguous fields, and verifies the node-returned hash against the signed raw bytes.
+Hermetic submission tests pass and the build is installed on the physical iPhone. A funded
+simulator wallet completed a zero-value self-transfer on Base through the full dapp → popup
+→ authenticated signer → `eth_sendRawTransaction` path: the returned hash matched the raw
+transaction, the node recovered the expected simulator signer, and the receipt succeeded
+with 21,000 gas used. Physical-device broadcast remains separate from this simulator proof.
+
+Active chain state is no longer a JavaScript/build constant. `ChainStore` persists the
+normalized decimal chain ID in the shared App Group (mainnet on first run), and native code
+is authoritative for `eth_chainId`, `net_version`, approval binding, transaction
+preparation, and passthrough routing. Approved `wallet_switchEthereumChain` requests from a
+currently connected origin update that state; `wallet_addEthereumChain` does not switch.
+Stale queued requests fail terminally with `4901`. A global advisory lock plus a write-ahead
+switch journal prevents concurrent readers from observing an uncommitted chain and recovers
+the old or target chain according to durable request consumption after interruption. The
+worker broadcasts the canonical native chain to every tab, including after recovery.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, real `Signing` (KeychainSigner) plus fresh-`LAContext`
   keychain access as the single device-owner authentication boundary.
@@ -120,17 +152,40 @@ structured EIP-1193 errors surface on the dapp; the method casing is normalized 
 `background.js` so approval methods do not fall through to RPC passthrough. `WalletFactory`
 creates a new wallet at runtime.
 
-The prototype is not fully gate-complete past Gate 5, but the complete wagmi flow is now
-proven on the iOS simulator: connect; personal-sign and typed-data signatures; complete
-legacy transaction signing (returns the signed raw payload, not broadcast); chain-change
-approval and `4001` rejection; and disconnect followed by a fresh connect approval. The
-run fixed a JavaScript casing bug that sent `eth_chainId` to passthrough and a transaction
-quantity parser that rejected canonical odd-nibble JSON-RPC quantities such as `0x0`.
+The prototype is gate-complete through Gate 5. The complete wagmi flow is proven on both
+the iOS simulator and physical iPhone: connect; personal-sign and typed-data signatures;
+complete legacy transaction signing and broadcast plumbing (including live Base network
+acceptance); chain-change approval and `4001` rejection; queue ordering; and disconnect
+followed by a fresh connect approval. The simulator run fixed a JavaScript casing bug that
+sent `eth_chainId` to passthrough and a transaction quantity parser that rejected canonical
+odd-nibble JSON-RPC quantities such as `0x0`.
 It preserves the identity, security, and documentation rules and its
 Safari messaging/popup/Face ID, JSON/RPC proxy, key/transaction/crypto primitives,
 old-format migration, canonical approval protocol, and real keychain signing all work.
 The physical device remains the authoritative surface for provisioning and keychain-group
 continuity.
+
+The wagmi fixture now includes mainnet and Base. WebExtension manifest `0.1.9` invalidates
+the previous Base-only worker. Simulator verification proved mainnet default → approved
+Base switch → `chainChanged`/wagmi chain 8453 → App Group persistence → Safari reload and
+reconnect still reporting Base. Live Uniswap verification found that the worker normalized
+method names for classification and accidentally forwarded the normalized spelling to the
+case-sensitive RPC. For example, `eth_blockNumber` became invalid `eth_blocknumber`, so
+Uniswap failed before requesting the swap transaction. Passthrough now forwards the
+original method string unchanged while retaining normalized classification. A funded
+simulator ETH-to-USDC swap on Base then completed through canonical review, authenticated
+signing, broadcast, and a successful receipt with the expected USDC transfer.
+
+The reverse Uniswap path is also proven on the simulator. Its initial USDC allowance
+transaction succeeded, but the following Permit2 typed-data request exposed two bugs:
+popup code rendered a structured error as `[object Object]`, and EIP-712 converted integer
+values through host `Int`, rejecting Permit2's maximum `uint160` allowance and `uint48`
+fields. Popup errors now read the structured message, and unsigned EIP-712 integers parse
+up to 256 bits with declared-width validation. A Permit2 digest matches viem, service-level
+approval signs and consumes it, and a live USDC-to-ETH swap completed with a successful
+Base receipt. One preceding broadcast returned a hash but did not propagate to either the
+configured RPC or an independent node; both pending/latest nonces remained unchanged, so a
+fresh canonical replacement at the same nonce was safe and mined.
 
 The existing implementation in `../ios-wallet` is a behavior and migration reference,
 not a codebase to copy wholesale. It contains useful feature work, protocol handling,
@@ -147,7 +202,7 @@ gate-proven behavior:
   `KeychainSigner` (shared-keychain key + vendored secp256k1). On a fresh install with no
   key present, signing reports `notReady` rather than mocking.
 - The Face ID/passcode step is a real `LAContext` device-owner prompt on both device and
-  simulator. On-device popup->approval proof for the full Gate 5 set is still outstanding.
+  simulator. Popup-to-approval binding for the full Gate 5 flow is proven on-device.
 - The service worker keeps its pending map in memory for completion routing; durable
   delivery across suspension is verified by the native store + polling.
 
@@ -787,21 +842,20 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Finish Gate 5's physical proof on the iPhone using the wagmi dapp: drive
-   connect/message/typed-data/send/chain approvals through the Safari popup and confirm
-   each binds to its canonical pending record, that re-connect after a grant does not
-   enqueue a duplicate approval, rejects map to `4001`, and the queued policy holds.
-   Confirm the shared App Group connected-sites and pending stores are readable by both
-   the app and extension.
-2. Gate 6 (Secure Wallet Core): app-side connected-apps list/disconnect UI (native
-   `listSites`/`disconnectSite` actions exist), create/import/backup flows, and real
-   transaction broadcast so `eth_sendTransaction` submits rather than returning a signed
-   payload.
-3. Gate 7 and later per the implementation gates.
+1. Continue Gate 6 with SQLite transaction activity and receipt polling now that a live
+   Base transaction is accepted and its receipt shape is proven.
+2. Continue Gate 6 with app-side connected-apps list/disconnect UI (native
+   `listSites`/`disconnectSite` actions exist), create/import/backup flows, persisted RPC
+   overrides, and balance display.
+3. Migrate legacy hostname-only grants to scheme + effective port + Safari profile without
+   breaking old-app readability; until then this locked compatibility shape remains weaker
+   for global chain authorization than the target origin model.
+4. Gate 7 and later per the implementation gates.
 
 ## Reference Sources
 
 - Existing app and migration source: `../ios-wallet`.
+- Repository debugging workflow: `skills/stupid-wallet-debugging/SKILL.md`.
 - `stupid-app` source and extension packaging behavior: `../stupid-ios-dev`.
 - Maintained CLI extension scope:
   `../stupid-ios-dev/docs/app-extensions-app-groups-scope.md`.

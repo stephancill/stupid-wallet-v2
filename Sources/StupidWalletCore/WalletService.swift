@@ -1,6 +1,6 @@
 import Foundation
 
-public enum WalletError: Error, Sendable {
+public enum WalletError: Error, Sendable, Equatable {
   case invalidParams
   case unsupported
   case notFound
@@ -12,6 +12,8 @@ public enum WalletError: Error, Sendable {
   case bindingMismatch
   case queued
   case methodNotApproved
+  case rpc(JSONValue)
+  case unauthorized
 }
 
 /// Renders the human-readable canonical summary for a request kind. Display-only; the
@@ -55,12 +57,27 @@ public enum ApprovalSummary {
       rows.append(("Account", request.account))
       rows.append(("Chain", request.chainId))
       if let tx = Self.firstObject(request.params) {
-        if let to = tx["to"]?.stringValue, !to.isEmpty { rows.append(("To", to)) }
+        if let to = tx["to"]?.stringValue, !to.isEmpty {
+          rows.append(("To", to))
+        } else {
+          rows.append(("To", "Contract creation"))
+        }
         if let value = tx["value"]?.stringValue, value != "0x0", !value.isEmpty {
           rows.append(("Value", value))
         }
         if let data = tx["data"]?.stringValue, !data.isEmpty, data != "0x" {
           rows.append(("Data", Self.dataDigest(data)))
+        }
+        if let nonce = tx["nonce"]?.stringValue { rows.append(("Nonce", nonce)) }
+        if let gas = tx["gas"]?.stringValue { rows.append(("Gas limit", gas)) }
+        if let gasPrice = tx["gasPrice"]?.stringValue {
+          rows.append(("Gas price", gasPrice))
+        }
+        if let maxFee = tx["maxFeePerGas"]?.stringValue {
+          rows.append(("Max fee per gas", maxFee))
+        }
+        if let priorityFee = tx["maxPriorityFeePerGas"]?.stringValue {
+          rows.append(("Priority fee", priorityFee))
         }
       }
     case .chain:
@@ -162,6 +179,7 @@ public actor WalletService {
   public nonisolated let store: PendingRequestStore
   public nonisolated let signing: any Signing
   public nonisolated let connectedSites: ConnectedSitesStore
+  public nonisolated let chainStore: ChainStore
   nonisolated let resolver: RPCResolver
   nonisolated let rpcClient: RPCClient
 
@@ -169,12 +187,14 @@ public actor WalletService {
     store: PendingRequestStore? = nil,
     signing: any Signing,
     connectedSites: ConnectedSitesStore? = nil,
+    chainStore: ChainStore = ChainStore(),
     resolver: RPCResolver = RPCResolver(),
     rpcClient: RPCClient = RPCClient()
   ) {
     self.signing = signing
     self.store = store ?? PendingRequestStore()
     self.connectedSites = connectedSites ?? ConnectedSitesStore()
+    self.chainStore = chainStore
     self.resolver = resolver
     self.rpcClient = rpcClient
   }
@@ -188,6 +208,11 @@ public actor WalletService {
     self.signing = signing
     self.store = store ?? PendingRequestStore()
     self.connectedSites = ConnectedSitesStore(suiteName: grantsSuite)
+    let chainDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ChainStore-\(grantsSuite)")
+    try? FileManager.default.createDirectory(
+      at: chainDirectory, withIntermediateDirectories: true)
+    self.chainStore = ChainStore(directory: chainDirectory)
     self.resolver = RPCResolver()
     self.rpcClient = RPCClient()
   }
@@ -217,6 +242,29 @@ public actor WalletService {
   }
 
   public nonisolated var account: String { signing.account }
+  public struct ActiveChainState: Sendable {
+    public let chainID: String
+    public let recoveredSwitch: Bool
+  }
+
+  public func activeChainState() async throws -> ActiveChainState {
+    guard let claim = chainStore.claimSwitch(wait: true) else { throw ChainStoreError.unavailable }
+    defer { chainStore.releaseSwitch(claim) }
+    var recovered = false
+    if try chainStore.pendingSwitch() != nil {
+      if let currentJournal = try chainStore.pendingSwitch() {
+        let consumed = try await store.record(currentJournal.requestID)?.status == .consumed
+        try chainStore.recoverSwitch(currentJournal, consumed: consumed)
+        recovered = true
+      }
+    }
+    return ActiveChainState(
+      chainID: try chainStore.currentChainID(), recoveredSwitch: recovered)
+  }
+
+  public func activeChainID() async throws -> String {
+    try await activeChainState().chainID
+  }
 
   public struct Summary: Sendable {
     public let id: String
@@ -233,17 +281,33 @@ public actor WalletService {
   public struct RequestStatus: Sendable {
     public let status: String
     public let result: JSONValue?
+    public let error: JSONValue?
   }
 
   /// Creates a canonical pending record with a derived payload digest. Requests whose
   /// policy kind is not approval-worthy are rejected up front.
   public func prepare(
-    method: String, params: JSONValue, origin: String, chainId: String = "1"
+    method: String, params: JSONValue, origin: String, chainId _: String = "1"
   ) async throws -> UUID {
+    let chainId = try await activeChainID()
     let kind = RequestKind.kind(for: method)
     guard kind.requiresApproval else { throw WalletError.methodNotApproved }
     guard signing.hasKey() else { throw WalletError.notReady }
+    if kind == .chain,
+      !(await connectedSites.isConnected(origin: origin, address: signing.account))
+    {
+      throw WalletError.unauthorized
+    }
 
+    let canonicalParams: JSONValue
+    if kind == .send {
+      canonicalParams = try await prepareTransaction(params: params, chainID: chainId)
+    } else {
+      canonicalParams = params
+    }
+    if kind == .chain, Self.requestedChainID(canonicalParams) == nil {
+      throw WalletError.invalidParams
+    }
     let id = UUID()
     let record = WalletPendingRequest(
       id: id,
@@ -252,9 +316,18 @@ public actor WalletService {
       origin: Origin.normalize(origin),
       chainId: chainId,
       account: signing.account,
-      params: params,
-      payloadDigest: CanonicalRequest.digest(of: params, keyedBy: id)
+      params: canonicalParams,
+      payloadDigest: CanonicalRequest.digest(of: canonicalParams, keyedBy: id)
     )
+    if kind == .send {
+      do {
+        try Self.validatePreparedTransaction(
+          record.params, account: record.account, chainID: record.chainId)
+        _ = try RequestExecutor.signableDigest(for: record)
+      } catch {
+        throw WalletError.invalidParams
+      }
+    }
     try await store.insert(record)
     return id
   }
@@ -294,12 +367,17 @@ public actor WalletService {
   /// Persisted status so a suspending service worker and a polling page converge.
   public func status(for id: UUID) async -> RequestStatus? {
     guard let record = try? await store.record(id) else { return nil }
-    return RequestStatus(status: record.status.rawValue, result: record.result)
+    return RequestStatus(
+      status: record.status.rawValue, result: record.result, error: record.error)
   }
 
   /// Approve the active head: verify binding, queue eligibility, expiry, recomputed
   /// digest, authenticate, then sign with the real account key and consume the record.
   public func approve(request: UUID) async throws -> JSONValue {
+    guard try await store.record(request) != nil else { throw WalletError.notFound }
+    guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
+    defer { store.releaseClaim(claim) }
+
     guard var record = try await store.record(request) else { throw WalletError.notFound }
     // store.record() normalizes an expired pending record to `.expired`.
     if record.status == .expired { throw WalletError.expired }
@@ -312,6 +390,32 @@ public actor WalletService {
     // Queue policy: only the oldest pending request may be approved.
     let queue = (try await store.pending()).sorted { $0.createdAt < $1.createdAt }
     guard queue.first?.id == record.id else { throw WalletError.queued }
+    let activeChainID = try await activeChainID()
+    guard record.chainId == activeChainID else {
+      let rpcError = JSONValue.object([
+        "code": .number(4901),
+        "message": .string("Active chain changed before approval"),
+      ])
+      record.status = .failed
+      record.error = rpcError
+      try await store.insert(record)
+      throw WalletError.rpc(rpcError)
+    }
+    guard signing.account.caseInsensitiveCompare(record.account) == .orderedSame else {
+      throw WalletError.bindingMismatch
+    }
+    if record.kind == .chain,
+      !(await connectedSites.isConnected(origin: record.origin, address: record.account))
+    {
+      let rpcError = JSONValue.object([
+        "code": .number(4100),
+        "message": .string("Origin disconnected before approval"),
+      ])
+      record.status = .failed
+      record.error = rpcError
+      try await store.insert(record)
+      throw WalletError.rpc(rpcError)
+    }
     guard RequestKind.kind(for: record.method) == record.kind else {
       throw WalletError.bindingMismatch
     }
@@ -330,20 +434,79 @@ public actor WalletService {
 
     let result: JSONValue
     if requiresSignature {
-      let signable = try RequestExecutor.signableDigest(for: record)
+      let signable: [UInt8]
+      do {
+        if record.kind == .send {
+          try Self.validatePreparedTransaction(
+            record.params, account: record.account, chainID: record.chainId)
+        }
+        signable = try RequestExecutor.signableDigest(for: record)
+      } catch {
+        let rpcError = JSONValue.object([
+          "code": .number(-32602),
+          "message": .string("Invalid persisted request parameters"),
+        ])
+        record.status = .failed
+        record.error = rpcError
+        try await store.insert(record)
+        throw WalletError.rpc(rpcError)
+      }
       let signature: [UInt8]
       do {
         signature = try signing.signDigest(signable)
       } catch {
         throw WalletError.authCancelled
       }
-      result = try RequestExecutor.resultValue(signature: signature, for: record)
+      if record.kind == .send {
+        let raw = try RequestExecutor.signedTransaction(signature: signature, for: record)
+        result = try await broadcast(rawTransaction: raw, record: &record)
+      } else {
+        result = try RequestExecutor.resultValue(signature: signature, for: record)
+      }
     } else {
       result = try RequestExecutor.resultValue(signature: [], for: record)
     }
+    let previousChainID = activeChainID
+    var switchJournal: ChainStore.SwitchJournal?
+    var chainSwitchClaim: Int32?
+    defer {
+      if let chainSwitchClaim { chainStore.releaseSwitch(chainSwitchClaim) }
+    }
+    if record.kind == .chain,
+      record.method.lowercased() == "wallet_switchethereumchain"
+    {
+      guard let switchClaim = chainStore.claimSwitch() else { throw WalletError.queued }
+      chainSwitchClaim = switchClaim
+      guard let target = Self.requestedChainID(record.params) else {
+        throw WalletError.invalidParams
+      }
+      try chainStore.beginSwitch(
+        requestID: record.id, previousChainID: previousChainID, targetChainID: target)
+      let journal = try chainStore.pendingSwitch()
+      guard let journal else { throw ChainStoreError.unavailable }
+      do {
+        try chainStore.setChainID(target)
+      } catch {
+        try? chainStore.recoverSwitch(journal, consumed: false)
+        throw error
+      }
+      switchJournal = journal
+    }
     record.status = .consumed
     record.result = result
-    try await store.insert(record)
+    do {
+      try await store.insert(record)
+    } catch {
+      if let switchJournal {
+        do {
+          try chainStore.recoverSwitch(switchJournal, consumed: false)
+        } catch {
+          throw WalletError.notReady
+        }
+      }
+      throw error
+    }
+    if switchJournal != nil { try? chainStore.finishSwitch() }
     // A successful connect/chain-approval content grant establishes the durable
     // connection so a subsequent eth_requestAccounts from the same origin short-circuits.
     if record.kind == .connect {
@@ -354,7 +517,262 @@ public actor WalletService {
     return result
   }
 
+  private static func requestedChainID(_ params: JSONValue) -> String? {
+    let object: [String: JSONValue]?
+    if case .array(let values) = params, case .object(let value)? = values.first {
+      object = value
+    } else if case .object(let value) = params {
+      object = value
+    } else {
+      object = nil
+    }
+    guard let raw = object?["chainId"]?.stringValue else { return nil }
+    return ChainStore.normalize(raw)
+  }
+
+  private func prepareTransaction(params: JSONValue, chainID: String) async throws -> JSONValue {
+    guard case .array(let items) = params, items.count == 1,
+      case .object(var transaction) = items[0]
+    else { throw WalletError.invalidParams }
+
+    let supportedFields: Set<String> = [
+      "from", "to", "value", "data", "input", "gas", "gasLimit", "gasPrice", "nonce",
+      "chainId", "type", "maxFeePerGas", "maxPriorityFeePerGas", "accessList",
+    ]
+    guard transaction.keys.allSatisfy(supportedFields.contains) else {
+      throw WalletError.invalidParams
+    }
+
+    if let from = transaction["from"]?.stringValue,
+      from.caseInsensitiveCompare(signing.account) != .orderedSame
+    {
+      throw WalletError.invalidParams
+    }
+    transaction["from"] = .string(signing.account)
+    transaction["value"] = transaction["value"] ?? .string("0x0")
+    if let data = transaction["data"], let input = transaction["input"], data != input {
+      throw WalletError.invalidParams
+    }
+    transaction["data"] = transaction["data"] ?? transaction["input"] ?? .string("0x")
+    transaction.removeValue(forKey: "input")
+
+    let chainQuantity = try Self.chainQuantity(chainID)
+    if let supplied = transaction["chainId"]?.stringValue,
+      try Self.chainQuantity(supplied) != chainQuantity
+    {
+      throw WalletError.invalidParams
+    }
+    transaction["chainId"] = .string(chainQuantity)
+
+    if transaction["nonce"] == nil {
+      transaction["nonce"] = .string(
+        try await rpcQuantity(
+          method: "eth_getTransactionCount",
+          params: .array([.string(signing.account), .string("pending")]),
+          chainID: chainID))
+    }
+
+    if transaction["gas"] == nil {
+      if let gasLimit = transaction.removeValue(forKey: "gasLimit") {
+        transaction["gas"] = gasLimit
+      } else {
+        transaction["gas"] = .string(
+          try await rpcQuantity(
+            method: "eth_estimateGas", params: .array([.object(transaction)]), chainID: chainID))
+      }
+    } else if let gasLimit = transaction["gasLimit"] {
+      guard transaction["gas"] == gasLimit else { throw WalletError.invalidParams }
+      transaction.removeValue(forKey: "gasLimit")
+    }
+
+    let type = transaction["type"]?.stringValue?.lowercased()
+    let dynamic =
+      type == "0x2" || transaction["maxFeePerGas"] != nil
+      || transaction["maxPriorityFeePerGas"] != nil
+    if dynamic {
+      guard transaction["gasPrice"] == nil, type == nil || type == "0x2" else {
+        throw WalletError.invalidParams
+      }
+      if let accessList = transaction["accessList"] {
+        guard accessList == .array([]) else { throw WalletError.invalidParams }
+      }
+      transaction["type"] = .string("0x2")
+      if transaction["maxPriorityFeePerGas"] == nil {
+        transaction["maxPriorityFeePerGas"] = .string(
+          try await rpcQuantity(
+            method: "eth_maxPriorityFeePerGas", params: .array([]), chainID: chainID))
+      }
+      if transaction["maxFeePerGas"] == nil {
+        let gasPrice = try await rpcQuantity(
+          method: "eth_gasPrice", params: .array([]), chainID: chainID)
+        let priorityFee = transaction["maxPriorityFeePerGas"]?.stringValue ?? "0x0"
+        transaction["maxFeePerGas"] = .string(
+          try Self.maximumQuantity(gasPrice, priorityFee))
+      }
+      guard let maxFee = transaction["maxFeePerGas"]?.stringValue,
+        let priorityFee = transaction["maxPriorityFeePerGas"]?.stringValue,
+        try Self.maximumQuantity(maxFee, priorityFee) == maxFee
+      else { throw WalletError.invalidParams }
+    } else {
+      guard type == nil || type == "0x0" else { throw WalletError.invalidParams }
+      guard transaction["accessList"] == nil else { throw WalletError.invalidParams }
+      transaction.removeValue(forKey: "type")
+      if transaction["gasPrice"] == nil {
+        transaction["gasPrice"] = .string(
+          try await rpcQuantity(method: "eth_gasPrice", params: .array([]), chainID: chainID))
+      }
+    }
+    let prepared = JSONValue.array([.object(transaction)])
+    try Self.validatePreparedTransaction(prepared, account: signing.account, chainID: chainID)
+    return prepared
+  }
+
+  private func rpcQuantity(method: String, params: JSONValue, chainID: String) async throws
+    -> String
+  {
+    let response: RPCResponse
+    do {
+      response = try await rpcClient.call(
+        url: resolver.resolve(chainID: chainID), method: method, params: params)
+    } catch {
+      throw WalletError.rpc(Self.transportError)
+    }
+    switch response {
+    case .result(.string(let quantity)) where Hex.quantityData(hex: quantity) != nil:
+      return quantity
+    case .result:
+      throw WalletError.rpc(
+        .object([
+          "code": .number(-32603),
+          "message": .string("Invalid quantity returned by \(method)"),
+        ]))
+    case .error(let error): throw WalletError.rpc(error)
+    }
+  }
+
+  private func broadcast(
+    rawTransaction: [UInt8], record: inout WalletPendingRequest
+  ) async throws -> JSONValue {
+    let response: RPCResponse
+    do {
+      response = try await rpcClient.call(
+        url: resolver.resolve(chainID: record.chainId),
+        method: "eth_sendRawTransaction",
+        params: .array([.string("0x" + Hex.encode(rawTransaction))]))
+    } catch {
+      record.status = .failed
+      record.error = Self.transportError
+      try await store.insert(record)
+      throw WalletError.rpc(Self.transportError)
+    }
+    switch response {
+    case .result(.string(let transactionHash)) where Hex.data(transactionHash)?.count == 32:
+      let expectedHash = "0x" + Hex.encode(Keccak.keccak256(rawTransaction))
+      guard transactionHash.caseInsensitiveCompare(expectedHash) == .orderedSame else {
+        let error = JSONValue.object([
+          "code": .number(-32603),
+          "message": .string("RPC returned a mismatched transaction hash"),
+        ])
+        record.status = .failed
+        record.error = error
+        try await store.insert(record)
+        throw WalletError.rpc(error)
+      }
+      return .string(expectedHash)
+    case .result:
+      let error = JSONValue.object([
+        "code": .number(-32603),
+        "message": .string("Invalid eth_sendRawTransaction result"),
+      ])
+      record.status = .failed
+      record.error = error
+      try await store.insert(record)
+      throw WalletError.rpc(error)
+    case .error(let error):
+      record.status = .failed
+      record.error = error
+      try await store.insert(record)
+      throw WalletError.rpc(error)
+    }
+  }
+
+  private static let transportError = JSONValue.object([
+    "code": .number(-32000),
+    "message": .string("RPC transport failure"),
+  ])
+
+  private static func chainQuantity(_ raw: String) throws -> String {
+    let value: Int?
+    if raw.lowercased().hasPrefix("0x") {
+      value = Int(raw.dropFirst(2), radix: 16)
+    } else {
+      value = Int(raw)
+    }
+    guard let value, value > 0 else { throw WalletError.invalidParams }
+    return "0x" + String(value, radix: 16)
+  }
+
+  private static func maximumQuantity(_ lhs: String, _ rhs: String) throws -> String {
+    guard let left = Hex.quantityData(hex: lhs), let right = Hex.quantityData(hex: rhs) else {
+      throw WalletError.invalidParams
+    }
+    let normalizedLeft = RLP.trimQuantity(left)
+    let normalizedRight = RLP.trimQuantity(right)
+    if normalizedLeft.count != normalizedRight.count {
+      return normalizedLeft.count > normalizedRight.count ? lhs : rhs
+    }
+    return normalizedLeft.lexicographicallyPrecedes(normalizedRight) ? rhs : lhs
+  }
+
+  private static func validatePreparedTransaction(
+    _ params: JSONValue, account: String, chainID: String
+  ) throws {
+    guard case .array(let items) = params, items.count == 1,
+      case .object(let transaction) = items[0]
+    else { throw WalletError.invalidParams }
+    let supportedFields: Set<String> = [
+      "from", "to", "value", "data", "gas", "gasPrice", "nonce", "chainId", "type",
+      "maxFeePerGas", "maxPriorityFeePerGas", "accessList",
+    ]
+    guard transaction.keys.allSatisfy(supportedFields.contains),
+      transaction["from"]?.stringValue?.caseInsensitiveCompare(account) == .orderedSame,
+      let transactionChainID = transaction["chainId"]?.stringValue,
+      try chainQuantity(transactionChainID) == chainQuantity(chainID),
+      transaction["value"]?.stringValue != nil,
+      transaction["data"]?.stringValue != nil,
+      transaction["gas"]?.stringValue != nil,
+      transaction["nonce"]?.stringValue != nil
+    else { throw WalletError.invalidParams }
+
+    if let to = transaction["to"] {
+      guard to.stringValue != nil || to == .null else { throw WalletError.invalidParams }
+    }
+    if let type = transaction["type"] {
+      guard type.stringValue != nil else { throw WalletError.invalidParams }
+    }
+
+    let type = transaction["type"]?.stringValue?.lowercased()
+    let dynamic =
+      type == "0x2" || transaction["maxFeePerGas"] != nil
+      || transaction["maxPriorityFeePerGas"] != nil
+    if dynamic {
+      guard type == "0x2", transaction["gasPrice"] == nil,
+        transaction["accessList"] == nil || transaction["accessList"] == .array([]),
+        let maxFee = transaction["maxFeePerGas"]?.stringValue,
+        let priorityFee = transaction["maxPriorityFeePerGas"]?.stringValue,
+        try maximumQuantity(maxFee, priorityFee) == maxFee
+      else { throw WalletError.invalidParams }
+    } else {
+      guard type == nil, transaction["accessList"] == nil,
+        transaction["gasPrice"]?.stringValue != nil
+      else { throw WalletError.invalidParams }
+    }
+  }
+
   public func reject(request: UUID) async throws {
+    guard try await store.record(request) != nil else { throw WalletError.notFound }
+    guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
+    defer { store.releaseClaim(claim) }
     guard let record = try await store.record(request) else { throw WalletError.notFound }
     guard record.status == .pending else { throw WalletError.alreadyConsumed }
     var rejected = record

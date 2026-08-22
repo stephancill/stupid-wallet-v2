@@ -18,6 +18,11 @@ If code and documentation disagree, investigate the discrepancy. Do not silently
 one. Correct the handover in the same work when implementation has legitimately
 superseded it, or correct the implementation when it violates a locked decision.
 
+When debugging any app, Safari extension, provider, approval, signing, persistence, RPC,
+or transaction issue, read and follow `skills/stupid-wallet-debugging/SKILL.md`. Update
+that skill in the same work whenever the investigation discovers a reusable debugging
+tip, command, failure signature, stack boundary, or safety rule.
+
 ## Documentation Responsibilities
 
 `docs/engineering-handover.md` is the maintained current source of truth. Update it when
