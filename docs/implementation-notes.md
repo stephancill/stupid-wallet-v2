@@ -99,6 +99,50 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Gate 0 Complete: Production Identities Restored
+
+### Summary
+
+- Restored production identities, closing the Gate 0 exit conditions in
+  `docs/engineering-handover.md`:
+  - App bundle ID: `net.stupidtech.stupid-wallet-2` -> `co.za.stephancill.stupid-wallet`
+    in `Info.plist` and `stupid-app.yml`.
+  - Extension bundle ID: `net.stupidtech.stupid-wallet-2.extension` ->
+    `co.za.stephancill.stupid-wallet.extension` in `stupid-app.yml`.
+  - `App.entitlements` gained the production App Group
+    (`group.co.za.stephancill.stupid-wallet`) and the two team-prefixed keychain access
+    groups (`co.za.stephancill.stupid-wallet` and `.safari`), matching `../ios-wallet`.
+  - `SafariExtension.entitlements` gained the shared keychain access group so the
+    extension and app share key material.
+- Updated the handover: removed the temporary-bundle-id status, added a Gate-0-complete
+  status line, and renumbered Recommended Next Work (Gate 1 is now the next step).
+- Committed the initial repository (git) with the scaffold.
+
+### Why
+
+- Identity continuity is a release blocker. The rebuild must launch under the same
+  production app, extension, App Group, and keychain access groups so an installed
+  wallet can migrate in place without re-import.
+
+### Verification
+
+- `stupid-app doctor`: 0 failures, 0 warnings; project config accepted for
+  `co.za.stephancill.stupid-wallet`.
+- `stupid-app build` produced `StupidWallet.app` (Mach-O arm64 ios min 17.0 sdk 26.1) with
+  `PlugIns/StupidWalletSafari.appex` and the full extension resource set at the appex root.
+- `stupid-app run --simulator` installed and launched `co.za.stephancill.stupid-wallet` on
+  the preferred simulator.
+
+### Follow-Up
+
+- Device/release signing reconciles keychain-access-groups via `EntitlementDeriver`, which
+  passes `$(AppIdentifierPrefix)` through literally (Xcode expands it, `stupid-app` does
+  not). Confirm the physical-device run (Gate 1) reconciles against the provisioning
+  profile, or substitute the concrete team prefix for device/release signing. Simulator
+  `build`/`run` use ad-hoc signing, so this does not affect Gate 0.
+- Proceed to Gate 1: prove the real Safari popup + Face ID lifecycle on a physical
+  device.
+
 ## 2026-08-22 - Rebuild Planning Baseline
 
 ### Summary

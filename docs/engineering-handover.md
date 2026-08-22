@@ -17,6 +17,11 @@ The repository now contains the application plus a full prototype of the signing
 confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
+
+Gate 0 (project and documentation baseline) exit conditions are met: production app,
+extension, App Group, and keychain identities are restored in configuration and
+entitlements; `stupid-app doctor` reports zero failures; and the app builds and launches
+on the preferred simulator.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, and a mock signer plus a fresh-`LAContext` local
   authentication boundary.
@@ -28,12 +33,10 @@ confirmation stack (a prototype, not yet gate-proven):
 - An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
 - `PrototypeDapp/index.html` for driving requests from Safari.
 
-The scaffold still uses the temporary bundle identifier
-`net.stupidtech.stupid-wallet-2`. The prototype is not gate-complete; it preserves the
-identity, security, and documentation rules but is not signed for a device and its native
-messaging/popup lifecycle has not yet been proven on a physical device (Gate 1). Production
-work must restore the identities listed under Locked Product Decisions and complete the
-gates before release.
+The prototype is not gate-complete past Gate 0; it preserves the identity, security, and
+documentation rules but is not signed for a device and its native messaging/popup lifecycle
+has not yet been proven on a physical device (Gate 1). Production work must complete the
+remaining gates before release.
 
 The existing implementation in `../ios-wallet` is a behavior and migration reference,
 not a codebase to copy wholesale. It contains useful feature work, protocol handling,
@@ -673,20 +676,21 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Complete Gate 0 by restoring production identifiers, App Group and keychain
-   entitlements (including the shared container), and confirming the target boundaries
-   in `Package.swift`; the prototype's target owners are already in place.
-2. Prove the Safari prototype extension on a physical device: enable `Stupid Wallet`
+1. Prove the Safari prototype extension on a physical device: enable `Stupid Wallet`
    (Settings -> Apps -> Safari -> Extensions), drive the `PrototypeDapp`, and verify the
    toolbar popup plus the `LAContext` prompt while Safari stays foregrounded. This is the
-   Gate 1 exit and the prototype's main open risk.
-3. Repeat the popup/authentication proof for the mobile gestures before beginning
+   Gate 1 exit and the prototype's main open risk. Before the device gate closes, confirm
+   the keychain access-group entitlement expands correctly under `stupid-app` signing
+   (note: the source uses `$(AppIdentifierPrefix)`, which Xcode expands but `stupid-app`'s
+   `EntitlementDeriver` passes through literally; verify the device run reconciles, or
+   substitute the concrete team prefix for device/release signing).
+2. Repeat the popup/authentication proof for the mobile gestures before beginning
    real key or transaction implementation.
-4. Implement Gate 2 JSON-RPC behavior (the prototype's `JSONValue` and mock passthrough
+3. Implement Gate 2 JSON-RPC behavior (the prototype's `JSONValue` and mock passthrough
    become a real node proxy) before adding wallet features.
-5. Update this handover with observed Safari and LocalAuthentication behavior from the
+4. Update this handover with observed Safari and LocalAuthentication behavior from the
    device proof.
-6. Scope the macOS surface (Gate 8): add a `StupidWalletMac` host target sharing
+5. Scope the macOS surface (Gate 8): add a `StupidWalletMac` host target sharing
    `WalletCore` and the extension resources, add the `SFSafariExtensionHandler` entry, and
    verify the popup + Touch ID round-trip and app-to-extension messaging. This can run in
    parallel with the port because it reuses the same envelope and core.

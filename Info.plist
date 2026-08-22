@@ -5,7 +5,7 @@
     <key>CFBundleDisplayName</key>
     <string>StupidWallet</string>
     <key>CFBundleIdentifier</key>
-    <string>net.stupidtech.stupid-wallet-2</string>
+    <string>co.za.stephancill.stupid-wallet</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
     <key>CFBundleVersion</key>

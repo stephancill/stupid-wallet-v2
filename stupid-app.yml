@@ -1,12 +1,12 @@
 version: 1
 product: StupidWallet
-bundleID: net.stupidtech.stupid-wallet-2
+bundleID: co.za.stephancill.stupid-wallet
 deploymentTarget: "17.0"
 infoPath: Info.plist
 entitlementsPath: App.entitlements
 extensions:
   - product: StupidWalletSafari
-    bundleID: net.stupidtech.stupid-wallet-2.extension
+    bundleID: co.za.stephancill.stupid-wallet.extension
     infoPath: SafariExtension/Info.plist
     entitlementsPath: SafariExtension/SafariExtension.entitlements
     resources:
