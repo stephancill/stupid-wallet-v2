@@ -23,6 +23,15 @@ struct ContentView: View {
         Task { await runSelfTest() }
       }
       .buttonStyle(.borderedProminent)
+      Button("Run 4-old→new migration") {
+        phase = "Running"
+        log = ""
+        Task { @MainActor in
+          let lines = Self.runMigration()
+          log = lines.joined(separator: "\n")
+          phase = "Done"
+        }
+      }
       Text(phase).font(.caption).foregroundStyle(.secondary)
       Text(log).font(.caption2).multilineTextAlignment(.leading).frame(
         maxWidth: .infinity, alignment: .leading)
@@ -35,6 +44,27 @@ struct ContentView: View {
     let lines = Self.performProof()
     log = lines.joined(separator: "\n")
     phase = "Done"
+  }
+
+  private static func runMigration() -> [String] {
+    let backend = SecurityWalletBackend()
+    guard let old = backend.oldAddress() else { return ["No old wallet address found."] }
+    let result = WalletMigration.migrate(backend: backend)
+    switch result {
+    case .success(let outcome):
+      switch outcome {
+      case .noOldWallet:
+        return ["No old wallet present."]
+      case .alreadyMigrated:
+        return ["Migration already complete (idempotent)."]
+      case .skippedNewWalletExists:
+        return ["Skipped: a new-format wallet already exists."]
+      case .migrated(let address):
+        return ["MIGRATED", "old address \(old)", "new address \(address)"]
+      }
+    case .failure(let error):
+      return ["FAIL: \(error)"]
+    }
   }
 
   /// Generates a random key, stores it under a `.userPresence` access control, reloads it

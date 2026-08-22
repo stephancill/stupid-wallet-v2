@@ -59,6 +59,7 @@ public enum WalletMigration {
     }
 
     let account: String
+    var decrypted: [UInt8]
     do {
       var key = try backend.decryptCiphertext(ciphertext, for: oldAddress)
       defer { key = [UInt8](repeating: 0, count: key.count) }
@@ -67,30 +68,25 @@ public enum WalletMigration {
         return .failure(.addressMismatch(expected: oldAddress, actual: derived))
       }
       account = derived
+      decrypted = key
     } catch let failure as WalletMigrationFailure {
       return .failure(failure)
     } catch {
       return .failure(.decryptionFailed)
     }
 
-    // Persist in the new format, pending the authenticated self-test proof. Decrypt a
-    // second time so the key bytes live only in a narrow scope while also proving the
-    // decrypt path works before we commit anything.
+    // Persist the decrypted key in the new format (single authenticated decrypt; the
+    // plaintext lives only within this narrow scope).
     do {
-      var key = try backend.decryptCiphertext(ciphertext, for: oldAddress)
-      defer { key = [UInt8](repeating: 0, count: key.count) }
-      guard sameAddress(try deriveAddress(key), account) else {
-        return .failure(.addressMismatch(expected: account, actual: oldAddress))
-      }
-      try backend.saveKey(key, account: account)
-    } catch let failure as WalletMigrationFailure {
-      return .failure(failure)
+      try backend.saveKey(decrypted, account: account)
     } catch {
       return .failure(.saveFailed)
     }
+    decrypted = [UInt8](repeating: 0, count: decrypted.count)
     backend.markPending(account: account)
 
-    // Authenticated self-test: reload from the new store and recover the same signer.
+    // Authenticated self-test: reload from the new store (a second device-owner prompt)
+    // and recover the same signer.
     guard let loaded = try? backend.loadKey(account: account) else {
       return .failure(.selfTestFailed)
     }

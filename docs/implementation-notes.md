@@ -132,10 +132,14 @@ Use this entry template:
 
 ### Follow-Up
 
-- The on-device half of Gate 4 (an actual old-release wallet upgraded in place, address
-  unchanged, new-format signature verifies) depends on having an old-format wallet
-  installed and is a physical run; the state machine and the Security ECIES/secure-enclave
-  read path are in place and hermetically covered.
+- The on-device half of Gate 4 was proved: an old-format wallet was installed and created
+  on the iPhone, then the new app upgraded in place and migrated it, with the recovered
+  address equal to the old wallet's address. During the live run the migrator presented
+  three Face ID/passcode prompts; investigation showed the orchestrator decrypted the old
+  ciphertext twice (the second decrypt before persisting was superfluous). Removed the
+  duplicate decrypt so a successful run now shows exactly two prompts: one to decrypt the
+  old key and one to reload the new-format `.userPresence` key for the self-test. All 54
+  tests and the app build still pass after the fix.
 
 ## 2026-08-22 - Gate 3 Complete: Keychain User-Presence Proved On-Device
 
