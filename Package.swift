@@ -4,7 +4,8 @@ import PackageDescription
 let package = Package(
     name: "StupidWallet",
     platforms: [
-        .iOS(.v17)
+        .iOS(.v17),
+        .macOS(.v14),
     ],
     products: [
         // A stupid-app project contains one library product per app/extension bundle.
@@ -27,6 +28,10 @@ let package = Package(
         ),
         .target(
             name: "StupidWalletSafari",
+            dependencies: ["StupidWalletCore"]
+        ),
+        .testTarget(
+            name: "StupidWalletCoreTests",
             dependencies: ["StupidWalletCore"]
         ),
     ]

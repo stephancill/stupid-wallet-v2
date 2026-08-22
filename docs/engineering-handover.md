@@ -28,6 +28,14 @@ the extension enables in Safari, MAIN-world EIP-6963 discovery works on the prot
 dapp, the toolbar popup opens under user control and renders the native request card,
 native messaging returns structured responses, and a native Face ID prompt is invoked
 while Safari stays foregrounded.
+
+Gate 2 (JSON and RPC core) exit conditions are met: `JSONValue` round-trips every JSON
+type including nested `null`; `MethodPolicy` is the one authoritative native method
+classifier (with a regression suite for handled, denied, and passthrough methods and a
+casing fix); `RPCClient` preserves arbitrary results, `null`, and structured errors;
+`RPCResolver` defaults every chain to `https://evm.stupidtech.net/v1/{chainId}`; and
+`RPCOverrideValidator` rejects malformed, insecure, unreachable, and wrong-chain
+endpoints. `WalletService.passthrough` tunnels unhandled methods through the one resolver.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, and a mock signer plus a fresh-`LAContext` local
   authentication boundary.
@@ -39,10 +47,10 @@ while Safari stays foregrounded.
 - An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
 - `PrototypeDapp/index.html` for driving requests from Safari.
 
-The prototype is not gate-complete past Gate 1; it preserves the identity, security, and
+The prototype is not gate-complete past Gate 2; it preserves the identity, security, and
 documentation rules, is signed for a physical device, and its Safari messaging/popup/
-Face ID lifecycle has been proven on that device. Production work must complete the
-remaining gates before release.
+Face ID lifecycle and JSON/RPC proxy behavior have been proven. Production work must
+complete the remaining gates before release.
 
 The existing implementation in `../ios-wallet` is a behavior and migration reference,
 not a codebase to copy wholesale. It contains useful feature work, protocol handling,
@@ -682,8 +690,10 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Implement Gate 2 JSON-RPC behavior (the prototype's `JSONValue` and mock passthrough
-   become a real node proxy) before adding wallet features.
+1. Implement Gate 3 (key and Ethereum primitives): vendor the pinned `libsecp256k1` C
+   target, add key generation / public-key / address / signing / recovery plus Keccak,
+   RLP, EIP-191, EIP-712, and transaction serialization, each with independent known
+   vectors, and move key storage to the shared-keychain user-presence format.
 
 ## Reference Sources
 

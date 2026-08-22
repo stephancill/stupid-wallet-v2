@@ -99,6 +99,47 @@ Use this entry template:
 - `stupid-app run --simulator` launched the app showing the placeholder:
   "Stupid Wallet / Signing happens in the Safari extension when you use a dapp."
 
+## 2026-08-22 - Gate 2 Complete: JSON And RPC Core
+
+### Summary
+
+- Added a unit-test target (`StupidWalletCoreTests`) and set a macOS 14 test platform so
+  the shared core compiles on the host for hermetic tests.
+- Fixed a real bug in `MethodPolicy.classify`: it lowercased the input but compared
+  against mixed-case literals, so `eth_requestAccounts`, `eth_chainId`, and every
+  camelCase signing/sending/chain method silently fell through to passthrough. Literals
+  are now normalized to lowercase; `eth_signTypedData_v3` is denied, not signable.
+- Added `RPCClient` (dependency-free JSON-RPC 2.0): preserves arbitrary results, `null`,
+  and the full node error object; distinct `transport` / `invalidResponse` / `httpStatus`
+  errors.
+- Added `RPCResolver` (`https://evm.stupidtech.net/v1/{chainId}` default + per-chain
+  overrides) and `RPCOverrideValidator` (rejects malformed, insecure non-loopback
+  non-HTTPS, unreachable, and wrong-chain endpoints; compares `eth_chainId` decimal/hex
+  numerically).
+- `WalletService.passthrough` now tunnels unhandled methods through the one resolver.
+
+### Why
+
+- Gate 2 is the JSON-RPC and classification core required before wallet features. The
+  resolver keeps reads, sends, polling, and passthrough on one hierarchy.
+
+### Verification
+
+- `swift test`: 24 tests across 5 suites pass (JSON round-tripping incl. nested null,
+  method classification, origin normalization, default routing for chains 1/10/137/8453/
+  42161, override validation, and result/error/transport preservation via a stubbed
+  URLProtocol). The stub-based client suite is serialized to avoid shared-mutable
+  cross-test races under Swift Testing.
+- `swift format --in-place --recursive Sources Tests` succeeded.
+- `stupid-app build` still produces `StupidWallet.app` (arm64 ios min 17.0 sdk 26.1).
+
+### Follow-Up
+
+- Gate 3: vendored `libsecp256k1` target, Ethereum primitives with independent vectors,
+  and shared-keychain user-presence storage. The override `overrides` dictionary is
+  in-memory; persist validated overrides under the App Group during the Secure Wallet
+  Core persistence work.
+
 ## 2026-08-22 - Gate 1 Passed on Physical Device
 
 ### Summary

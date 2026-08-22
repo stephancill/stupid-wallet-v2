@@ -11,16 +11,15 @@ public enum MethodClass: Sendable, Equatable {
 }
 
 public enum MethodPolicy {
-  private static let signMethods: Set<String> = [
-    "personal_sign", "eth_signTypedData_v4", "eth_signTypedData_v3",
-  ]
+  private static let signMethods: Set<String> = ["personal_sign", "eth_signtypeddata_v4"]
   private static let deniedMethods: Set<String> = [
-    "eth_sign", "eth_signTransaction", "eth_signTypedData", "eth_signTypedData_v1",
+    "eth_sign", "eth_signtransaction", "eth_signtypeddata", "eth_signtypeddata_v1",
+    "eth_signtypeddata_v3",
   ]
   private static let chainMethods: Set<String> = [
-    "eth_chainId", "net_version", "wallet_switchEthereumChain", "wallet_addEthereumChain",
+    "eth_chainid", "net_version", "wallet_switchethereumchain", "wallet_addethereumchain",
   ]
-  private static let sendMethods: Set<String> = ["eth_sendTransaction", "wallet_sendCalls"]
+  private static let sendMethods: Set<String> = ["eth_sendtransaction", "wallet_sendcalls"]
 
   public static func classify(_ method: String) -> MethodClass {
     let method = method.lowercased()
@@ -28,7 +27,7 @@ public enum MethodPolicy {
     if signMethods.contains(method) { return .sign }
     if sendMethods.contains(method) { return .send }
     if chainMethods.contains(method) { return .chain }
-    if method == "eth_requestAccounts" || method == "wallet_connect" { return .connect }
+    if method == "eth_requestaccounts" || method == "wallet_connect" { return .connect }
     return .passthrough
   }
 

@@ -7,6 +7,7 @@ public enum WalletError: Error, Sendable {
   case alreadyConsumed
   case expired
   case authCancelled
+  case transport
 }
 
 /// A demo account. `address` is a public, fixed value; a real implementation
@@ -77,10 +78,19 @@ extension Data {
 public actor WalletService {
   public nonisolated let store: PendingRequestStore
   public nonisolated let account: WalletAccount
+  nonisolated let resolver: RPCResolver
+  nonisolated let rpcClient: RPCClient
 
-  public init(store: PendingRequestStore? = nil, account: WalletAccount = WalletAccount()) {
+  public init(
+    store: PendingRequestStore? = nil,
+    account: WalletAccount = WalletAccount(),
+    resolver: RPCResolver = RPCResolver(),
+    rpcClient: RPCClient = RPCClient()
+  ) {
     self.account = account
     self.store = store ?? PendingRequestStore()
+    self.resolver = resolver
+    self.rpcClient = rpcClient
   }
 
   public struct Summary: Sendable {
@@ -187,5 +197,32 @@ public actor WalletService {
     var rejected = record
     rejected.status = .rejected
     try await store.insert(rejected)
+  }
+
+  /// A node-answered JSON-RPC result, or the preserved node error object.
+  public enum RPCOutcome: Sendable {
+    case result(JSONValue)
+    case nodeError(JSONValue)
+  }
+
+  /// Forwards an unhandled method unchanged to the active RPC endpoint through the one
+  /// resolver. `null` results and structured node errors are preserved.
+  public func passthrough(method: String, params: JSONValue, chainID: String) async -> RPCOutcome {
+    let url = resolver.resolve(chainID: chainID)
+    do {
+      let response = try await rpcClient.call(url: url, method: method, params: params)
+      switch response {
+      case .result(let value):
+        return .result(value)
+      case .error(let error):
+        return .nodeError(error)
+      }
+    } catch {
+      return .nodeError(
+        .object([
+          "code": .number(-32000),
+          "message": .string("RPC transport failure"),
+        ]))
+    }
   }
 }
