@@ -1,0 +1,21 @@
+version: 1
+product: StupidWallet
+bundleID: net.stupidtech.stupid-wallet-2
+deploymentTarget: "17.0"
+infoPath: Info.plist
+entitlementsPath: App.entitlements
+extensions:
+  - product: StupidWalletSafari
+    bundleID: net.stupidtech.stupid-wallet-2.extension
+    infoPath: SafariExtension/Info.plist
+    entitlementsPath: SafariExtension/SafariExtension.entitlements
+    resources:
+      - SafariExtension/Resources/manifest.json
+      - SafariExtension/Resources/provider.js
+      - SafariExtension/Resources/bridge.js
+      - SafariExtension/Resources/background.js
+      - SafariExtension/Resources/popup.html
+      - SafariExtension/Resources/popup.css
+      - SafariExtension/Resources/popup.js
+      - SafariExtension/Resources/icon-48.png
+      - SafariExtension/Resources/icon-128.png

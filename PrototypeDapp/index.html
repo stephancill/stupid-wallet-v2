@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stupid Wallet · Test Dapp</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; line-height: 1.5; }
+        h1 { font-size: 22px; }
+        pre { background: rgba(0,0,0,0.06); padding: 12px; border-radius: 8px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+        button { padding: 10px 16px; border-radius: 10px; border: 0; background: #4c6ef5; color: #fff; font-size: 15px; cursor: pointer; margin: 6px 6px 0 0; }
+        button:last-child { margin-right: 0; }
+        .status { margin-top: 12px; }
+        .ev { margin: 6px 0; padding: 8px; background: #fff7ed; border-radius: 8px; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <h1>Test Dapp</h1>
+    <p id="connectState">Not connected.</p>
+    <p id="utfState">No provider injected yet.</p>
+    <button id="connect">eth_requestAccounts</button>
+    <button id="chain">eth_chainId</button>
+    <button id="sign">personal_sign</button>
+    <button id="clear">Clear log</button>
+
+    <h3>Result</h3>
+    <pre id="result">—</pre>
+
+    <h3>EIP-6963 providers</h3>
+    <div class="ev" id="eip6963">Looking…</div>
+
+    <h3>Log</h3>
+    <pre id="log">—</pre>
+
+    <script>
+        async function logLine(label, value) {
+            const log = document.getElementById("log");
+            log.textContent = log.textContent === "—" ? "" : log.textContent;
+            log.textContent += `[${label}] ${value}\n`;
+        }
+
+        function show(result) {
+            document.getElementById("result").textContent =
+                typeof result === "string" ? result : JSON.stringify(result, null, 2);
+            logLine((window.ethereum ? "provider" : "none"), "done");
+        }
+
+        function errorShow(err) {
+            document.getElementById("result").textContent =
+                "Error: " + (err && err.message ? err.message : String(err));
+            logLine("error", (err && (err.message || JSON.stringify(err))) || String(err));
+        }
+
+        window.addEventListener("eip6963:announceProvider", (e) => {
+            const ev = document.getElementById("eip6963");
+            const info = e.detail && e.detail.info ? e.detail.info : {};
+            ev.textContent = `${info.name || "unknown"} · ${info.rdns || "?"} · isStupidWallet=${!!(e.detail && e.detail.provider && e.detail.provider.isStupidWallet)}`;
+            logLine("eip6963", `${info.name || "unknown"} · ${info.rdns || "?"}`);
+        });
+
+        document.getElementById("connect").addEventListener("click", async () => {
+            try {
+                const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+                show(accounts);
+                document.getElementById("utfState").textContent = "Connected: " + accounts.join(", ");
+            } catch (e) { errorShow(e); }
+        });
+        document.getElementById("chain").addEventListener("click", async () => {
+            try { show(await window.ethereum.request({ method: "eth_chainId" })); }
+            catch (e) { errorShow(e); }
+        });
+        document.getElementById("sign").addEventListener("click", async () => {
+            try {
+                const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+                const address = accounts && accounts[0];
+                const sig = await window.ethereum.request({
+                    method: "personal_sign",
+                    params: [
+                        "0x" + toHex("Welcome to Stupid Wallet dapp!\n\nSign in securely.\n\nChain: Ethereum"),
+                        address,
+                    ],
+                });
+                show(sig);
+                logLine("personal_sign", sig ? sig.slice(0, 20) + "…" : sig);
+            } catch (e) { errorShow(e); }
+        });
+        document.getElementById("clear").addEventListener("click", () => {
+            document.getElementById("log").textContent = "—";
+            document.getElementById("result").textContent = "—";
+        });
+
+        function toHex(str) {
+            let hex = "";
+            for (let i = 0; i < str.length; i++) {
+                hex += str.charCodeAt(i).toString(16).padStart(2, "0");
+            }
+            return hex;
+        }
+
+        // Wait for provider to appear (injected at document_idle).
+        let waitedFor = 0;
+        const loop = setInterval(() => {
+            if (typeof window.ethereum !== "undefined") {
+                clearInterval(loop);
+                document.getElementById("utfState").textContent = "Provider detected: eth_requestAccounts ready."
+                logLine("provider", "injected");
+            } else if (waitedFor++ > 30) {
+                clearInterval(loop);
+                document.getElementById("utfState").textContent = "No provider injected yet.";
+            }
+        }, 500);
+    </script>
+</body>
+</html>
