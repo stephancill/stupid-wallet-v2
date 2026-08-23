@@ -180,6 +180,7 @@ public actor WalletService {
   public nonisolated let signing: any Signing
   public nonisolated let connectedSites: ConnectedSitesStore
   public nonisolated let chainStore: ChainStore
+  public nonisolated let activityStore: ActivityStore
   nonisolated let resolver: RPCResolver
   nonisolated let rpcClient: RPCClient
 
@@ -188,6 +189,7 @@ public actor WalletService {
     signing: any Signing,
     connectedSites: ConnectedSitesStore? = nil,
     chainStore: ChainStore = ChainStore(),
+    activityStore: ActivityStore = ActivityStore(),
     resolver: RPCResolver = RPCResolver(),
     rpcClient: RPCClient = RPCClient()
   ) {
@@ -195,6 +197,7 @@ public actor WalletService {
     self.store = store ?? PendingRequestStore()
     self.connectedSites = connectedSites ?? ConnectedSitesStore()
     self.chainStore = chainStore
+    self.activityStore = activityStore
     self.resolver = resolver
     self.rpcClient = rpcClient
   }
@@ -213,6 +216,8 @@ public actor WalletService {
     try? FileManager.default.createDirectory(
       at: chainDirectory, withIntermediateDirectories: true)
     self.chainStore = ChainStore(directory: chainDirectory)
+    self.activityStore = ActivityStore(
+      databaseURL: chainDirectory.appendingPathComponent("Activity.sqlite"))
     self.resolver = RPCResolver()
     self.rpcClient = RPCClient()
   }
@@ -462,6 +467,7 @@ public actor WalletService {
         result = try await broadcast(rawTransaction: raw, record: &record)
       } else {
         result = try RequestExecutor.resultValue(signature: signature, for: record)
+        try? await activityStore.recordSignature(request: record, signature: signature)
       }
     } else {
       result = try RequestExecutor.resultValue(signature: [], for: record)
@@ -678,6 +684,10 @@ public actor WalletService {
         try await store.insert(record)
         throw WalletError.rpc(error)
       }
+      if let nonce = Self.transactionObject(record.params)?["nonce"]?.stringValue {
+        try? await activityStore.recordTransaction(
+          request: record, hash: expectedHash, nonce: nonce)
+      }
       return .string(expectedHash)
     case .result:
       let error = JSONValue.object([
@@ -700,6 +710,87 @@ public actor WalletService {
     "code": .number(-32000),
     "message": .string("RPC transport failure"),
   ])
+
+  public func activities(limit: Int = 100) async throws -> [ActivityRecord] {
+    try await activityStore.activities(limit: limit)
+  }
+
+  /// Refreshes unresolved transactions through the same resolver used for preparation and
+  /// broadcast. A missing receipt is not treated as failure while the node still knows the
+  /// transaction or while propagation is within the grace period.
+  public func refreshTransactionActivity(
+    now: Date = Date(), missingGracePeriod: TimeInterval = 60
+  ) async {
+    guard let unresolved = try? await activityStore.unresolvedTransactions() else { return }
+    for activity in unresolved {
+      guard let hash = activity.transactionHash else { continue }
+      let receipt = await rpcResult(
+        method: "eth_getTransactionReceipt", params: .array([.string(hash)]),
+        chainID: activity.chainID)
+      if case .object(let object)? = receipt,
+        let receiptStatus = object["status"]?.stringValue
+      {
+        let status: ActivityStatus = receiptStatus == "0x1" ? .confirmed : .reverted
+        try? await activityStore.updateTransaction(
+          hash: hash, status: status, blockNumber: object["blockNumber"]?.stringValue,
+          at: now)
+        continue
+      }
+      guard receipt == .null else { continue }
+
+      let transaction = await rpcResult(
+        method: "eth_getTransactionByHash", params: .array([.string(hash)]),
+        chainID: activity.chainID)
+      if case .object? = transaction {
+        try? await activityStore.updateTransaction(hash: hash, status: .pending, at: now)
+        continue
+      }
+      guard transaction == .null,
+        now.timeIntervalSince(activity.createdAt) >= missingGracePeriod,
+        let nonce = activity.nonce
+      else { continue }
+
+      let latestNonce = await rpcResult(
+        method: "eth_getTransactionCount",
+        params: .array([.string(activity.account), .string("latest")]),
+        chainID: activity.chainID)?.stringValue
+      let status: ActivityStatus
+      if let latestNonce, Self.quantity(latestNonce, isGreaterThan: nonce) {
+        status = .replaced
+      } else {
+        status = .dropped
+      }
+      try? await activityStore.updateTransaction(hash: hash, status: status, at: now)
+    }
+  }
+
+  private func rpcResult(method: String, params: JSONValue, chainID: String) async -> JSONValue? {
+    guard
+      let response = try? await rpcClient.call(
+        url: resolver.resolve(chainID: chainID), method: method, params: params)
+    else { return nil }
+    guard case .result(let value) = response else { return nil }
+    return value
+  }
+
+  private static func transactionObject(_ params: JSONValue) -> [String: JSONValue]? {
+    guard case .array(let items) = params, case .object(let object)? = items.first else {
+      return nil
+    }
+    return object
+  }
+
+  private static func quantity(_ lhs: String, isGreaterThan rhs: String) -> Bool {
+    guard let left = Hex.quantityData(hex: lhs), let right = Hex.quantityData(hex: rhs) else {
+      return false
+    }
+    let normalizedLeft = RLP.trimQuantity(left)
+    let normalizedRight = RLP.trimQuantity(right)
+    if normalizedLeft.count != normalizedRight.count {
+      return normalizedLeft.count > normalizedRight.count
+    }
+    return normalizedRight.lexicographicallyPrecedes(normalizedLeft)
+  }
 
   private static func chainQuantity(_ raw: String) throws -> String {
     let value: Int?

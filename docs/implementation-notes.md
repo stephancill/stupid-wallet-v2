@@ -50,6 +50,43 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - SQLite Activity And Base Receipt Polling
+
+### Summary
+
+- Added `ActivityStore`, extending the existing shared App Group `Activity.sqlite` schema
+  in place so installed transaction and signature history remains readable.
+- Transaction activity binds the canonical request, chain, account, origin, nonce, and
+  returned hash. Receipt refresh uses the shared RPC resolver and persists submitted,
+  pending, confirmed, reverted, dropped, and replaced lifecycle states.
+- Missing transactions remain non-terminal during a propagation grace period. Afterward,
+  the latest account nonce distinguishes a dropped broadcast from a replacement.
+- Signature activity stores only a digest plus request metadata; new rows do not persist
+  plaintext messages or signatures.
+- Added a minimal app activity list with cancellable foreground polling and explicit refresh.
+
+### Verification
+
+- `swift test`: 105 tests in 19 suites passed, including SQLite reopen, unified transaction
+  and signature reads, broadcast binding, receipt confirmation, and dropped/replaced
+  classification.
+- `stupid-app doctor`: 0 failures and 0 warnings. `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` installed and launched the app
+  and extension.
+- A funded Base simulator wallet completed a zero-value self-transfer through the dapp,
+  canonical Safari popup, authenticated signer, and broadcast path. The dapp received the
+  same hash persisted in SQLite. Configured and independent RPCs both returned receipt
+  status `0x1`; recovered sender and destination matched the simulator wallet and gas used
+  was 21,000.
+- Relaunching the app and selecting Refresh moved the durable row from `submitted` to
+  `confirmed`, persisted the block number, and visibly rendered the confirmed Base activity.
+
+### Follow-Up
+
+- Continue Gate 6 with wallet import/backup, balance and RPC-override screens, and the
+  connected-apps list/disconnect UI.
+- Add richer activity details after the core wallet-management screens.
+
 ## 2026-08-23 - Repository-Wide Debugging Skill
 
 ### Summary

@@ -30,7 +30,8 @@ let package = Package(
         ),
         .target(
             name: "StupidWalletCore",
-            dependencies: ["CSecp256k1"]
+            dependencies: ["CSecp256k1"],
+            linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         .target(
             name: "StupidWallet",

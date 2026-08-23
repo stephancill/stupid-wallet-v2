@@ -20,6 +20,8 @@ struct TransactionSubmissionTests {
       signing: TransactionSigner(),
       connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
       chainStore: ChainStore(directory: directory),
+      activityStore: ActivityStore(
+        databaseURL: directory.appendingPathComponent("Activity.sqlite")),
       resolver: RPCResolver(overrides: ["1": URL(string: "https://rpc.example")!]),
       rpcClient: client)
   }
@@ -76,6 +78,66 @@ struct TransactionSubmissionTests {
     let result = try await service.approve(request: id)
     #expect(result.stringValue.flatMap(Hex.data)?.count == 32)
     #expect(await service.status(for: id)?.status == "consumed")
+    let activity = try await service.activities()
+    #expect(activity.count == 1)
+    #expect(activity.first?.requestID == id)
+    #expect(activity.first?.status == .submitted)
+    #expect(activity.first?.nonce == "0x7")
+  }
+
+  @Test("receipt polling confirms a submitted transaction")
+  func confirmsReceipt() async throws {
+    let service = service { request in
+      let object = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
+      switch object.nestedString(at: ["method"]) {
+      case "eth_sendRawTransaction":
+        guard case .object(let body) = object,
+          case .array(let params)? = body["params"],
+          case .string(let raw)? = params.first,
+          let bytes = Hex.data(raw)
+        else { return rpcResponse(error: "invalid raw transaction") }
+        return rpcResponse(result: "0x" + Hex.encode(Keccak.keccak256(bytes)))
+      case "eth_getTransactionReceipt":
+        return rpcResponse(
+          result: .object([
+            "status": .string("0x1"), "blockNumber": .string("0x123"),
+          ]))
+      default: return rpcResponse(error: "unexpected method")
+      }
+    }
+    let id = try await prepareCompleteLegacy(service)
+    _ = try await service.approve(request: id)
+    await service.refreshTransactionActivity()
+    let activity = try await service.activities()
+    #expect(activity.first?.status == .confirmed)
+    #expect(activity.first?.blockNumber == "0x123")
+  }
+
+  @Test("missing transactions become dropped or replaced only after the grace period")
+  func classifiesMissingTransactions() async throws {
+    for (latestNonce, expected) in [("0x0", ActivityStatus.dropped), ("0x1", .replaced)] {
+      let service = service { request in
+        let object = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
+        switch object.nestedString(at: ["method"]) {
+        case "eth_sendRawTransaction":
+          guard case .object(let body) = object,
+            case .array(let params)? = body["params"],
+            case .string(let raw)? = params.first,
+            let bytes = Hex.data(raw)
+          else { return rpcResponse(error: "invalid raw transaction") }
+          return rpcResponse(result: "0x" + Hex.encode(Keccak.keccak256(bytes)))
+        case "eth_getTransactionReceipt", "eth_getTransactionByHash":
+          return rpcResponse(result: .null)
+        case "eth_getTransactionCount": return rpcResponse(result: latestNonce)
+        default: return rpcResponse(error: "unexpected method")
+        }
+      }
+      let id = try await prepareCompleteLegacy(service)
+      _ = try await service.approve(request: id)
+      await service.refreshTransactionActivity(
+        now: Date().addingTimeInterval(120), missingGracePeriod: 60)
+      #expect(try await service.activities().first?.status == expected)
+    }
   }
 
   @Test("a structured broadcast error is terminal and preserved for polling")
@@ -435,11 +497,15 @@ private struct TransactionSigner: Signing {
 }
 
 private func rpcResponse(result: String) -> (HTTPURLResponse, Data) {
+  rpcResponse(result: .string(result))
+}
+
+private func rpcResponse(result: JSONValue) -> (HTTPURLResponse, Data) {
   (
     httpResponse(),
     try! JSONEncoder().encode(
       JSONValue.object([
-        "jsonrpc": .string("2.0"), "id": .number(1), "result": .string(result),
+        "jsonrpc": .string("2.0"), "id": .number(1), "result": result,
       ]))
   )
 }

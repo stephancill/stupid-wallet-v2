@@ -5,51 +5,82 @@ import SwiftUI
 struct ContentView: View {
   @State private var phase: String = "Idle"
   @State private var log = ""
+  @State private var activities: [ActivityRecord] = []
 
   var body: some View {
-    VStack(spacing: 12) {
-      Image(systemName: "wallet.pass.fill")
-        .font(.system(size: 40))
-        .foregroundStyle(.tint)
-      Text("Stupid Wallet")
-        .font(.headline)
-      Text("Signing happens in the Safari extension when you use a dapp.")
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.center)
-      Button("Run keychain proof") {
-        phase = "Running"
-        log = ""
-        Task { await runSelfTest() }
-      }
-      .buttonStyle(.borderedProminent)
-      Button("Create a wallet") {
-        phase = "Running"
-        log = ""
-        Task { @MainActor in
-          do {
-            let address = try WalletFactory.create()
-            log = "Created wallet\naddress \(address)"
-          } catch {
-            log = "FAIL: \(error)"
+    ScrollView {
+      VStack(spacing: 12) {
+        Image(systemName: "wallet.pass.fill")
+          .font(.system(size: 40))
+          .foregroundStyle(.tint)
+        Text("Stupid Wallet")
+          .font(.headline)
+        Text("Signing happens in the Safari extension when you use a dapp.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.center)
+        Button("Run keychain proof") {
+          phase = "Running"
+          log = ""
+          Task { await runSelfTest() }
+        }
+        .buttonStyle(.borderedProminent)
+        Button("Create a wallet") {
+          phase = "Running"
+          log = ""
+          Task { @MainActor in
+            do {
+              let address = try WalletFactory.create()
+              log = "Created wallet\naddress \(address)"
+            } catch {
+              log = "FAIL: \(error)"
+            }
+            phase = "Done"
           }
-          phase = "Done"
+        }
+        Button("Run 4-old→new migration") {
+          phase = "Running"
+          log = ""
+          Task { @MainActor in
+            let lines = Self.runMigration()
+            log = lines.joined(separator: "\n")
+            phase = "Done"
+          }
+        }
+        Text(phase).font(.caption).foregroundStyle(.secondary)
+        Text(log).font(.caption2).multilineTextAlignment(.leading).frame(
+          maxWidth: .infinity, alignment: .leading)
+        Divider()
+        HStack {
+          Text("Activity").font(.headline)
+          Spacer()
+          Button("Refresh") { Task { await loadActivity() } }
+        }
+        if activities.isEmpty {
+          Text("No activity yet").font(.caption).foregroundStyle(.secondary)
+        } else {
+          ForEach(activities) { activity in
+            VStack(alignment: .leading, spacing: 3) {
+              Text(activity.kind == .transaction ? "Transaction" : "Signature").font(.subheadline)
+              Text("\(activity.method) · chain \(activity.chainID)").font(.caption)
+              Text(activity.status.rawValue.capitalized)
+                .font(.caption).foregroundStyle(activity.status == .confirmed ? .green : .secondary)
+              if let hash = activity.transactionHash {
+                Text("\(hash.prefix(12))…\(hash.suffix(8))").font(.caption2).monospaced()
+              }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+          }
         }
       }
-      Button("Run 4-old→new migration") {
-        phase = "Running"
-        log = ""
-        Task { @MainActor in
-          let lines = Self.runMigration()
-          log = lines.joined(separator: "\n")
-          phase = "Done"
-        }
-      }
-      Text(phase).font(.caption).foregroundStyle(.secondary)
-      Text(log).font(.caption2).multilineTextAlignment(.leading).frame(
-        maxWidth: .infinity, alignment: .leading)
+      .padding()
     }
-    .padding()
+    .task {
+      while !Task.isCancelled {
+        await loadActivity()
+        try? await Task.sleep(for: .seconds(5))
+      }
+    }
   }
 
   @MainActor
@@ -57,6 +88,19 @@ struct ContentView: View {
     let lines = Self.performProof()
     log = lines.joined(separator: "\n")
     phase = "Done"
+  }
+
+  @MainActor
+  private func loadActivity() async {
+    let signing: any Signing
+    if let address = WalletStore.activeAddress() {
+      signing = KeychainSigner(account: address, store: KeychainKeyStore())
+    } else {
+      signing = UnavailableSigner()
+    }
+    let service = WalletService(signing: signing)
+    await service.refreshTransactionActivity()
+    activities = (try? await service.activities()) ?? []
   }
 
   private static func runMigration() -> [String] {

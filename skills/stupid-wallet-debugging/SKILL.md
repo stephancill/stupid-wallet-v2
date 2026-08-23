@@ -18,6 +18,10 @@ generic error text and do not bypass the canonical approval protocol.
    popups because their useful elements are often absent from the accessibility tree.
 4. Load `stupid-app-cli` before building, installing, or launching.
 5. Preserve unrelated worktree changes. Never edit App Group records to force progress.
+6. If the simulator skill's live `log_monitor.py` does not terminate at its requested
+   duration, stop it rather than waiting indefinitely. Continue with bounded `simctl`,
+   App Group inspection, and RPC checks; a log-stream helper hang is not evidence that the
+   app hung.
 
 ## Stack Map
 

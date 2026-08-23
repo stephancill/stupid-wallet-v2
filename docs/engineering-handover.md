@@ -129,6 +129,19 @@ Stale queued requests fail terminally with `4901`. A global advisory lock plus a
 switch journal prevents concurrent readers from observing an uncommitted chain and recovers
 the old or target chain according to durable request consumption after interruption. The
 worker broadcasts the canonical native chain to every tab, including after recovery.
+
+Gate 6 activity persistence is implemented. `ActivityStore` extends the existing shared
+App Group `Activity.sqlite` schema in place so installed transaction and signature history
+is retained. New transaction rows bind the canonical request ID, hash, chain, account,
+origin, and nonce, then move through submitted/pending/confirmed/reverted/dropped/replaced
+states. Receipt polling uses the same `RPCResolver`; a missing receipt remains non-terminal
+while the node knows the transaction or during a propagation grace period, then the latest
+account nonce distinguishes dropped from replaced. New signature rows retain only a digest
+and metadata, not plaintext messages or signatures. The app exposes a minimal activity list,
+polls while its activity task is foreground-active, and supports manual refresh. A funded
+Base simulator self-transfer was recorded as submitted, mined,
+refreshed to confirmed with its block number, and rendered in the app; configured and
+independent RPCs agreed on receipt success and 21,000 gas used.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, real `Signing` (KeychainSigner) plus fresh-`LAContext`
   keychain access as the single device-owner authentication boundary.
@@ -842,14 +855,13 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Continue Gate 6 with SQLite transaction activity and receipt polling now that a live
-   Base transaction is accepted and its receipt shape is proven.
-2. Continue Gate 6 with app-side connected-apps list/disconnect UI (native
+1. Continue Gate 6 with app-side connected-apps list/disconnect UI (native
    `listSites`/`disconnectSite` actions exist), create/import/backup flows, persisted RPC
    overrides, and balance display.
-3. Migrate legacy hostname-only grants to scheme + effective port + Safari profile without
+2. Migrate legacy hostname-only grants to scheme + effective port + Safari profile without
    breaking old-app readability; until then this locked compatibility shape remains weaker
    for global chain authorization than the target origin model.
+3. Add richer activity detail after the core wallet-management screens.
 4. Gate 7 and later per the implementation gates.
 
 ## Reference Sources
