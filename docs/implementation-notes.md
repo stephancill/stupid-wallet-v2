@@ -50,6 +50,68 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Anchored Balance Details Popover
+
+### Summary
+
+- Replaced the balance disclosure menu with an anchored popover that opens beneath the
+  balance button.
+- The balance button remains visible while its selected-chain balance detail is shown.
+- The detail uses the regular system body font rather than monospaced text.
+
+### Why
+
+- The system toolbar-style menu expanded in place and visually replaced the large balance
+  control instead of presenting its detail below it.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift` completed.
+- `swift test`: 111 tests in 21 suites passed.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and
+  launched the app and Safari extension.
+- Simulator visual/OCR inspection confirmed the large balance button remained visible,
+  its chevron changed direction, and the selected-chain balance detail appeared in a
+  separate anchored popover directly beneath it.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-23 - Home Address Menu
+
+### Summary
+
+- Moved the wallet address affordance from beneath the centered balance to a top-leading
+  account blockie.
+- Pressing the blockie now opens a native menu containing a Copy Address action with the
+  shortened wallet address as a native secondary subtitle; the action copies the full
+  address.
+- Rendered the toolbar blockie at its actual 28-point control size so the UIKit menu button
+  does not clip its top and bottom edges.
+
+### Why
+
+- Keeps the balance screen focused on the selected chain balance while retaining quick
+  access to the wallet address.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift` completed.
+- `swift test`: 111 tests in 21 suites passed.
+- `stupid-app doctor`: 0 failures and 0 warnings. `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and
+  launched the app and Safari extension.
+- Simulator visual/OCR inspection confirmed the centered address was absent, the
+  top-leading blockie rendered without edge clipping, and pressing it exposed the Copy
+  Address action with a shortened native secondary subtitle. Selecting it copied a valid
+  20-byte Ethereum address to the simulator clipboard.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-23 - Single RPC Endpoint Network UI
 
 ### Summary

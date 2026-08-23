@@ -7,10 +7,14 @@ import SwiftUI
     let seed: String
 
     var body: some View {
-      Image(uiImage: Blockie.make(seed: seed))
+      Image(uiImage: Self.image(seed: seed))
         .resizable()
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(.gray.opacity(0.2), lineWidth: 1))
+    }
+
+    static func image(seed: String) -> UIImage {
+      Blockie.make(seed: seed)
     }
   }
 

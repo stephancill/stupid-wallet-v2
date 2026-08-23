@@ -144,9 +144,10 @@ refreshed to confirmed with its block number, and rendered in the app; configure
 independent RPCs agreed on receipt success and 21,000 gas used.
 
 The Gate 6 containing-app shell now follows the shipped app's SwiftUI screen hierarchy and
-presentation: the lowercase welcome and import screens; centered large native balance and
-copyable blockie/address home; clock and gear toolbar actions; Settings sheet; Connected
-Apps list/detail/disconnect; default Networks list and RPC detail/editor; authenticated
+presentation: the lowercase welcome and import screens; centered large native balance with
+an anchored details popover; top-leading account blockie menu with a copy-address action;
+clock and gear toolbar actions; Settings sheet; Connected Apps list/detail/disconnect;
+default Networks list and RPC detail/editor; authenticated
 Private Key reveal; and Activity list/detail. The implementation keeps the old native
 labels, spacing, forms, inset-grouped lists, typography, and SF Symbols while using the new
 core boundaries. The home balance is intentionally the selected chain's native balance,
