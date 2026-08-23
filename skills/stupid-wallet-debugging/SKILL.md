@@ -120,6 +120,11 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
 
 - For `eth_sendTransaction`, compare the canonical record against supported fields, active
   account, chain, nonce, gas, fee model, value, destination, and calldata.
+- Missing transaction nonce/gas fields intentionally remain absent from canonical `params`
+  while pending and are resolved immediately before signing. A consumed/failed send records
+  the actual signing transaction in `resolvedParams`. If quick successive sends fail with
+  `nonce too low`, verify each approval made a fresh `eth_getTransactionCount(..., "pending")`
+  call after the preceding broadcast rather than comparing only the immutable intent.
 - For `eth_signTypedData_v4`, decode standard `[address, jsonString]` params and test the
   exact EIP-712 digest independently. Avoid host `Int` for `uintN`; EIP-712 permits full
   256-bit values and must enforce the declared width.

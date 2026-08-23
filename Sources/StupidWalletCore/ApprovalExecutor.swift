@@ -108,7 +108,7 @@ public enum RequestExecutor {
   }
 
   private static func transaction(_ request: WalletPendingRequest) throws -> ParsedTransaction {
-    guard case .array(let items) = request.params,
+    guard case .array(let items) = request.resolvedParams ?? request.params,
       case .object(let tx) = items.first
     else { throw ApprovalError.badParams }
 

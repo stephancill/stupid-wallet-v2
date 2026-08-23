@@ -105,9 +105,13 @@ standard-params work:
   duplicate approval, rejection returned `4001`, and concurrent requests followed the
   documented queue order.
 
-Gate 6 is underway. `eth_sendTransaction` now fills missing nonce, gas limit, and legacy
-or EIP-1559 fee fields through the shared resolver before persisting the canonical request;
-the popup summary shows the prepared nonce/gas/fees. Approval signs a canonical legacy or
+Gate 6 is underway. `eth_sendTransaction` persists and binds the normalized dapp intent
+without snapshotting missing nonce, gas limit, or legacy/EIP-1559 fee fields. The popup
+shows explicit signing-time placeholders for unresolved values. Approval revalidates the
+bound intent, resolves each missing field through the shared resolver immediately before
+authentication/signing, and stores those values separately from the immutable approved
+params/digest. This prevents quick successive approvals from signing the same stale pending
+nonce while preserving explicit dapp-provided limits. Approval signs a canonical legacy or
 type-2 raw transaction, submits it with `eth_sendRawTransaction`, and resolves to the
 32-byte transaction hash. Structured node/transport submission failures become durable
 terminal request errors so polling does not strand the dapp promise. Approval/rejection
@@ -511,7 +515,8 @@ serializes and persists the switch, and returns `null`; the worker then broadcas
 1. The background worker sends the authoritative origin, tab identity, method, params,
    and request ID to native code as a prepare operation.
 2. Native code validates and canonicalizes the request, computes a payload digest, and
-   persists a one-time pending record in the App Group with an expiry.
+   persists a one-time pending record in the App Group with an expiry. For sends, missing
+   nonce/gas fields remain unresolved so queued requests do not snapshot the same values.
 3. Browser storage retains only routing metadata needed to reconnect the pending native
    request to the requesting tab. Sensitive payloads and approval authority do not live
    in browser storage.
@@ -522,8 +527,10 @@ serializes and persists the switch, and returns `null`; the worker then broadcas
 6. On approval, the popup sends only the request ID and decision. Native code reloads
    the canonical record and verifies its origin, chain, payload digest, expiry, and
    unconsumed state.
-7. Native code creates a fresh `LAContext`, requests device-owner authentication, and
-   performs signing only after authentication succeeds.
+7. For sends, native code resolves missing nonce, gas limit, and fee values through the
+   active RPC immediately before signing while retaining the immutable approved intent.
+   It then creates a fresh `LAContext`, requests device-owner authentication, and performs
+   signing only after authentication succeeds.
 8. Native code atomically consumes the pending request and returns the result.
 9. The background worker routes completion to the originating tab. If the tab navigated,
    closed, changed origin, or no longer recognizes the request ID, the result is dropped
@@ -611,9 +618,9 @@ Each chain may have one user-selected override. Saving an override requires:
 - A successful `eth_chainId` response.
 - Exact equality between the endpoint's chain ID and the chain being configured.
 
-All app and extension operations use the same resolver. Balance reads, transaction
-preparation, fee data, simulation, ENS work, receipt polling, and generic passthrough must
-not create independent RPC hierarchies.
+All app and extension operations use the same resolver. Balance reads, signing-time
+transaction resolution, fee data, simulation, ENS work, receipt polling, and generic
+passthrough must not create independent RPC hierarchies.
 
 `wallet_addEthereumChain` may record confirmed metadata, but a dapp-provided `rpcUrls`
 array is a suggestion, not an automatic user override. `wallet_switchEthereumChain`

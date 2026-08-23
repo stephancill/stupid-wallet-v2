@@ -68,16 +68,22 @@ public enum ApprovalSummary {
         if let data = tx["data"]?.stringValue, !data.isEmpty, data != "0x" {
           rows.append(("Data", Self.dataDigest(data)))
         }
-        if let nonce = tx["nonce"]?.stringValue { rows.append(("Nonce", nonce)) }
-        if let gas = tx["gas"]?.stringValue { rows.append(("Gas limit", gas)) }
+        rows.append(("Nonce", tx["nonce"]?.stringValue ?? "Latest at signing"))
+        rows.append(("Gas limit", tx["gas"]?.stringValue ?? "Estimated at signing"))
         if let gasPrice = tx["gasPrice"]?.stringValue {
           rows.append(("Gas price", gasPrice))
+        } else if tx["type"]?.stringValue != "0x2" {
+          rows.append(("Gas price", "Resolved at signing"))
         }
         if let maxFee = tx["maxFeePerGas"]?.stringValue {
           rows.append(("Max fee per gas", maxFee))
+        } else if tx["type"]?.stringValue == "0x2" {
+          rows.append(("Max fee per gas", "Resolved at signing"))
         }
         if let priorityFee = tx["maxPriorityFeePerGas"]?.stringValue {
           rows.append(("Priority fee", priorityFee))
+        } else if tx["type"]?.stringValue == "0x2" {
+          rows.append(("Priority fee", "Resolved at signing"))
         }
       }
     case .chain:
@@ -347,7 +353,7 @@ public actor WalletService {
 
     let canonicalParams: JSONValue
     if kind == .send {
-      canonicalParams = try await prepareTransaction(params: params, chainID: chainId)
+      canonicalParams = try canonicalizeTransaction(params: params, chainID: chainId)
     } else {
       canonicalParams = params
     }
@@ -368,9 +374,8 @@ public actor WalletService {
     )
     if kind == .send {
       do {
-        try Self.validatePreparedTransaction(
+        try Self.validateTransactionIntent(
           record.params, account: record.account, chainID: record.chainId)
-        _ = try RequestExecutor.signableDigest(for: record)
       } catch {
         throw WalletError.invalidParams
       }
@@ -491,10 +496,24 @@ public actor WalletService {
       let signable: [UInt8]
       do {
         if record.kind == .send {
-          try Self.validatePreparedTransaction(
+          try Self.validateTransactionIntent(
             record.params, account: record.account, chainID: record.chainId)
+          record = try await resolveTransaction(record)
+          try Self.validatePreparedTransaction(
+            record.resolvedParams ?? record.params, account: record.account,
+            chainID: record.chainId)
         }
         signable = try RequestExecutor.signableDigest(for: record)
+      } catch let error as WalletError {
+        if case .rpc = error { throw error }
+        let rpcError = JSONValue.object([
+          "code": .number(-32602),
+          "message": .string("Invalid persisted request parameters"),
+        ])
+        record.status = .failed
+        record.error = rpcError
+        try await store.insert(record)
+        throw WalletError.rpc(rpcError)
       } catch {
         let rpcError = JSONValue.object([
           "code": .number(-32602),
@@ -610,7 +629,7 @@ public actor WalletService {
     return object?["chainName"]?.stringValue
   }
 
-  private func prepareTransaction(params: JSONValue, chainID: String) async throws -> JSONValue {
+  private func canonicalizeTransaction(params: JSONValue, chainID: String) throws -> JSONValue {
     guard case .array(let items) = params, items.count == 1,
       case .object(var transaction) = items[0]
     else { throw WalletError.invalidParams }
@@ -644,21 +663,9 @@ public actor WalletService {
     }
     transaction["chainId"] = .string(chainQuantity)
 
-    if transaction["nonce"] == nil {
-      transaction["nonce"] = .string(
-        try await rpcQuantity(
-          method: "eth_getTransactionCount",
-          params: .array([.string(signing.account), .string("pending")]),
-          chainID: chainID))
-    }
-
     if transaction["gas"] == nil {
       if let gasLimit = transaction.removeValue(forKey: "gasLimit") {
         transaction["gas"] = gasLimit
-      } else {
-        transaction["gas"] = .string(
-          try await rpcQuantity(
-            method: "eth_estimateGas", params: .array([.object(transaction)]), chainID: chainID))
       }
     } else if let gasLimit = transaction["gasLimit"] {
       guard transaction["gas"] == gasLimit else { throw WalletError.invalidParams }
@@ -677,34 +684,57 @@ public actor WalletService {
         guard accessList == .array([]) else { throw WalletError.invalidParams }
       }
       transaction["type"] = .string("0x2")
-      if transaction["maxPriorityFeePerGas"] == nil {
-        transaction["maxPriorityFeePerGas"] = .string(
-          try await rpcQuantity(
-            method: "eth_maxPriorityFeePerGas", params: .array([]), chainID: chainID))
-      }
-      if transaction["maxFeePerGas"] == nil {
-        let gasPrice = try await rpcQuantity(
-          method: "eth_gasPrice", params: .array([]), chainID: chainID)
-        let priorityFee = transaction["maxPriorityFeePerGas"]?.stringValue ?? "0x0"
-        transaction["maxFeePerGas"] = .string(
-          try Self.maximumQuantity(gasPrice, priorityFee))
-      }
-      guard let maxFee = transaction["maxFeePerGas"]?.stringValue,
-        let priorityFee = transaction["maxPriorityFeePerGas"]?.stringValue,
-        try Self.maximumQuantity(maxFee, priorityFee) == maxFee
-      else { throw WalletError.invalidParams }
     } else {
       guard type == nil || type == "0x0" else { throw WalletError.invalidParams }
       guard transaction["accessList"] == nil else { throw WalletError.invalidParams }
       transaction.removeValue(forKey: "type")
-      if transaction["gasPrice"] == nil {
-        transaction["gasPrice"] = .string(
-          try await rpcQuantity(method: "eth_gasPrice", params: .array([]), chainID: chainID))
-      }
     }
-    let prepared = JSONValue.array([.object(transaction)])
-    try Self.validatePreparedTransaction(prepared, account: signing.account, chainID: chainID)
-    return prepared
+    let intent = JSONValue.array([.object(transaction)])
+    try Self.validateTransactionIntent(intent, account: signing.account, chainID: chainID)
+    return intent
+  }
+
+  private func resolveTransaction(_ record: WalletPendingRequest) async throws
+    -> WalletPendingRequest
+  {
+    guard case .array(let items) = record.params, items.count == 1,
+      case .object(var transaction) = items[0]
+    else { throw WalletError.invalidParams }
+
+    if transaction["nonce"] == nil {
+      transaction["nonce"] = .string(
+        try await rpcQuantity(
+          method: "eth_getTransactionCount",
+          params: .array([.string(record.account), .string("pending")]),
+          chainID: record.chainId))
+    }
+    if transaction["gas"] == nil {
+      transaction["gas"] = .string(
+        try await rpcQuantity(
+          method: "eth_estimateGas", params: .array([.object(transaction)]),
+          chainID: record.chainId))
+    }
+    if transaction["type"]?.stringValue == "0x2" {
+      if transaction["maxPriorityFeePerGas"] == nil {
+        transaction["maxPriorityFeePerGas"] = .string(
+          try await rpcQuantity(
+            method: "eth_maxPriorityFeePerGas", params: .array([]), chainID: record.chainId))
+      }
+      if transaction["maxFeePerGas"] == nil {
+        let gasPrice = try await rpcQuantity(
+          method: "eth_gasPrice", params: .array([]), chainID: record.chainId)
+        let priorityFee = transaction["maxPriorityFeePerGas"]?.stringValue ?? "0x0"
+        transaction["maxFeePerGas"] = .string(
+          try Self.maximumQuantity(gasPrice, priorityFee))
+      }
+    } else if transaction["gasPrice"] == nil {
+      transaction["gasPrice"] = .string(
+        try await rpcQuantity(method: "eth_gasPrice", params: .array([]), chainID: record.chainId))
+    }
+
+    var resolved = record
+    resolved.resolvedParams = .array([.object(transaction)])
+    return resolved
   }
 
   private func rpcQuantity(method: String, params: JSONValue, chainID: String) async throws
@@ -758,7 +788,9 @@ public actor WalletService {
         try await store.insert(record)
         throw WalletError.rpc(error)
       }
-      if let nonce = Self.transactionObject(record.params)?["nonce"]?.stringValue {
+      if let nonce = Self.transactionObject(record.resolvedParams ?? record.params)?["nonce"]?
+        .stringValue
+      {
         try? await activityStore.recordTransaction(
           request: record, hash: expectedHash, nonce: nonce)
       }
@@ -931,6 +963,59 @@ public actor WalletService {
       guard type == nil, transaction["accessList"] == nil,
         transaction["gasPrice"]?.stringValue != nil
       else { throw WalletError.invalidParams }
+    }
+  }
+
+  private static func validateTransactionIntent(
+    _ params: JSONValue, account: String, chainID: String
+  ) throws {
+    guard case .array(let items) = params, items.count == 1,
+      case .object(let transaction) = items[0]
+    else { throw WalletError.invalidParams }
+    let supportedFields: Set<String> = [
+      "from", "to", "value", "data", "gas", "gasPrice", "nonce", "chainId", "type",
+      "maxFeePerGas", "maxPriorityFeePerGas", "accessList",
+    ]
+    guard transaction.keys.allSatisfy(supportedFields.contains),
+      transaction["from"]?.stringValue?.caseInsensitiveCompare(account) == .orderedSame,
+      let transactionChainID = transaction["chainId"]?.stringValue,
+      try chainQuantity(transactionChainID) == chainQuantity(chainID),
+      let value = transaction["value"]?.stringValue, Hex.quantityData(hex: value) != nil,
+      let data = transaction["data"]?.stringValue, Hex.data(data) != nil
+    else { throw WalletError.invalidParams }
+
+    if let to = transaction["to"] {
+      guard to == .null || to.stringValue.flatMap(Hex.data)?.count == 20 else {
+        throw WalletError.invalidParams
+      }
+    }
+    for field in ["gas", "gasPrice", "nonce", "maxFeePerGas", "maxPriorityFeePerGas"] {
+      if let value = transaction[field] {
+        guard let quantity = value.stringValue, Hex.quantityData(hex: quantity) != nil else {
+          throw WalletError.invalidParams
+        }
+      }
+    }
+
+    let type = transaction["type"]?.stringValue?.lowercased()
+    let dynamic =
+      type == "0x2" || transaction["maxFeePerGas"] != nil
+      || transaction["maxPriorityFeePerGas"] != nil
+    if dynamic {
+      guard type == "0x2", transaction["gasPrice"] == nil,
+        transaction["accessList"] == nil || transaction["accessList"] == .array([])
+      else { throw WalletError.invalidParams }
+      if let maxFee = transaction["maxFeePerGas"]?.stringValue,
+        let priorityFee = transaction["maxPriorityFeePerGas"]?.stringValue
+      {
+        guard try maximumQuantity(maxFee, priorityFee) == maxFee else {
+          throw WalletError.invalidParams
+        }
+      }
+    } else {
+      guard type == nil, transaction["accessList"] == nil else {
+        throw WalletError.invalidParams
+      }
     }
   }
 

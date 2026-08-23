@@ -20,8 +20,11 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
   public let profileID: String?
   public let chainId: String
   public let account: String
+  /// Immutable dapp intent bound by `payloadDigest` and shown for approval.
   public let params: JSONValue
   public let payloadDigest: String
+  /// Wallet-resolved nonce/gas values used for signing, populated only after approval.
+  public var resolvedParams: JSONValue?
   public let createdAt: Date
   public let expiresAt: Date
   public var status: Status
@@ -40,6 +43,7 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     account: String,
     params: JSONValue,
     payloadDigest: String,
+    resolvedParams: JSONValue? = nil,
     createdAt: Date = Date(),
     expiresAt: Date = Date().addingTimeInterval(600),
     status: Status = .pending,
@@ -55,6 +59,7 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     self.account = account
     self.params = params
     self.payloadDigest = payloadDigest
+    self.resolvedParams = resolvedParams
     self.createdAt = createdAt
     self.expiresAt = expiresAt
     self.status = status

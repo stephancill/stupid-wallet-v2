@@ -26,7 +26,7 @@ struct TransactionSubmissionTests {
       rpcClient: client)
   }
 
-  @Test("missing legacy fields are prepared, signed, broadcast, and resolve to the tx hash")
+  @Test("missing legacy fields are resolved only when approved and broadcast")
   func preparesAndBroadcasts() async throws {
     let service = service { request in
       let object = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
@@ -64,15 +64,19 @@ struct TransactionSubmissionTests {
       Issue.record("expected prepared transaction")
       return
     }
-    #expect(transaction["nonce"] == .string("0x7"))
-    #expect(transaction["gas"] == .string("0x5208"))
-    #expect(transaction["gasPrice"] == .string("0x3b9aca00"))
+    #expect(transaction["nonce"] == nil)
+    #expect(transaction["gas"] == nil)
+    #expect(transaction["gasPrice"] == nil)
     #expect(transaction["chainId"] == .string("0x1"))
     let summary = try await service.summarize(request: id)
-    #expect(summary?.rows.contains { $0.label == "Nonce" && $0.value == "0x7" } == true)
-    #expect(summary?.rows.contains { $0.label == "Gas limit" && $0.value == "0x5208" } == true)
     #expect(
-      summary?.rows.contains { $0.label == "Gas price" && $0.value == "0x3b9aca00" }
+      summary?.rows.contains { $0.label == "Nonce" && $0.value == "Latest at signing" }
+        == true)
+    #expect(
+      summary?.rows.contains { $0.label == "Gas limit" && $0.value == "Estimated at signing" }
+        == true)
+    #expect(
+      summary?.rows.contains { $0.label == "Gas price" && $0.value == "Resolved at signing" }
         == true)
 
     let result = try await service.approve(request: id)
@@ -83,6 +87,59 @@ struct TransactionSubmissionTests {
     #expect(activity.first?.requestID == id)
     #expect(activity.first?.status == .submitted)
     #expect(activity.first?.nonce == "0x7")
+    let terminalRecord = try await service.store.record(id)
+    #expect(terminalRecord?.params == record?.params)
+    #expect(terminalRecord?.payloadDigest == record?.payloadDigest)
+    guard case .array(let resolvedParams) = terminalRecord?.resolvedParams,
+      case .object(let resolvedTransaction)? = resolvedParams.first
+    else {
+      Issue.record("expected resolved transaction")
+      return
+    }
+    #expect(resolvedTransaction["nonce"] == .string("0x7"))
+    #expect(resolvedTransaction["gas"] == .string("0x5208"))
+    #expect(resolvedTransaction["gasPrice"] == .string("0x3b9aca00"))
+  }
+
+  @Test("quick successive approvals resolve consecutive pending nonces")
+  func resolvesNonceAtEachApproval() async throws {
+    let state = TransactionRPCState()
+    let service = service { request in
+      let object = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
+      let method = object.nestedString(at: ["method"])!
+      switch method {
+      case "eth_getTransactionCount": return rpcResponse(result: state.pendingNonce)
+      case "eth_estimateGas": return rpcResponse(result: "0x5208")
+      case "eth_gasPrice": return rpcResponse(result: "0x3b9aca00")
+      case "eth_sendRawTransaction":
+        guard case .object(let body) = object,
+          case .array(let params)? = body["params"],
+          case .string(let raw)? = params.first,
+          let bytes = Hex.data(raw)
+        else { return rpcResponse(error: "invalid raw transaction") }
+        state.didBroadcast()
+        return rpcResponse(result: "0x" + Hex.encode(Keccak.keccak256(bytes)))
+      default: return rpcResponse(error: "unexpected method \(method)")
+      }
+    }
+    let params = JSONValue.array([
+      .object([
+        "to": .string("0x0000000000000000000000000000000000000001"),
+        "value": .string("0x0"),
+      ])
+    ])
+    let first = try await service.prepare(
+      method: "eth_sendTransaction", params: params, origin: "https://dapp.example")
+    let second = try await service.prepare(
+      method: "eth_sendTransaction", params: params, origin: "https://dapp.example")
+
+    #expect(state.nonceRequestCount == 0)
+    _ = try await service.approve(request: first)
+    _ = try await service.approve(request: second)
+
+    #expect(state.nonceRequestCount == 2)
+    let activities = try await service.activities()
+    #expect(Set(activities.compactMap(\.nonce)) == Set(["0x0", "0x1"]))
   }
 
   @Test("receipt polling confirms a submitted transaction")
@@ -184,6 +241,13 @@ struct TransactionSubmissionTests {
       switch object.nestedString(at: ["method"]) {
       case "eth_maxPriorityFeePerGas": return rpcResponse(result: "0x77359400")
       case "eth_gasPrice": return rpcResponse(result: "0x3b9aca00")
+      case "eth_sendRawTransaction":
+        guard case .object(let body) = object,
+          case .array(let params)? = body["params"],
+          case .string(let raw)? = params.first,
+          let bytes = Hex.data(raw)
+        else { return rpcResponse(error: "invalid raw transaction") }
+        return rpcResponse(result: "0x" + Hex.encode(Keccak.keccak256(bytes)))
       default: return rpcResponse(error: "unexpected method")
       }
     }
@@ -199,7 +263,8 @@ struct TransactionSubmissionTests {
       ]),
       origin: "https://dapp.example", chainId: "1")
 
-    guard case .array(let params) = try await service.store.record(id)?.params,
+    _ = try await service.approve(request: id)
+    guard case .array(let params) = try await service.store.record(id)?.resolvedParams,
       case .object(let transaction)? = params.first
     else {
       Issue.record("expected prepared transaction")
@@ -447,6 +512,23 @@ struct TransactionSubmissionTests {
       ]),
       origin: "https://dapp.example", chainId: "1")
   }
+}
+
+private final class TransactionRPCState: @unchecked Sendable {
+  private let lock = NSLock()
+  private var broadcasts = 0
+  private var nonceRequests = 0
+
+  var pendingNonce: String {
+    lock.withLock {
+      nonceRequests += 1
+      return "0x" + String(broadcasts, radix: 16)
+    }
+  }
+
+  var nonceRequestCount: Int { lock.withLock { nonceRequests } }
+
+  func didBroadcast() { lock.withLock { broadcasts += 1 } }
 }
 
 private final class TransactionURLProtocol: URLProtocol {

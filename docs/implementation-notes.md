@@ -50,6 +50,46 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Signing-Time Transaction Nonce And Gas Resolution
+
+### Summary
+
+- Changed `eth_sendTransaction` preparation to persist only normalized, validated dapp intent.
+  Missing nonce, gas limit, and legacy or EIP-1559 fee values are now fetched through the
+  active shared RPC resolver immediately before authenticated signing.
+- Kept the original params and payload digest immutable. Resolved signing params are stored
+  separately on the terminal pending record and drive serialization and activity nonce
+  persistence. Explicit dapp-provided nonce and gas caps remain unchanged.
+- Changed transaction summaries to identify unresolved fields as latest, estimated, or
+  resolved at signing rather than displaying a stale snapshot.
+- Added a regression that prepares two sends before either is approved and proves their
+  approvals fetch consecutive pending nonces after the first broadcast.
+
+### Why
+
+- Preparing requests in quick succession previously fetched the same pending nonce for each
+  canonical record. Approving the first advanced the account nonce, so approving the second
+  broadcast a stale nonce and failed with `nonce too low`.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` completed.
+- `swift test`: 117 tests in 21 suites passed.
+- The repository debugging skill passed `quick_validate.py` after documenting the
+  `resolvedParams` diagnosis path.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build`
+  succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and
+  launched the app and Safari extension. The containing app remained running after launch.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` signed the app and
+  nested extension, packaged the IPA, installed it over the saved network pairing, and
+  launched the containing app on the physical iPhone.
+
+### Follow-Up
+
+- Repeat a quick-successive-send flow against a live dapp/RPC on the simulator or physical
+  device before treating network behavior as independently proven.
+
 ## 2026-08-23 - Persisted Networks And Aggregate Balance
 
 ### Summary
