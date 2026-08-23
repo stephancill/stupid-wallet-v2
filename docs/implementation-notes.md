@@ -50,6 +50,40 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Long-Press Transaction Hash Copy
+
+### Summary
+
+- Removed the persistent copy icon from the transaction hash row in Activity details.
+- Long-pressing the hash now opens the compact system edit menu with a Copy action, without
+  selecting the text or showing a context-menu preview.
+- Recorded the reliable simulator held-touch command in the repository debugging skill;
+  the existing simulator helper's long-press option performs only a tap plus host delay.
+
+### Why
+
+- Keeps the detail row visually quiet while preserving full-hash copying through the same
+  compact menu treatment used by text selection, without exposing selection handles.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ActivityView.swift` completed.
+- `swift test`: 111 tests in 21 suites passed.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and
+  launched the app and Safari extension.
+- Simulator visual/OCR inspection confirmed the hash row had no inline copy icon and an
+  actual held touch opened the compact Copy edit menu without text selection or a context
+  preview. Selecting Copy placed a complete 32-byte transaction hash on the simulator
+  clipboard.
+- The first iOS-target build exposed an `NSObject` property-name collision and missing Swift
+  actor metadata on the Objective-C edit-menu delegate. Renaming the stored value and using
+  an explicit pre-concurrency delegate conformance resolved both; the final build succeeded.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-23 - Activity Detail Number Formatting
 
 ### Summary

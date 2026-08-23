@@ -57,6 +57,10 @@ https://app.uniswap.org/swap?chain=base&inputCurrency=<token>&outputCurrency=NAT
 ```
 
 - Use accessibility navigation first. Use OCR immediately before coordinate taps.
+- To trigger a simulator context or edit menu, issue a real held touch with
+  `idb ui tap <x> <y> --duration 1.5 --udid <udid>`. The simulator skill's current
+  `gesture.py --long-press` implementation taps and then waits on the host, so it does not
+  hold the touch or open an iOS long-press menu.
 - Treat dapp text such as “Swap failed” or “adjust slippage” as non-authoritative until the
   provider/native error is known.
 

@@ -92,30 +92,17 @@ import SwiftUI
 
   struct ActivityDetailView: View {
     let item: ActivityRecord
-    @State private var didCopyHash = false
 
     var body: some View {
       Form {
         if item.kind == .transaction {
           Section("Transaction") {
             if let hash = item.transactionHash {
-              Button {
-                copy(hash)
-              } label: {
-                HStack {
-                  Text("Hash")
-                  Spacer()
-                  HStack(spacing: 6) {
-                    Text(hash)
-                      .foregroundStyle(.secondary)
-                      .lineLimit(1)
-                      .truncationMode(.middle)
-                    Image(systemName: didCopyHash ? "checkmark" : "doc.on.doc")
-                      .foregroundStyle(.secondary)
-                  }
-                }
+              HStack {
+                Text("Hash")
+                CopyableHashText(hash: hash)
+                  .frame(maxWidth: .infinity)
               }
-              .buttonStyle(.plain)
             }
             detailRow("Status", item.status.rawValue.capitalized)
             detailRow("Network", NetworkInfo.name(for: normalizedChainID(item.chainID)))
@@ -154,17 +141,6 @@ import SwiftUI
       }
     }
 
-    private func copy(_ hash: String) {
-      #if canImport(UIKit)
-        UIPasteboard.general.string = hash
-      #endif
-      didCopyHash = true
-      Task {
-        try? await Task.sleep(for: .seconds(1.2))
-        didCopyHash = false
-      }
-    }
-
     private func decimalBlockNumber(_ value: String) -> String {
       if value.lowercased().hasPrefix("0x"),
         let number = UInt64(value.dropFirst(2), radix: 16)
@@ -172,6 +148,77 @@ import SwiftUI
         return String(number)
       }
       return UInt64(value).map(String.init) ?? value
+    }
+  }
+
+  private struct CopyableHashText: UIViewRepresentable {
+    let hash: String
+
+    func makeCoordinator() -> Coordinator {
+      Coordinator(transactionHash: hash)
+    }
+
+    func makeUIView(context: Context) -> UILabel {
+      let label = UILabel()
+      label.textColor = .secondaryLabel
+      label.textAlignment = .right
+      label.lineBreakMode = .byTruncatingMiddle
+      label.numberOfLines = 1
+      label.isUserInteractionEnabled = true
+      label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+      let interaction = UIEditMenuInteraction(delegate: context.coordinator)
+      label.addInteraction(interaction)
+      label.addGestureRecognizer(
+        UILongPressGestureRecognizer(
+          target: context.coordinator,
+          action: #selector(Coordinator.showCopyMenu(_:))))
+      context.coordinator.label = label
+      context.coordinator.interaction = interaction
+      return label
+    }
+
+    func updateUIView(_ label: UILabel, context: Context) {
+      label.text = hash
+      context.coordinator.transactionHash = hash
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, @preconcurrency UIEditMenuInteractionDelegate {
+      var transactionHash: String
+      weak var label: UILabel?
+      var interaction: UIEditMenuInteraction?
+
+      init(transactionHash: String) {
+        self.transactionHash = transactionHash
+      }
+
+      @objc func showCopyMenu(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began, let label, let interaction else { return }
+        interaction.presentEditMenu(
+          with: UIEditMenuConfiguration(
+            identifier: nil,
+            sourcePoint: recognizer.location(in: label)))
+      }
+
+      func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        suggestedActions: [UIMenuElement]
+      ) -> UIMenu? {
+        UIMenu(children: [
+          UIAction(title: "Copy") { [transactionHash] _ in
+            UIPasteboard.general.string = transactionHash
+          }
+        ])
+      }
+
+      func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        targetRectFor configuration: UIEditMenuConfiguration
+      ) -> CGRect {
+        label?.bounds ?? .null
+      }
     }
   }
 
