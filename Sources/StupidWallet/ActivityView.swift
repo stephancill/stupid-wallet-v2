@@ -107,7 +107,6 @@ import SwiftUI
                   Spacer()
                   HStack(spacing: 6) {
                     Text(hash)
-                      .font(.system(.body, design: .monospaced))
                       .foregroundStyle(.secondary)
                       .lineLimit(1)
                       .truncationMode(.middle)
@@ -121,7 +120,9 @@ import SwiftUI
             detailRow("Status", item.status.rawValue.capitalized)
             detailRow("Network", NetworkInfo.name(for: normalizedChainID(item.chainID)))
             detailRow("Timestamp", item.createdAt.formatted(date: .abbreviated, time: .shortened))
-            if let blockNumber = item.blockNumber { detailRow("Block", blockNumber) }
+            if let blockNumber = item.blockNumber {
+              detailRow("Block", decimalBlockNumber(blockNumber))
+            }
           }
         } else {
           Section("Signature") {
@@ -162,6 +163,15 @@ import SwiftUI
         try? await Task.sleep(for: .seconds(1.2))
         didCopyHash = false
       }
+    }
+
+    private func decimalBlockNumber(_ value: String) -> String {
+      if value.lowercased().hasPrefix("0x"),
+        let number = UInt64(value.dropFirst(2), radix: 16)
+      {
+        return String(number)
+      }
+      return UInt64(value).map(String.init) ?? value
     }
   }
 

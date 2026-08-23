@@ -50,6 +50,34 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Activity Detail Number Formatting
+
+### Summary
+
+- Changed transaction hashes in Activity details from monospaced to the regular system
+  body font.
+- Converted persisted hexadecimal RPC block quantities to decimal integers for display.
+
+### Why
+
+- Activity details should use ordinary readable typography and present block heights as
+  familiar decimal numbers rather than JSON-RPC quantities.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ActivityView.swift` completed.
+- `swift test`: 111 tests in 21 suites passed.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and
+  launched the app and Safari extension.
+- Simulator visual/OCR inspection confirmed the transaction hash used the regular system
+  font and a confirmed transaction's hexadecimal RPC block quantity rendered as a decimal
+  integer.
+
+### Follow-Up
+
+- Activity persistence continues to retain the node's original block-number string.
+
 ## 2026-08-23 - Anchored Balance Details Popover
 
 ### Summary
