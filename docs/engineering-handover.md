@@ -240,7 +240,13 @@ origin/profile rather than falling back to the hostname entry.
 - A Safari Web Extension resource set (`manifest.json`, MAIN-world `provider.js`,
   isolated-world `bridge.js`, MV3 `background.js`, and `popup.html`/`css`/`js`) packaged at
   the appex root through `stupid-app.yml` `extensions:`/`resources:`.
-- An in-page, non-authoritative Safari notice plus a toolbar badge as the request prompt.
+- One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
+  icons, EIP-6963 provider discovery, and the in-page request hint. The canonical 1024-point
+  app asset is `Resources/AppIcon.png`; generated browser sizes remain in the extension
+  resource set.
+- A compact in-page, non-authoritative Safari notice plus a toolbar badge as the request
+  prompt. The notice tells the user to open `stupid wallet` from Safari and remains
+  non-interactive; review and approval stay exclusively in the toolbar popup.
 - `PrototypeDapp/` — a wagmi v3 + viem + React + Vite test dapp (`bun create wagmi
   --template vite-react`) exercising connect, `personal_sign`, `eth_signTypedData_v4`,
   `eth_sendTransaction`, `wallet_switchEthereumChain`, and disconnect against the injected
@@ -337,6 +343,8 @@ wallet, one keychain-key identity, one approval flow, and one shared RPC resolve
 
 - The containing app keeps the production bundle identifier
   `co.za.stephancill.stupid-wallet`.
+- The user-facing product name is rendered as `stupid wallet`; Swift products, targets,
+  modules, and existing bundle identifiers retain their established casing.
 - The Safari extension keeps the production release identifier
   `co.za.stephancill.stupid-wallet.extension`.
 - Shared preferences and migration data keep the App Group

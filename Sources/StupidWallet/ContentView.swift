@@ -212,6 +212,6 @@ import SwiftUI
   }
 #else
   struct ContentView: View {
-    var body: some View { Text("Stupid Wallet") }
+    var body: some View { Text("stupid wallet") }
   }
 #endif

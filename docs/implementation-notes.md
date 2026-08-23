@@ -50,6 +50,37 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-24 - Lowercase User-Facing Product Name
+
+### Summary
+
+- Changed rendered instances of `Stupid Wallet` to `stupid wallet` across the containing app,
+  Safari extension identity and request hint, EIP-6963 provider metadata, provider-facing
+  errors, and prototype app UI.
+- Replaced user-facing `dapp` wording with `app` while retaining the protocol term in code
+  comments, tests, directory names, and technical documentation.
+- Kept internal Swift target/module names, bundle identifiers, source comments, historical
+  documentation, and signing-domain strings unchanged. The extension manifest is now `0.1.18`
+  to invalidate cached UI resources.
+
+### Verification
+
+- `swift format`, `oxfmt`, `oxlint`, `node --check`, and plist linting passed for the changed
+  Swift, extension, prototype-app, manifest, HTML, and plist files.
+- The prototype app's `bun run build` succeeded.
+- `swift test`: 118 tests in 21 suites passed.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and manifest `0.1.18` extension.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` signed the app and
+  nested extension, installed them on the physical iPhone, and launched the containing app.
+- Source searches confirmed remaining `Stupid Wallet` and `dapp` matches are limited to
+  non-UI signing-domain values, comments, technical documentation, identifiers, and tests.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-24 - Public Repository README
 
 ### Summary
@@ -69,6 +100,85 @@ Use this entry template:
 ### Follow-Up
 
 - Add licensing terms only after the project owner selects a repository license.
+
+## 2026-08-24 - Unified Upward-Arrow Identity
+
+### Summary
+
+- Added the final supplied hand-drawn upward-arrow artwork as the canonical 1024x1024,
+  non-alpha `Resources/AppIcon.png` and configured `stupid-app.yml` to compile it as the
+  containing app icon.
+- Regenerated the Safari WebExtension's 48px and 128px icons from the same asset, replaced the
+  in-page hint's separate CSS glyph with the packaged 48px image, and exposed that image as a
+  read-only web-accessible resource.
+- Added the same 48px PNG to EIP-6963 provider metadata as a data URI because the MAIN-world
+  provider cannot use WebExtension runtime URLs. Its decoded bytes are identical to the
+  packaged extension icon.
+- Bumped the WebExtension manifest to `0.1.17` for Safari resource-cache invalidation.
+
+### Why
+
+- The app had no configured icon, the extension used placeholder artwork, provider discovery
+  announced an empty icon, and the page hint drew an unrelated mark. One generated asset set
+  now provides a consistent identity without adding runtime image processing.
+
+### Verification
+
+- Image inspection confirmed 1024x1024, 48x48, and 128x128 PNG outputs with no alpha channel.
+- `bunx oxfmt --write <changed extension resources>`,
+  `bunx oxlint SafariExtension/Resources/bridge.js SafariExtension/Resources/provider.js`, and
+  `node --check` for both changed scripts passed.
+- `swift test`: 118 tests in 21 suites passed.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded and
+  produced `Assets.car` plus `CFBundleIconName = AppIcon` metadata.
+- Source and packaged extension-icon SHA-256 values matched, and the EIP-6963 data URI decoded
+  to the same bytes as `icon-48.png`.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and manifest `0.1.17` extension. Simulator screenshots confirmed the final arrow on
+  the home-screen app icon, Safari Page Menu extension row, and pending-request page hint. The
+  test request was rejected without signing or broadcasting, and the hint disappeared.
+- Safari applies its system blue template tint to the monochrome icon in the Page Menu; the
+  source files, compiled app icon, and in-page image remain black and white.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-24 - Cleaner In-Page Popup Hint
+
+### Summary
+
+- Replaced the long dark pending-request pill with a compact system-style banner containing
+  a small wallet mark, the title `Open Stupid Wallet`, and the instruction
+  `Tap the extension in Safari to continue`.
+- Kept the banner non-interactive and non-authoritative. It still appears only while a
+  canonical request is pending; review and approval remain in Safari's extension popup.
+- Made the banner respect the top safe area and narrow viewports, and bumped the WebExtension
+  manifest to `0.1.16` so Safari invalidates cached resources.
+
+### Why
+
+- The previous single-line pill was visually heavy, overly wordy, and contained a typo in the
+  wallet name. The new hierarchy is shorter and easier to scan without implying that the page
+  notice can approve the request.
+
+### Verification
+
+- `bunx oxfmt --write SafariExtension/Resources/bridge.js
+  SafariExtension/Resources/manifest.json`,
+  `bunx oxlint SafariExtension/Resources/bridge.js`, and
+  `node --check SafariExtension/Resources/bridge.js` passed.
+- `swift test`: 118 tests in 21 suites passed.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and manifest `0.1.16` extension.
+- Simulator Safari/OCR and screenshot inspection confirmed the compact two-line banner rendered
+  above the dapp. Opening the real extension popup and rejecting the request removed the banner;
+  the request was not signed or broadcast.
+
+### Follow-Up
+
+- None.
 
 ## 2026-08-23 - Popup Request Renderer Parity
 

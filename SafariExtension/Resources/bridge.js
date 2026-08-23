@@ -94,26 +94,61 @@
     if (notice) return;
     notice = document.createElement("div");
     notice.id = NOTICE_ID;
-    const text = document.createElement("span");
-    text.textContent =
-      "Signature request pending — tap the Stup to Wallet icon in the Safari toolbar to approve.";
-    notice.appendChild(text);
+
+    const icon = document.createElement("img");
+    icon.src = browser.runtime.getURL("icon-48.png");
+    icon.alt = "";
+    icon.setAttribute("aria-hidden", "true");
+    icon.style.cssText = [
+      "display:block",
+      "width:28px",
+      "height:28px",
+      "flex:0 0 28px",
+      "border-radius:7px",
+    ].join(";");
+
+    const copy = document.createElement("span");
+    copy.style.cssText = ["display:grid", "gap:1px", "min-width:0"].join(";");
+
+    const title = document.createElement("span");
+    title.textContent = "Open stupid wallet";
+    title.style.cssText = ["font-size:13px", "font-weight:600", "line-height:17px"].join(";");
+
+    const instruction = document.createElement("span");
+    instruction.textContent = "Tap the extension in Safari to continue";
+    instruction.style.cssText = [
+      "color:rgba(17,17,19,0.62)",
+      "font-size:12px",
+      "font-weight:400",
+      "line-height:16px",
+    ].join(";");
+
+    copy.append(title, instruction);
+    notice.append(icon, copy);
     notice.setAttribute("role", "status");
     notice.style.cssText = [
       "position:fixed",
-      "top:12px",
+      "top:max(12px, env(safe-area-inset-top))",
       "left:50%",
       "transform:translateX(-50%)",
       "z-index:2147483647",
       "pointer-events:none",
-      "background:rgba(20,22,28,0.92)",
-      "color:#fff",
-      "font:600 13px -apple-system, system-ui, sans-serif",
-      "padding:9px 14px",
-      "border-radius:999px",
-      "box-shadow:0 2px 10px rgba(0,0,0,0.25)",
-      "max-width:86vw",
-      "text-align:center",
+      "display:flex",
+      "align-items:center",
+      "gap:10px",
+      "box-sizing:border-box",
+      "width:max-content",
+      "max-width:calc(100vw - 24px)",
+      "padding:8px 12px 8px 8px",
+      "border:1px solid rgba(17,17,19,0.08)",
+      "border-radius:14px",
+      "background:rgba(250,250,250,0.94)",
+      "box-shadow:0 6px 20px rgba(0,0,0,0.14)",
+      "backdrop-filter:blur(16px)",
+      "-webkit-backdrop-filter:blur(16px)",
+      "color:#111113",
+      "font-family:-apple-system, BlinkMacSystemFont, system-ui, sans-serif",
+      "text-align:left",
     ].join(";");
     document.documentElement.appendChild(notice);
   }
@@ -135,7 +170,7 @@
       message.result = payload;
     } else {
       if (payload && typeof payload === "object" && payload.code !== undefined) {
-        message.error = payload.message || "Stupid Wallet error";
+        message.error = payload.message || "stupid wallet error";
         message.code = payload.code;
         if (payload.data !== undefined) message.data = payload.data;
       } else {

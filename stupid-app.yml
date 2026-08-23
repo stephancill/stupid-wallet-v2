@@ -4,6 +4,7 @@ bundleID: co.za.stephancill.stupid-wallet
 deploymentTarget: "17.0"
 infoPath: Info.plist
 entitlementsPath: App.entitlements
+iconPath: Resources/AppIcon.png
 extensions:
   - product: StupidWalletSafari
     bundleID: co.za.stephancill.stupid-wallet.extension

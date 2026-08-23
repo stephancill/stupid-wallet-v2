@@ -46,7 +46,7 @@
       const title = document.createElement("strong");
       title.textContent = "No pending requests";
       const detail = document.createElement("p");
-      detail.textContent = "Open a dapp to connect, sign, or send.";
+      detail.textContent = "Open an app to connect, sign, or send.";
       standby.append(title, detail);
       tray.appendChild(standby);
       return;

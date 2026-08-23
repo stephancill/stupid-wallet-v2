@@ -13,7 +13,7 @@ import { injected } from "wagmi/connectors";
 import type { EIP1193Provider } from "viem";
 
 const TYPED_DATA_DOMAIN = {
-  name: "Stupid Wallet Test",
+  name: "stupid wallet Test",
   version: "1",
   chainId: 8453,
 } as const;
@@ -69,7 +69,7 @@ export default function App() {
     <main
       style={{ fontFamily: "system-ui, sans-serif", maxWidth: 640, margin: "0 auto", padding: 24 }}
     >
-      <h1>Stupid Wallet Dapp</h1>
+      <h1>stupid wallet App</h1>
       <p>
         Provider: Injected (Safari extension) —{" "}
         {isConnected
@@ -96,7 +96,7 @@ export default function App() {
             onClick={() =>
               run("wallet_disconnect", async () => {
                 const provider = (window as Window & { ethereum?: EIP1193Provider }).ethereum;
-                if (!provider) throw new Error("Stupid Wallet provider not found");
+                if (!provider) throw new Error("stupid wallet provider not found");
                 await provider.request({ method: "wallet_disconnect" });
                 await disconnectAsync();
                 return true;
@@ -114,7 +114,7 @@ export default function App() {
           disabled={!isConnected || busy}
           onClick={() =>
             run("personal_sign", () =>
-              signMessageAsync({ message: "Welcome to Stupid Wallet dapp!\n\nSign in securely." }),
+              signMessageAsync({ message: "Welcome to stupid wallet app!\n\nSign in securely." }),
             )
           }
         >

@@ -216,7 +216,7 @@
     if (DENIED_METHODS.has(method)) {
       envelope(sendResponse, {
         ok: false,
-        error: { code: 4200, message: "Method not supported by Stupid Wallet" },
+        error: { code: 4200, message: "Method not supported by stupid wallet" },
       });
       return;
     }
