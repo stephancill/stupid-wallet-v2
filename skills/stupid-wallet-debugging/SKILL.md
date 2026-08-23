@@ -114,6 +114,11 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
 - One dapp action may produce multiple sequential requests. A token-to-native Uniswap swap
   can include an ERC-20 allowance transaction, Permit2 typed-data signature, then swap.
   Diagnose each canonical record separately.
+- A send popup's `Network Fee` is a display-only estimate from `eth_estimateGas` and the
+  effective fee cap. `Unable to estimate` identifies a summary-time RPC failure; it does not
+  populate `resolvedParams` or change the canonical request. Approval resolves nonce, gas,
+  and fees again immediately before signing, so never treat the displayed estimate as the
+  signed gas fields.
 - Only the oldest pending request is approvable. Never reorder or mutate persisted files.
 
 ### 5. Inspect Native Preparation And Signing

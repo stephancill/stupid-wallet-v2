@@ -20,11 +20,19 @@ struct ApprovalTests {
     return ChainStore(directory: directory)
   }
 
+  private static func tmpNetworkStore() -> NetworkStore {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ApprovalNetworkTests-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return NetworkStore(directory: directory, legacySuiteName: "ApprovalTests.Networks")
+  }
+
   private func service(
     _ store: PendingRequestStore? = nil, signer: any Signing = StubSigner()
   ) -> WalletService {
     WalletService(
-      store: store ?? Self.tmpStore(), signing: signer, chainStore: Self.tmpChainStore())
+      store: store ?? Self.tmpStore(), signing: signer, chainStore: Self.tmpChainStore(),
+      networkStore: Self.tmpNetworkStore())
   }
 
   private func prepareMessage(
@@ -183,9 +191,9 @@ struct ApprovalTests {
       ]),
       origin: "https://dapp.example"
     )
-    let summary = try await svc.summarize(request: id)
-    #expect(summary?.kind == "send")
-    #expect(summary?.title == "Send transaction")
+    let record = try #require(await svc.store.record(id))
+    #expect(record.kind == .send)
+    #expect(ApprovalSummary.title(for: record) == "Send transaction")
   }
 
   @Test("personal_sign with standard [messageHex, address] params signs the message")
@@ -224,6 +232,13 @@ struct ApprovalTests {
     #expect(result.stringValue?.hasPrefix("0x") == true)
     let summary = try await svc.summarize(request: id)
     #expect(summary?.rows.contains { $0.label == "Domain" && $0.value == "Test" } == true)
+    #expect(summary?.rows.contains { $0.label == "Primary Type" && $0.value == "Mail" } == true)
+    #expect(summary?.rows.contains { $0.label == "Version" && $0.value == "1" } == true)
+    #expect(
+      summary?.rows.contains { $0.label == "Domain Chain" && $0.value == "Ethereum" } == true)
+    #expect(
+      summary?.rows.contains { $0.label == "Message / contents" && $0.value == "Hello, Bob!" }
+        == true)
   }
 
   @Test("Permit2 typed data approves and consumes with wide unsigned integers")

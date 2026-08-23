@@ -20,6 +20,8 @@ struct TransactionSubmissionTests {
       signing: TransactionSigner(),
       connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
       chainStore: ChainStore(directory: directory),
+      networkStore: NetworkStore(
+        directory: directory, legacySuiteName: "TransactionSubmissionTests.Networks"),
       activityStore: ActivityStore(
         databaseURL: directory.appendingPathComponent("Activity.sqlite")),
       resolver: RPCResolver(overrides: ["1": URL(string: "https://rpc.example")!]),
@@ -70,14 +72,12 @@ struct TransactionSubmissionTests {
     #expect(transaction["chainId"] == .string("0x1"))
     let summary = try await service.summarize(request: id)
     #expect(
-      summary?.rows.contains { $0.label == "Nonce" && $0.value == "Latest at signing" }
+      summary?.rows.contains { $0.label == "Network Fee" && $0.value == "~0.000021 ETH" }
         == true)
-    #expect(
-      summary?.rows.contains { $0.label == "Gas limit" && $0.value == "Estimated at signing" }
-        == true)
-    #expect(
-      summary?.rows.contains { $0.label == "Gas price" && $0.value == "Resolved at signing" }
-        == true)
+    #expect(summary?.rows.contains { $0.label == "Chain" && $0.value == "Ethereum" } == true)
+    #expect(summary?.rows.contains { $0.label == "Nonce" } == false)
+    #expect(summary?.rows.contains { $0.label == "Gas limit" } == false)
+    #expect(summary?.rows.contains { $0.label == "Gas price" } == false)
 
     let result = try await service.approve(request: id)
     #expect(result.stringValue.flatMap(Hex.data)?.count == 32)

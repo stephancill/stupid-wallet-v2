@@ -116,22 +116,11 @@
           sendResponse(nativeList.ok && nativeList.data ? nativeList.data.pending : []);
           return;
         case "popup.approve":
-          const approvalSummary = await native({
-            action: "summary",
-            payload: { requestId: message.requestId },
-          });
           const approved = await native({
             action: "approve",
             payload: { requestId: message.requestId },
           });
           if (approved.ok && approved.data) {
-            if (
-              approvalSummary.ok &&
-              approvalSummary.data &&
-              approvalSummary.data.method.toLowerCase() === "wallet_switchethereumchain"
-            ) {
-              await broadcastChainChanged();
-            }
             sendResponse({ ok: true, result: approved.data.result });
           } else {
             sendResponse({

@@ -72,8 +72,19 @@ standard-params work:
   service-worker suspension.
 - The canonical review surface (`RequestKind`, `WalletPendingRequest.kind` and
   `payloadDigest`) renders per-kind native summaries via `ApprovalSummary.title/rows` for
-  connect, message, typed-data, send, and add-chain requests. `WalletService.Summary` carries
-  `kind`, `title`, ordered `rows`, a `queued` flag, and the active-head queue.
+  connect, message, typed-data, send, and add-chain requests. The Safari popup follows the
+  old app's request-information hierarchy with site context, request-specific sections,
+  account context, and action-specific buttons, while remaining an extension-owned renderer
+  of native display-safe values. The active request's Reject/primary-action footer stays fixed
+  at the bottom while details scroll; there is no duplicate wallet-brand header inside the
+  Safari-owned popup. Typed-data summaries include primary type, domain fields, and ordered
+  root message fields. Transaction details remain raw canonical destination, value,
+  display-only estimated network fee, and full calldata hash/size; nonce, gas limit, and raw
+  fee fields are not exposed in the popup, while simulation and calldata decoding remain
+  deferred. Generic chain rows resolve through the shared `NetworkStore` and display the
+  persisted network name, falling back to `Chain N` for unknown metadata; explicit add-network
+  Chain ID fields remain numeric. `WalletService.Summary` carries `kind`, `title`, ordered
+  `rows`, a `queued` flag, and the active-head queue.
 - Approval is bound to request ID, kind, method, origin, chain, `payloadDigest` (keccak
   of the request ID + canonical sorted-key params), expiry, and unconsumed state. On
   approve, native code reloads the canonical record, rejects if expired/queued/non-pending,
@@ -107,14 +118,16 @@ standard-params work:
 
 Gate 6 is underway. `eth_sendTransaction` persists and binds the normalized dapp intent
 without snapshotting missing nonce, gas limit, or legacy/EIP-1559 fee fields. The popup
-shows explicit signing-time placeholders for unresolved values. Approval revalidates the
-bound intent, resolves each missing field through the shared resolver immediately before
-authentication/signing, and stores those values separately from the immutable approved
-params/digest. This prevents quick successive approvals from signing the same stale pending
-nonce while preserving explicit dapp-provided limits. Approval signs a canonical legacy or
-type-2 raw transaction, submits it with `eth_sendRawTransaction`, and resolves to the
-32-byte transaction hash. Structured node/transport submission failures become durable
-terminal request errors so polling does not strand the dapp promise. Approval/rejection
+shows one display-only Network Fee estimate from `eth_estimateGas` and the effective fee cap,
+formatted in the known chain's native currency; estimation failure is shown explicitly and
+does not mutate the canonical request. Approval revalidates the bound intent, resolves each
+missing field through the shared resolver immediately before authentication/signing, and
+stores those values separately from the immutable approved params/digest. This prevents quick
+successive approvals from signing the same stale pending nonce while preserving explicit
+dapp-provided limits. Approval signs a canonical legacy or type-2 raw transaction, submits it
+with `eth_sendRawTransaction`, and resolves to the 32-byte transaction hash. Structured
+node/transport submission failures become durable terminal request errors so polling does not
+strand the dapp promise. Approval/rejection
 uses an OS advisory lock across handler/store instances, binds the current signer back to
 the persisted account, revalidates transaction semantics at approval, rejects unsupported
 or ambiguous fields, and verifies the node-returned hash against the signed raw bytes.
@@ -439,7 +452,7 @@ Implement only after the Secure Wallet Core gates pass:
 - EIP-5792 `wallet_sendCalls`, `wallet_getCallsStatus`, and capability reporting.
 - EIP-7702 authorization management.
 - ENS names and avatars.
-- Transaction simulation and fee/value previews.
+- Transaction simulation and richer value previews.
 - ABI and contract metadata resolution.
 - ERC-7730 clear-signing previews.
 - Rich activity detail and status surfaces.

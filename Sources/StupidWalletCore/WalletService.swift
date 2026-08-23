@@ -47,11 +47,21 @@ public enum ApprovalSummary {
     case .typedData:
       rows.append(("From", request.origin))
       rows.append(("Account", request.account))
+      if let primaryType = Self.typedPrimaryType(request.params) {
+        rows.append(("Primary Type", primaryType))
+      }
       rows.append(("Domain", Self.typedDomain(request.params)))
+      if let version = Self.typedDomainField("version", request.params) {
+        rows.append(("Version", version))
+      }
+      if let domainChain = Self.typedDomainField("chainId", request.params) {
+        rows.append(("Domain Chain", domainChain))
+      }
       if let contract = Self.typedVerifyingContract(request.params) {
         rows.append(("Contract", contract))
       }
       rows.append(("Chain", request.chainId))
+      rows.append(contentsOf: Self.typedMessageRows(request.params))
     case .send:
       rows.append(("From", request.origin))
       rows.append(("Account", request.account))
@@ -67,23 +77,6 @@ public enum ApprovalSummary {
         }
         if let data = tx["data"]?.stringValue, !data.isEmpty, data != "0x" {
           rows.append(("Data", Self.dataDigest(data)))
-        }
-        rows.append(("Nonce", tx["nonce"]?.stringValue ?? "Latest at signing"))
-        rows.append(("Gas limit", tx["gas"]?.stringValue ?? "Estimated at signing"))
-        if let gasPrice = tx["gasPrice"]?.stringValue {
-          rows.append(("Gas price", gasPrice))
-        } else if tx["type"]?.stringValue != "0x2" {
-          rows.append(("Gas price", "Resolved at signing"))
-        }
-        if let maxFee = tx["maxFeePerGas"]?.stringValue {
-          rows.append(("Max fee per gas", maxFee))
-        } else if tx["type"]?.stringValue == "0x2" {
-          rows.append(("Max fee per gas", "Resolved at signing"))
-        }
-        if let priorityFee = tx["maxPriorityFeePerGas"]?.stringValue {
-          rows.append(("Priority fee", priorityFee))
-        } else if tx["type"]?.stringValue == "0x2" {
-          rows.append(("Priority fee", "Resolved at signing"))
         }
       }
     case .chain:
@@ -120,6 +113,48 @@ public enum ApprovalSummary {
     else { return "Unavailable" }
     if case .object(let d) = domain, let name = d["name"]?.stringValue { return name }
     return "Unavailable"
+  }
+
+  private static func typedPrimaryType(_ params: JSONValue) -> String? {
+    typedObject(params)?["primaryType"]?.stringValue
+  }
+
+  private static func typedDomainField(_ field: String, _ params: JSONValue) -> String? {
+    guard let object = typedObject(params), case .object(let domain)? = object["domain"],
+      let value = domain[field]
+    else { return nil }
+    return jsonDisplay(value)
+  }
+
+  private static func typedMessageRows(_ params: JSONValue) -> [(String, String)] {
+    guard let object = typedObject(params), case .object(let message)? = object["message"] else {
+      return []
+    }
+
+    var names: [String] = []
+    if let primaryType = object["primaryType"]?.stringValue,
+      case .object(let types)? = object["types"],
+      case .array(let fields)? = types[primaryType]
+    {
+      names = fields.compactMap { field in
+        guard case .object(let definition) = field else { return nil }
+        return definition["name"]?.stringValue
+      }
+    }
+    if names.isEmpty { names = message.keys.sorted() }
+
+    return names.compactMap { name in
+      guard let value = message[name], let display = jsonDisplay(value) else { return nil }
+      return ("Message / \(name)", display)
+    }
+  }
+
+  private static func jsonDisplay(_ value: JSONValue) -> String? {
+    if case .string(let string) = value { return string }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    guard let data = try? encoder.encode(value) else { return nil }
+    return String(data: data, encoding: .utf8)
   }
 
   private static func typedVerifyingContract(_ params: JSONValue) -> String? {
@@ -174,7 +209,7 @@ public enum ApprovalSummary {
     let cleaned = data.hasPrefix("0x") ? String(data.dropFirst(2)) : data
     guard let bytes = Hex.data(cleaned), !bytes.isEmpty else { return "0x" }
     let hash = Hex.encode(Keccak.keccak256(bytes))
-    return "0x" + String(hash.prefix(10)) + "…"
+    return "keccak256 0x\(hash) (\(bytes.count) bytes)"
   }
 }
 
@@ -406,6 +441,16 @@ public actor WalletService {
     if let queue = try? await store.pending().sorted(by: { $0.createdAt < $1.createdAt }) {
       active = queue.first?.id == record.id
     }
+    var rows = ApprovalSummary.rows(for: record).map { row in
+      switch row.0 {
+      case "Chain": return (row.0, chainDisplayName(record.chainId))
+      case "Domain Chain": return (row.0, chainDisplayName(row.1))
+      default: return row
+      }
+    }
+    if record.kind == .send {
+      rows.append(("Network Fee", await estimatedNetworkFee(for: record)))
+    }
     return Summary(
       id: record.id.uuidString,
       kind: record.kind.rawValue,
@@ -414,9 +459,93 @@ public actor WalletService {
       chainId: record.chainId,
       account: record.account,
       title: ApprovalSummary.title(for: record),
-      rows: ApprovalSummary.rows(for: record),
+      rows: rows,
       queued: !active
     )
+  }
+
+  private func estimatedNetworkFee(for record: WalletPendingRequest) async -> String {
+    guard case .array(let items) = record.params, items.count == 1,
+      case .object(let transaction) = items[0]
+    else { return "Unable to estimate" }
+
+    do {
+      let gas: String
+      if let suppliedGas = transaction["gas"]?.stringValue {
+        gas = suppliedGas
+      } else {
+        gas = try await rpcQuantity(
+          method: "eth_estimateGas", params: .array([.object(transaction)]),
+          chainID: record.chainId)
+      }
+
+      let feePerGas: String
+      if transaction["type"]?.stringValue == "0x2" {
+        if let maxFee = transaction["maxFeePerGas"]?.stringValue {
+          feePerGas = maxFee
+        } else {
+          let gasPrice = try await rpcQuantity(
+            method: "eth_gasPrice", params: .array([]), chainID: record.chainId)
+          let priorityFee: String
+          if let suppliedPriorityFee = transaction["maxPriorityFeePerGas"]?.stringValue {
+            priorityFee = suppliedPriorityFee
+          } else {
+            priorityFee = try await rpcQuantity(
+              method: "eth_maxPriorityFeePerGas", params: .array([]), chainID: record.chainId)
+          }
+          feePerGas = try Self.maximumQuantity(gasPrice, priorityFee)
+        }
+      } else if let suppliedGasPrice = transaction["gasPrice"]?.stringValue {
+        feePerGas = suppliedGasPrice
+      } else {
+        feePerGas = try await rpcQuantity(
+          method: "eth_gasPrice", params: .array([]), chainID: record.chainId)
+      }
+
+      guard let gasBytes = Hex.quantityData(hex: gas),
+        let feeBytes = Hex.quantityData(hex: feePerGas)
+      else { return "Unable to estimate" }
+      let amount = NativeBalanceService.formatEther(bytes: Self.multiply(gasBytes, feeBytes))
+      return "~\(amount) \(Self.nativeCurrencySymbol(chainID: record.chainId))"
+    } catch {
+      return "Unable to estimate"
+    }
+  }
+
+  private static func multiply(_ lhs: [UInt8], _ rhs: [UInt8]) -> [UInt8] {
+    guard lhs.contains(where: { $0 != 0 }), rhs.contains(where: { $0 != 0 }) else { return [0] }
+    let left = Array(lhs.reversed())
+    let right = Array(rhs.reversed())
+    var words = [UInt64](repeating: 0, count: left.count + right.count + 1)
+    for (leftIndex, leftByte) in left.enumerated() {
+      for (rightIndex, rightByte) in right.enumerated() {
+        words[leftIndex + rightIndex] += UInt64(leftByte) * UInt64(rightByte)
+      }
+    }
+    for index in 0..<(words.count - 1) {
+      words[index + 1] += words[index] >> 8
+      words[index] &= 0xff
+    }
+    while words.count > 1, words.last == 0 { words.removeLast() }
+    return words.reversed().map(UInt8.init)
+  }
+
+  private static func nativeCurrencySymbol(chainID: String) -> String {
+    switch chainID {
+    case "1", "10", "8453", "42161": return "ETH"
+    case "56": return "BNB"
+    case "100": return "xDAI"
+    case "137": return "MATIC"
+    case "42220": return "CELO"
+    case "43114": return "AVAX"
+    default: return "native"
+    }
+  }
+
+  private func chainDisplayName(_ chainID: String) -> String {
+    guard let normalized = ChainStore.normalize(chainID) else { return "Chain \(chainID)" }
+    if let network = try? networkStore.network(chainID: normalized) { return network.name }
+    return "Chain \(normalized)"
   }
 
   /// Persisted status so a suspending service worker and a polling page converge.

@@ -50,6 +50,68 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Popup Request Renderer Parity
+
+### Summary
+
+- Reworked the Safari toolbar popup to follow the old app web components' request hierarchy:
+  request title and context, two-column site/details summary, request-specific Domain, Message,
+  and transaction Details sections, account context, and Connect/Sign/Send/Add action labels.
+- Expanded the native display-safe typed-data summary with primary type, domain version and
+  chain, and ordered root message fields. The popup still receives no signing authority or
+  raw approval params and submits only the persisted request ID.
+- Kept transaction review deliberately undecoded: destination, value, a display-only estimated
+  Network Fee, and a complete calldata hash plus byte count are shown without simulation or
+  ABI/calldata decoding. Nonce, gas limit, gas price, max fee, and priority fee rows are hidden.
+  The estimate uses `eth_estimateGas` and the effective fee cap through the shared resolver,
+  never mutates canonical params, and reports an explicit unavailable state on RPC failure.
+- Removed the generic emoji/card treatment, retained queue ordering, and made failed actions
+  restore their original disabled state without allowing structured errors to render as
+  `[object Object]`.
+- Removed the duplicate in-content wallet header and fixed the active request's Reject and
+  primary action footer to the bottom of the popup so long review details scroll behind an
+  always-available decision surface.
+- Replaced the popup body's fixed 360-point width with a 360-point minimum so request tables
+  fill Safari's wider popup viewport with equal side padding.
+- Removed the popup approval path's obsolete summary lookup for approval-era network switches,
+  avoiding a duplicate fee-estimation round trip before signing. Bumped the WebExtension
+  manifest to `0.1.14` for worker/resource cache invalidation.
+- Resolved ordinary request and typed-data domain Chain rows through the shared persisted
+  `NetworkStore`, showing names such as Ethereum instead of bare IDs. Unknown metadata falls
+  back to `Chain N`, while add-network `Chain ID` details remain explicit. Bumped the
+  WebExtension manifest to `0.1.15`.
+- Documented the display-estimate versus signing-time-resolution boundary in the repository
+  debugging skill.
+
+### Verification
+
+- `swift test`: 118 tests in 21 suites passed, including typed-data primary type/domain/message
+  summaries and a hermetic network-fee estimate with low-level gas rows absent.
+- `bunx oxfmt --write <changed extension resources>`,
+  `bunx oxlint SafariExtension/Resources/popup.js`, and
+  `node --check SafariExtension/Resources/popup.js` passed.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and manifest `0.1.15` extension.
+- Simulator Safari/OCR verified real popup rendering for personal message, typed-data, and
+  transaction requests. Domain/message fields and long transaction details scrolled within
+  the popup. A long typed-data request kept Reject and Sign at the same bottom position before
+  and after scrolling, showed no duplicate in-content wallet header, and rendered its Domain
+  table with equal left and right popup padding. Every verification request was rejected
+  without signing or broadcasting.
+- A live simulator transaction review showed Chain, Network Fee, and destination only; the fee
+  was formatted in the active chain's native currency, and nonce/gas/fee-detail rows were
+  absent. The request was rejected without signing or broadcasting.
+- The simulator transaction popup rendered `Ethereum` for chain 1 instead of the decimal ID;
+  the request was rejected without signing or broadcasting. Typed-data regression coverage
+  verifies the same name resolution for its domain chain.
+- The repository debugging skill passed `quick_validate.py`.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Simulation and ABI/calldata decoding remain deferred by design.
+
 ## 2026-08-23 - Stale-While-Revalidate Total Balance
 
 ### Summary
