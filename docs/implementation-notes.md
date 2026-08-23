@@ -50,6 +50,26 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-24 - Public Repository README
+
+### Summary
+
+- Added a root README describing the product, implemented features, security model,
+  architecture, requirements, `stupid-app` build and simulator workflows, prototype dapp, and
+  maintained project documentation.
+- Added an explicit experimental/not-independently-audited warning and documented deferred
+  functionality without claiming a license that the repository does not currently provide.
+
+### Verification
+
+- Checked every linked repository path and command against the current tree and project
+  configuration.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Add licensing terms only after the project owner selects a repository license.
+
 ## 2026-08-23 - Popup Request Renderer Parity
 
 ### Summary
