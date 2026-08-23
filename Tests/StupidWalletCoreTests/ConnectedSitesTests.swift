@@ -70,6 +70,24 @@ struct ConnectedSitesTests {
     #expect(sites.map(\.domain) == ["b.example"])
   }
 
+  @Test("forgetting an account revokes only that account's grants")
+  func disconnectAllForAccount() async {
+    let suite = "grants-\(UUID().uuidString)"
+    let store = ConnectedSitesStore(suiteName: suite)
+    await store.connect(
+      site: ConnectedSite(
+        domain: "a.example", address: "0xAbC", origin: "https://a.example"))
+    await store.connect(site: ConnectedSite(domain: "legacy.example", address: "0xabc"))
+    await store.connect(
+      site: ConnectedSite(
+        domain: "b.example", address: "0xDef", origin: "https://b.example"))
+
+    await store.disconnectAll(address: "0xABC")
+
+    let sites = await store.all()
+    #expect(sites.map(\.domain) == ["b.example"])
+  }
+
   @Test("repeat connect refreshes instead of duplicating")
   func reconnectRefreshes() async {
     let suite = "grants-\(UUID().uuidString)"

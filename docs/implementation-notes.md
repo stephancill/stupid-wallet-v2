@@ -50,6 +50,100 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Muted Read-Only RPC URL
+
+### Summary
+
+- Changed the effective RPC URL text on network details to the secondary foreground style.
+- The separate Change action remains the only way to edit the endpoint.
+
+### Why
+
+- Muted text makes the displayed endpoint read as a non-editable value rather than an input.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/NetworksView.swift` completed.
+- `swift test`: 113 tests in 21 suites passed.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension.
+- Simulator visual inspection of Base network details confirmed that the endpoint text uses
+  the muted secondary color while Change remains a blue action.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-23 - Modal Forget Account Confirmation
+
+### Summary
+
+- Replaced the adaptive Forget Account confirmation dialog with a modal SwiftUI alert.
+- The destructive confirmation, cancellation, warning text, and deletion behavior are
+  otherwise unchanged.
+
+### Why
+
+- `confirmationDialog` adapted to a popover presentation in the tested environment. Account
+  deletion requires an explicitly modal confirmation surface.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/SettingsView.swift` completed.
+- `swift test`: 113 tests in 21 suites passed.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension.
+- Simulator accessibility inspection confirmed a centered modal alert containing the title,
+  warning, destructive Forget Account action, and Cancel action. Cancel dismissed it without
+  modifying the funded simulator wallet.
+
+### Follow-Up
+
+- Physical-device verification remains part of the Gate 6 acceptance pass.
+
+## 2026-08-23 - Confirmed Forget Account Flow
+
+### Summary
+
+- Added a separate destructive Settings section containing Forget Account and a native
+  confirmation dialog warning that the private key will be removed.
+- Confirming removes the expected active new-format keychain item and shared account
+  registration, clears matching retained migration material so the account is not
+  automatically restored on relaunch, and revokes that account's legacy and normalized
+  connected-site grants.
+- The operation restores the active-account registration if keychain deletion fails and
+  rejects stale account mismatches. Activity history and network preferences remain.
+- Successful deletion dismisses Settings and returns the app to its setup screen; failures
+  remain visible and produce an actionable alert.
+
+### Why
+
+- Simulator reprovisioning and user-directed account removal need an in-app path that does
+  not leave the protected key behind or create a partial wallet registration.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` completed.
+- `swift test`: 113 tests in 21 suites passed, including account-bound registration removal
+  and account-scoped grant revocation regressions.
+- `stupid-app doctor`: 0 failures and 0 warnings. `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension. Accessibility inspection confirmed the separate destructive
+  section and confirmation dialog.
+- A disposable simulator completed create -> Settings -> Forget Account -> confirm and
+  returned to setup. A metadata-only keychain query reported zero items under the wallet's
+  new-format key service afterward. The disposable simulator was then deleted; the funded
+  preferred simulator wallet was not modified.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Repeat account forgetting on a physical device as part of the Gate 6 provisioning and
+  keychain lifecycle acceptance pass.
+
 ## 2026-08-23 - Long-Press Transaction Hash Copy
 
 ### Summary

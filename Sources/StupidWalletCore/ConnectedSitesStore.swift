@@ -142,6 +142,22 @@ public actor ConnectedSitesStore {
     defaults.set(dict, forKey: ConnectedSitesStore.key)
   }
 
+  /// Revokes every legacy and normalized grant tied to an account being forgotten.
+  public func disconnectAll(address: String) {
+    var grants = normalizedGrants()
+    grants = grants.filter {
+      $0.value.address.caseInsensitiveCompare(address) != .orderedSame
+    }
+    persistNormalized(grants)
+
+    var dict = legacyDictionary()
+    dict = dict.filter {
+      guard let stored = $0.value["address"] as? String else { return true }
+      return stored.caseInsensitiveCompare(address) != .orderedSame
+    }
+    defaults.set(dict, forKey: ConnectedSitesStore.key)
+  }
+
   // MARK: Legacy shape
 
   private func legacyDictionary() -> [String: [String: Any]] {

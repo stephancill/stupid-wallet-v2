@@ -16,6 +16,11 @@ public enum WalletFactory {
     case registrationFailed
   }
 
+  public enum ForgetError: Error, Sendable {
+    case accountMismatch
+    case deletionFailed
+  }
+
   @discardableResult
   public static func create(
     appGroup: String = PendingRequestStore.defaultAppGroup,
@@ -73,6 +78,35 @@ public enum WalletFactory {
     return "0x" + Hex.encode(secret)
   }
 
+  /// Removes the active new-format signing key and its shared registration. If keychain
+  /// deletion fails, the registration is restored so the app does not silently present a
+  /// wallet whose key was never forgotten.
+  public static func forget(
+    account: String,
+    appGroup: String = PendingRequestStore.defaultAppGroup,
+    keychainService: String = "co.za.stephancill.stupid-wallet.keys"
+  ) throws {
+    guard let active = WalletStore.activeAddress(appGroup: appGroup),
+      active.caseInsensitiveCompare(account) == .orderedSame
+    else { throw ForgetError.accountMismatch }
+
+    do {
+      try WalletStore.removeAddress(account, appGroup: appGroup)
+    } catch {
+      throw ForgetError.deletionFailed
+    }
+
+    do {
+      try KeychainKeyStore(service: keychainService).delete(account: account)
+    } catch {
+      try? WalletStore.setAddress(account, appGroup: appGroup)
+      throw ForgetError.deletionFailed
+    }
+
+    SecurityWalletBackend(appGroup: appGroup, newKeychainService: keychainService)
+      .forgetMigrationMaterial(address: account)
+  }
+
   private static func provision(
     secret: [UInt8],
     appGroup: String,
@@ -107,14 +141,14 @@ public enum WalletFactory {
         throw Self.CreateError.verificationFailed
       }
     } catch {
-      store.delete(account: pair.address)
+      try? store.delete(account: pair.address)
       throw Self.CreateError.verificationFailed
     }
 
     do {
       try WalletStore.setAddress(pair.address, appGroup: appGroup)
     } catch {
-      store.delete(account: pair.address)
+      try? store.delete(account: pair.address)
       throw Self.CreateError.registrationFailed
     }
     return pair.address

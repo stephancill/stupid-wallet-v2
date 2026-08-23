@@ -25,4 +25,21 @@ struct WalletFactoryTests {
   func addressKeyContract() {
     #expect(WalletFactory.walletAddressKey == "sw2.walletAddress")
   }
+
+  @Test("wallet registration removes only the expected active account")
+  func removeExpectedAddress() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("WalletStoreTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    try WalletStore.setAddress("0xAbC", directory: directory)
+    #expect(throws: WalletStore.StoreError.accountMismatch) {
+      try WalletStore.removeAddress("0xDef", directory: directory)
+    }
+    #expect(WalletStore.activeAddress(directory: directory) == "0xAbC")
+
+    try WalletStore.removeAddress("0xaBc", directory: directory)
+    #expect(WalletStore.activeAddress(directory: directory) == nil)
+  }
 }

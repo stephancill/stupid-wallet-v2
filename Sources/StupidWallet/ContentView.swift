@@ -41,7 +41,9 @@ import SwiftUI
         }
       }
       .sheet(isPresented: $showSettingsSheet) {
-        SettingsView(address: vm.addressHex)
+        SettingsView(address: vm.addressHex) {
+          try await vm.forgetAccount()
+        }
       }
       .task {
         await vm.refreshBalance()

@@ -154,6 +154,14 @@ core boundaries. The home balance is intentionally the selected chain's native b
 not the old app's invalid sum of native units across unrelated chains. Signature activity
 details remain redacted rather than restoring persisted plaintext messages or signatures.
 
+Settings also includes a separate destructive Forget Account section. Its modal confirmation
+alert warns that the private key will be removed and requires an explicit destructive choice.
+Confirming removes the expected active keychain item, clears the shared active-
+account registration and migration remnants (including retained old-format material for
+that same account), revokes that account's legacy and normalized site grants, dismisses
+Settings, and returns to setup. Account-mismatch and keychain-deletion failures do not
+silently clear the visible registration. Activity and network preferences are retained.
+
 `RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
 App Group. Both the app and Safari handler construct their resolver from this store, and
 the editor displays exactly one effective endpoint per chain. The user may replace it or
@@ -895,16 +903,16 @@ investigation history in implementation notes.
 ## Recommended Next Work
 
 1. Continue Gate 6 with physical-device proof of create, raw private-key import, BIP-39
-   seed import, backup reveal/cancellation/timeout, automatic migration launch, and Safari
-   signing with each newly provisioned key. The implementation and hermetic vectors are
-   complete, but these device-bound flows are not yet gate-proven.
+   seed import, backup reveal/cancellation/timeout, Forget Account, automatic migration
+   launch, and Safari signing with each newly provisioned key. The implementation and
+   hermetic vectors are complete, but these device-bound flows are not yet gate-proven.
 2. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
    supported iOS version. The product owner chose seamless authorization for pre-existing
    hostname grants; consider a later user-visible reconnect campaign before removing that
    compatibility fallback.
-3. Finish parity details that do not weaken the new model: reviewed wallet deletion/logout,
-   custom chain metadata, and richer activity detail. ENS/avatar resolution and aggregate
-   balances remain deferred rather than being hidden inside Gate 6.
+3. Finish parity details that do not weaken the new model: custom chain metadata and richer
+   activity detail. ENS/avatar resolution and aggregate balances remain deferred rather
+   than being hidden inside Gate 6.
 4. Gate 7 and later per the implementation gates.
 
 ## Reference Sources

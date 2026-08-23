@@ -71,7 +71,7 @@ public struct SecurityWalletBackend: OldWalletBackend {
       try WalletStore.setAddress(account, appGroup: appGroup)
       defaults().set(account, forKey: constants.newWalletKey)
     } catch {
-      keyStore.delete(account: account)
+      try? keyStore.delete(account: account)
       throw WalletMigrationFailure.saveFailed
     }
   }
@@ -97,6 +97,19 @@ public struct SecurityWalletBackend: OldWalletBackend {
   public func cleanupOldMaterial(address: String) {
     deleteGenericPassword(address)
     deleteSecureEnclaveKey(address)
+  }
+
+  /// Explicit account forgetting is the point at which retained, already-migrated legacy
+  /// material may be removed. Clearing the old address also prevents automatic re-migration
+  /// on the next app launch.
+  public func forgetMigrationMaterial(address: String) {
+    if oldAddress()?.caseInsensitiveCompare(address) == .orderedSame {
+      cleanupOldMaterial(address: address)
+      defaults().removeObject(forKey: constants.oldAddressKey)
+    }
+    defaults().removeObject(forKey: constants.newWalletKey)
+    defaults().removeObject(forKey: constants.migratedKey)
+    defaults().removeObject(forKey: constants.pendingKey)
   }
 
   // MARK: - Old-format specific reads

@@ -53,6 +53,7 @@ import SwiftUI
 
         Section {
           Text(effectiveURL.absoluteString)
+            .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
 

@@ -61,6 +61,15 @@ final class WalletViewModel: ObservableObject {
     isSaving = false
   }
 
+  func forgetAccount() async throws {
+    let account = addressHex
+    try WalletFactory.forget(account: account)
+    await ConnectedSitesStore().disconnectAll(address: account)
+    addressHex = ""
+    balance = nil
+    errorMessage = nil
+  }
+
   func refreshBalance() async {
     guard hasWallet else { return }
     balance = nil

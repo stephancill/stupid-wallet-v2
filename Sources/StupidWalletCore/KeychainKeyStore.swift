@@ -119,14 +119,17 @@ public final class KeychainKeyStore: Sendable {
     return items.compactMap { $0[kSecAttrAccount as String] as? String }
   }
 
-  public func delete(account: String) {
+  public func delete(account: String) throws {
     var query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
     ]
     query[kSecAttrAccessGroup as String] = accessGroup
-    SecItemDelete(query as CFDictionary)
+    let status = SecItemDelete(query as CFDictionary)
+    guard status == errSecSuccess || status == errSecItemNotFound else {
+      throw StorageError.deleteFailed
+    }
   }
 
   private func storageError(_ status: OSStatus) -> StorageError {

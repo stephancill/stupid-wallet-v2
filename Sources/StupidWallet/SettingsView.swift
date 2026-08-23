@@ -9,6 +9,10 @@ import SwiftUI
 #if os(iOS)
   struct SettingsView: View {
     let address: String
+    let forgetAccount: () async throws -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var isConfirmingForget = false
+    @State private var forgetError: String?
 
     var body: some View {
       NavigationView {
@@ -24,11 +28,46 @@ import SwiftUI
               Text("Private Key")
             }
           }
+          Section {
+            Button("Forget Account", role: .destructive) {
+              isConfirmingForget = true
+            }
+          }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .alert(
+          "Forget this account?",
+          isPresented: $isConfirmingForget
+        ) {
+          Button("Forget Account", role: .destructive) {
+            Task {
+              do {
+                try await forgetAccount()
+                dismiss()
+              } catch {
+                forgetError = "The account could not be forgotten. Please try again."
+              }
+            }
+          }
+          Button("Cancel", role: .cancel) {}
+        } message: {
+          Text("This removes the private key from this device. Make sure you have a backup.")
+        }
+        .alert("Could Not Forget Account", isPresented: errorIsPresented) {
+          Button("OK", role: .cancel) {}
+        } message: {
+          Text(forgetError ?? "")
+        }
       }
+    }
+
+    private var errorIsPresented: Binding<Bool> {
+      Binding(
+        get: { forgetError != nil },
+        set: { if !$0 { forgetError = nil } }
+      )
     }
   }
 
