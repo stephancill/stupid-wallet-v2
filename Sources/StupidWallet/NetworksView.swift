@@ -22,14 +22,11 @@ import SwiftUI
   struct NetworkDetailView: View {
     let network: NetworkInfo
     @State private var overrideURL: URL?
-    @State private var showAddRPCSheet = false
+    @State private var showEditRPCSheet = false
     @State private var showChainIDAsHex = false
 
-    private var urls: [URL] {
-      if let overrideURL {
-        return [overrideURL, RPCResolver.defaultURL(forChainID: network.id)]
-      }
-      return [RPCResolver.defaultURL(forChainID: network.id)]
+    private var effectiveURL: URL {
+      overrideURL ?? RPCResolver.defaultURL(forChainID: network.id)
     }
 
     var body: some View {
@@ -55,41 +52,31 @@ import SwiftUI
         }
 
         Section {
-          ForEach(Array(urls.enumerated()), id: \.offset) { index, url in
-            VStack(alignment: .leading, spacing: 4) {
-              if index == 0 {
-                Text("Primary RPC").font(.caption).foregroundStyle(.secondary)
-              }
-              Text(url.absoluteString)
-                .font(.system(.body, design: .monospaced))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            }
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-              if index == 0, overrideURL != nil {
-                Button("Delete", role: .destructive) { removeOverride() }
-              }
-            }
-          }
+          Text(effectiveURL.absoluteString)
+            .lineLimit(1)
+            .truncationMode(.middle)
+
           Button {
-            showAddRPCSheet = true
+            showEditRPCSheet = true
           } label: {
-            Label("Add RPC URL", systemImage: "plus")
+            Text("Change")
+          }
+
+          if overrideURL != nil {
+            Button("Use Default RPC", role: .destructive) { removeOverride() }
           }
         } header: {
-          Text("RPC URLs")
-        } footer: {
-          Text("Swipe left to delete RPC URLs. The first URL is used as primary.")
+          Text("RPC URL")
         }
       }
       .navigationTitle(network.name)
       .navigationBarTitleDisplayMode(.inline)
       .onAppear(perform: load)
-      .sheet(isPresented: $showAddRPCSheet) {
+      .sheet(isPresented: $showEditRPCSheet) {
         NavigationView {
-          AddRPCURLView(chainID: network.id) { url in
+          EditRPCURLView(chainID: network.id, currentURL: effectiveURL) { url in
             overrideURL = url
-            showAddRPCSheet = false
+            showEditRPCSheet = false
           }
         }
       }
@@ -105,13 +92,21 @@ import SwiftUI
     }
   }
 
-  struct AddRPCURLView: View {
+  struct EditRPCURLView: View {
     let chainID: String
+    let currentURL: URL
     let onSave: (URL) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var rpcURL = ""
+    @State private var rpcURL: String
     @State private var isValidating = false
     @State private var errorMessage: String?
+
+    init(chainID: String, currentURL: URL, onSave: @escaping (URL) -> Void) {
+      self.chainID = chainID
+      self.currentURL = currentURL
+      self.onSave = onSave
+      _rpcURL = State(initialValue: currentURL.absoluteString)
+    }
 
     var body: some View {
       Form {
@@ -130,14 +125,14 @@ import SwiftUI
           }
         }
       }
-      .navigationTitle("Add RPC URL")
+      .navigationTitle("Change RPC URL")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") { dismiss() }
         }
         ToolbarItem(placement: .confirmationAction) {
-          Button(isValidating ? "Checking..." : "Add") { validateAndSave() }
+          Button(isValidating ? "Checking..." : "Save") { validateAndSave() }
             .disabled(isValidating || rpcURL.isEmpty)
         }
       }

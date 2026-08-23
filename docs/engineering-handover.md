@@ -155,8 +155,10 @@ details remain redacted rather than restoring persisted plaintext messages or si
 
 `RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
 App Group. Both the app and Safari handler construct their resolver from this store, and
-the editor requires HTTPS (except explicit loopback development), reachability, and an
-exact `eth_chainId` match before saving. `NativeBalanceService` uses that same resolver and
+the editor displays exactly one effective endpoint per chain. The user may replace it or
+restore the Stupidtech default; the editor requires HTTPS (except explicit loopback
+development), reachability, and an exact `eth_chainId` match before saving.
+`NativeBalanceService` uses that same resolver and
 formats full-width 256-bit quantities without a BigInt dependency. Raw private-key import
 strictly validates a 32-byte secp256k1 scalar. Private-key reveal uses a fresh
 operation-specific authentication prompt, is privacy-sensitive, clears after 60 seconds,

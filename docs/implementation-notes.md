@@ -50,6 +50,32 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Single RPC Endpoint Network UI
+
+### Summary
+
+- Removed the misleading multi-RPC list and Add RPC URL action from network details.
+- Each chain now displays exactly one effective RPC URL. The user can replace it through a
+  Change RPC URL sheet or restore the Stupidtech default when an override is active.
+- The endpoint uses the standard system body font rather than monospaced text.
+- The RPC section uses a plain Change action with no icon or explanatory footer.
+- Kept the existing one-value-per-chain persistence, chain-ID validation, HTTPS policy, and
+  shared app/extension resolver unchanged.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/NetworksView.swift` completed.
+- `swift test`: 111 tests in 21 suites passed.
+- `stupid-app doctor`: 0 failures and 0 warnings. `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension.
+- Simulator accessibility inspection of Base network details exposed only the Chain ID and
+  Change RPC URL actions; Add RPC URL and multi-endpoint controls were absent.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-23 - Normalized And Safari-Profile-Bound Grants
 
 ### Summary
