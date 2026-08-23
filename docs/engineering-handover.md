@@ -142,6 +142,46 @@ polls while its activity task is foreground-active, and supports manual refresh.
 Base simulator self-transfer was recorded as submitted, mined,
 refreshed to confirmed with its block number, and rendered in the app; configured and
 independent RPCs agreed on receipt success and 21,000 gas used.
+
+The Gate 6 containing-app shell now follows the shipped app's SwiftUI screen hierarchy and
+presentation: the lowercase welcome and import screens; centered large native balance and
+copyable blockie/address home; clock and gear toolbar actions; Settings sheet; Connected
+Apps list/detail/disconnect; default Networks list and RPC detail/editor; authenticated
+Private Key reveal; and Activity list/detail. The implementation keeps the old native
+labels, spacing, forms, inset-grouped lists, typography, and SF Symbols while using the new
+core boundaries. The home balance is intentionally the selected chain's native balance,
+not the old app's invalid sum of native units across unrelated chains. Signature activity
+details remain redacted rather than restoring persisted plaintext messages or signatures.
+
+`RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
+App Group. Both the app and Safari handler construct their resolver from this store, and
+the editor requires HTTPS (except explicit loopback development), reachability, and an
+exact `eth_chainId` match before saving. `NativeBalanceService` uses that same resolver and
+formats full-width 256-bit quantities without a BigInt dependency. Raw private-key import
+strictly validates a 32-byte secp256k1 scalar. Private-key reveal uses a fresh
+operation-specific authentication prompt, is privacy-sensitive, clears after 60 seconds,
+on backgrounding, and on navigation away, and copies only to a local expiring pasteboard.
+Automatic old-format migration is attempted only when old material exists and no active
+new-format wallet is registered. New wallet creation, raw private-key import, and BIP-39
+English seed-phrase import all use one provisioning path: derive the EIP-55 account, save
+the `.userPresence` key, authenticate a reload, sign and recover a fixed self-test digest,
+and register the shared address only after proof succeeds. Cancellation, verification
+failure, or App Group registration failure deletes the newly saved key. Seed import
+validates the BIP-39 vocabulary and checksum, derives the 64-byte seed with
+PBKDF2-HMAC-SHA512, and derives `m/44'/60'/0'/0/0` with project-owned BIP-32 logic backed by
+CryptoKit and the existing vendored libsecp256k1 target. The standard Hardhat mnemonic
+matches its independently known first private key and address.
+
+New connected-site approvals now persist a V2 grant keyed by normalized scheme, hostname,
+effective port, and Safari profile identifier when `SFExtensionProfileKey` is present.
+Canonical pending requests also persist that native profile identifier; list, summary,
+status, approve, and reject operations are profile-filtered, and approval rejects a profile
+change as a binding mismatch. The profile identifier comes only from Safari's native
+extension context and is never accepted from page JavaScript. The old hostname dictionary
+continues to be mirrored for old-app readability. By explicit product-owner decision,
+pre-existing hostname-only entries remain authorization grants until that site reconnects
+or is disconnected; once a domain has any V2 grant, requests must match its exact V2
+origin/profile rather than falling back to the hostname entry.
 - `StupidWalletCore`: shared value types, method classification, origin normalization,
   a canonical pending-request store, real `Signing` (KeychainSigner) plus fresh-`LAContext`
   keychain access as the single device-owner authentication boundary.
@@ -347,7 +387,7 @@ The first usable milestone includes:
 - `eth_sendTransaction` with legacy and EIP-1559 serialization.
 - Confirmed `wallet_addEthereumChain` and `wallet_switchEthereumChain`.
 - Durable site connect/disconnect grants (legacy `connectedSites` key) with
-  eth_accounts/eth_requestAccounts gating; app-side connected-apps list UI pending.
+  eth_accounts/eth_requestAccounts gating and app-side list/detail/disconnect UI.
 - Generic passthrough for all methods not explicitly handled or denied.
 - Stupidtech default RPC resolution and validated per-chain user overrides.
 - SQLite-backed transaction and signature activity.
@@ -750,7 +790,8 @@ Exit conditions:
 Exit conditions:
 
 - Create/import/backup flows are authenticated and do not retain plaintext.
-- Site connect/disconnect grants use normalized origins.
+- New site connect/disconnect grants use normalized origins and Safari profiles when
+  available; legacy hostname grants retain the documented compatibility fallback.
 - Required signing and transaction methods work against representative dapps.
 - Generic node methods no longer require wallet code changes.
 - Chain add/switch requires approval and cannot silently replace RPC preferences.
@@ -830,20 +871,15 @@ device identifiers, or sensitive signing payloads.
 - **Property-list native bridge:** Safari native messaging does not carry arbitrary Swift
   `Codable` values directly. The JSON/property-list conversion layer needs exhaustive
   tests, especially for `null`.
-- **Key format:** The exact new keychain item shape and cleanup policy remain to be
-  finalized during Gate 3, subject to the locked user-presence and access-group rules.
-- **BIP-39 word list:** Seed import needs a word list and PBKDF2/BIP-32 implementation.
-  Decide whether to own the data/code or vendor a narrowly scoped audited component
-  before Gate 3 closes.
-- **Private-key backup:** Retaining the existing reveal/export feature is planned for
-  Secure Wallet Core, but its copy behavior, screen-capture handling, and timeout need a
-  focused design before implementation.
+- **Private-key backup:** Authenticated reveal, local expiring pasteboard copy, inactivity
+  clearing, and background clearing are implemented. Physical-device cancellation/timeout
+  behavior and screen-capture exposure still require focused verification before release.
 - **Safari profiles:** Verify availability and stability of `SFExtensionProfileKey` on
   all supported iOS versions before making profile binding mandatory.
-- **Grant identity precision:** connection grants persist as legacy lowercased hostnames
-  (no scheme/port separation, no profile binding) to preserve the old `connectedSites`
-  format. A future migration to scheme+port+profile grants is possible but must not break
-  the shared key's readability by the old app during the transition.
+- **Legacy grant identity precision:** new grants are scheme + effective-port + Safari-
+  profile bound and mirror the old `connectedSites` key. Pre-existing hostname-only grants
+  intentionally retain authorization until reconnect/disconnect, so those specific entries
+  remain scheme/port/profile agnostic by compatibility policy.
 - **Chain metadata:** Universal RPC support does not provide names, symbols, explorers,
   or icons. Keep metadata optional until a small trustworthy source is chosen.
 - **Transaction preview:** A secure confirmation must display enough canonical detail
@@ -855,13 +891,17 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Continue Gate 6 with app-side connected-apps list/disconnect UI (native
-   `listSites`/`disconnectSite` actions exist), create/import/backup flows, persisted RPC
-   overrides, and balance display.
-2. Migrate legacy hostname-only grants to scheme + effective port + Safari profile without
-   breaking old-app readability; until then this locked compatibility shape remains weaker
-   for global chain authorization than the target origin model.
-3. Add richer activity detail after the core wallet-management screens.
+1. Continue Gate 6 with physical-device proof of create, raw private-key import, BIP-39
+   seed import, backup reveal/cancellation/timeout, automatic migration launch, and Safari
+   signing with each newly provisioned key. The implementation and hermetic vectors are
+   complete, but these device-bound flows are not yet gate-proven.
+2. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
+   supported iOS version. The product owner chose seamless authorization for pre-existing
+   hostname grants; consider a later user-visible reconnect campaign before removing that
+   compatibility fallback.
+3. Finish parity details that do not weaken the new model: reviewed wallet deletion/logout,
+   custom chain metadata, and richer activity detail. ENS/avatar resolution and aggregate
+   balances remain deferred rather than being hidden inside Gate 6.
 4. Gate 7 and later per the implementation gates.
 
 ## Reference Sources

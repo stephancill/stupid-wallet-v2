@@ -22,6 +22,17 @@ Each is pinned to an exact revision so builds are reproducible and auditable.
 - **Semantics note:** only the core secp256k1 API surface plus the recovery and ECDH
   modules are compiled; nothing else from the upstream tree is built or linked.
 
+## BIP-39 English Word List
+
+- **Provenance:** MnemonicSwift 2.2.5, derived from the canonical BIP-39 English list at
+  <https://github.com/zcash-hackworks/MnemonicSwift>.
+- **License:** dual MIT / Apache-2.0; this project uses the MIT terms. Copyright Keefer
+  Taylor (2018) and Electric Coin Company (2020-2021).
+- **Vendored file:** `Sources/StupidWalletCore/BIP39EnglishWords.swift`.
+- **Local adaptation:** vocabulary data only. Validation, PBKDF2-HMAC-SHA512, BIP-32
+  derivation, and key handling are project-owned and use CryptoKit plus the existing
+  vendored libsecp256k1 target. No MnemonicSwift runtime package is linked.
+
 ## Deprecation / no-other-dependencies policy
 
 No other runtime dependency is vendored or imported. Apple system frameworks supply

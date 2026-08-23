@@ -1,187 +1,136 @@
-import Security
-import StupidWalletCore
 import SwiftUI
 
-struct ContentView: View {
-  @State private var phase: String = "Idle"
-  @State private var log = ""
-  @State private var activities: [ActivityRecord] = []
+#if canImport(UIKit)
+  import UIKit
+#endif
 
-  var body: some View {
-    ScrollView {
-      VStack(spacing: 12) {
-        Image(systemName: "wallet.pass.fill")
-          .font(.system(size: 40))
-          .foregroundStyle(.tint)
-        Text("Stupid Wallet")
-          .font(.headline)
-        Text("Signing happens in the Safari extension when you use a dapp.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-        Button("Run keychain proof") {
-          phase = "Running"
-          log = ""
-          Task { await runSelfTest() }
-        }
-        .buttonStyle(.borderedProminent)
-        Button("Create a wallet") {
-          phase = "Running"
-          log = ""
-          Task { @MainActor in
-            do {
-              let address = try WalletFactory.create()
-              log = "Created wallet\naddress \(address)"
-            } catch {
-              log = "FAIL: \(error)"
-            }
-            phase = "Done"
+#if os(iOS)
+  struct ContentView: View {
+    @StateObject private var vm = WalletViewModel()
+    @State private var showSettingsSheet = false
+
+    var body: some View {
+      NavigationView {
+        Group {
+          if vm.hasWallet {
+            walletView
+          } else {
+            SetupView(vm: vm)
           }
         }
-        Button("Run 4-old→new migration") {
-          phase = "Running"
-          log = ""
-          Task { @MainActor in
-            let lines = Self.runMigration()
-            log = lines.joined(separator: "\n")
-            phase = "Done"
-          }
-        }
-        Text(phase).font(.caption).foregroundStyle(.secondary)
-        Text(log).font(.caption2).multilineTextAlignment(.leading).frame(
-          maxWidth: .infinity, alignment: .leading)
-        Divider()
-        HStack {
-          Text("Activity").font(.headline)
-          Spacer()
-          Button("Refresh") { Task { await loadActivity() } }
-        }
-        if activities.isEmpty {
-          Text("No activity yet").font(.caption).foregroundStyle(.secondary)
-        } else {
-          ForEach(activities) { activity in
-            VStack(alignment: .leading, spacing: 3) {
-              Text(activity.kind == .transaction ? "Transaction" : "Signature").font(.subheadline)
-              Text("\(activity.method) · chain \(activity.chainID)").font(.caption)
-              Text(activity.status.rawValue.capitalized)
-                .font(.caption).foregroundStyle(activity.status == .confirmed ? .green : .secondary)
-              if let hash = activity.transactionHash {
-                Text("\(hash.prefix(12))…\(hash.suffix(8))").font(.caption2).monospaced()
+        .toolbar {
+          if vm.hasWallet {
+            ToolbarItem(placement: .navigationBarTrailing) {
+              NavigationLink(destination: ActivityView()) {
+                Image(systemName: "clock")
               }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            ToolbarItem(placement: .navigationBarTrailing) {
+              Button {
+                showSettingsSheet = true
+              } label: {
+                Image(systemName: "gear")
+              }
+            }
           }
         }
       }
-      .padding()
-    }
-    .task {
-      while !Task.isCancelled {
-        await loadActivity()
-        try? await Task.sleep(for: .seconds(5))
+      .sheet(isPresented: $showSettingsSheet) {
+        SettingsView(address: vm.addressHex)
+      }
+      .task {
+        await vm.refreshBalance()
       }
     }
-  }
 
-  @MainActor
-  private func runSelfTest() async {
-    let lines = Self.performProof()
-    log = lines.joined(separator: "\n")
-    phase = "Done"
-  }
+    private var walletView: some View {
+      ScrollView {
+        VStack {
+          Spacer()
+          VStack(alignment: .center, spacing: 24) {
+            HStack {
+              Spacer()
+              Menu {
+                if let balance = vm.balance {
+                  Text("\(vm.chainName) • \(balance)")
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .disabled(true)
+                } else {
+                  Text("Loading balances...").foregroundStyle(.secondary)
+                }
+              } label: {
+                HStack(alignment: .center, spacing: 8) {
+                  if let balance = vm.balance {
+                    Text("♦ \(balance)")
+                      .font(.system(size: 48, weight: .bold))
+                      .foregroundStyle(.primary)
+                      .lineLimit(1)
+                      .minimumScaleFactor(0.4)
+                      .allowsTightening(true)
+                  } else {
+                    ProgressView()
+                  }
+                  Image(systemName: "chevron.down").foregroundStyle(.secondary)
+                }
+              }
+              .menuStyle(.borderlessButton)
+              Spacer()
+            }
 
-  @MainActor
-  private func loadActivity() async {
-    let signing: any Signing
-    if let address = WalletStore.activeAddress() {
-      signing = KeychainSigner(account: address, store: KeychainKeyStore())
-    } else {
-      signing = UnavailableSigner()
-    }
-    let service = WalletService(signing: signing)
-    await service.refreshTransactionActivity()
-    activities = (try? await service.activities()) ?? []
-  }
-
-  private static func runMigration() -> [String] {
-    let backend = SecurityWalletBackend()
-    guard let old = backend.oldAddress() else { return ["No old wallet address found."] }
-    let result = WalletMigration.migrate(backend: backend)
-    switch result {
-    case .success(let outcome):
-      switch outcome {
-      case .noOldWallet:
-        return ["No old wallet present."]
-      case .alreadyMigrated:
-        return ["Migration already complete (idempotent)."]
-      case .skippedNewWalletExists:
-        return ["Skipped: a new-format wallet already exists."]
-      case .migrated(let address):
-        return ["MIGRATED", "old address \(old)", "new address \(address)"]
+            Button {
+              copyAddress()
+            } label: {
+              HStack(spacing: 6) {
+                BlockieView(seed: vm.addressHex.lowercased())
+                  .frame(width: 24, height: 24)
+                Text(truncatedAddress(vm.addressHex))
+                  .font(.system(.title3, design: .monospaced))
+                  .frame(height: 24)
+                Image(systemName: didCopyAddress ? "checkmark" : "doc.on.doc")
+                  .foregroundStyle(.secondary)
+                  .frame(width: 20)
+              }
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .center)
+          }
+          .padding()
+          Spacer()
+        }
+        .frame(minHeight: contentHeight)
       }
-    case .failure(let error):
-      return ["FAIL: \(error)"]
+      .refreshable { await vm.refreshBalance() }
+    }
+
+    @State private var didCopyAddress = false
+
+    private func truncatedAddress(_ address: String) -> String {
+      guard address.count > 12 else { return address }
+      return "\(address.prefix(6))...\(address.suffix(4))"
+    }
+
+    private func copyAddress() {
+      #if canImport(UIKit)
+        UIPasteboard.general.string = vm.addressHex
+      #endif
+      didCopyAddress = true
+      Task {
+        try? await Task.sleep(for: .seconds(1.2))
+        didCopyAddress = false
+      }
+    }
+
+    private var contentHeight: CGFloat {
+      #if canImport(UIKit)
+        UIScreen.main.bounds.height - 200
+      #else
+        600
+      #endif
     }
   }
-
-  /// Generates a random key, stores it under a `.userPresence` access control, reloads it
-  /// (this is the system authentication prompt on a physical device), and verifies the
-  /// address and an authenticated sign/recover round-trip.
-  private static func performProof() -> [String] {
-    var lines: [String] = []
-    let store = KeychainKeyStore(
-      service: "co.za.stephancill.stupid-wallet.self-test", accessGroup: nil)
-    let account = "selftest-\(UUID().uuidString)"
-    defer { store.delete(account: account) }
-
-    guard let generated = Self.randomSecret() else { return ["FAIL: key generation"] }
-    var secret = generated
-    defer { secret = [UInt8](repeating: 0, count: secret.count) }
-
-    let pair: EthereumKeypair
-    do { pair = try EthereumKeypair.from(secret: secret) } catch {
-      return ["FAIL: keypair derivation"]
-    }
-    lines.append("address \(pair.address)")
-
-    do { try store.save(key: secret, account: account) } catch {
-      return ["FAIL: keychain save (\(error))"]
-    }
-    lines.append("save ok")
-
-    let loaded: [UInt8]
-    do { loaded = try store.load(account: account) } catch {
-      return ["FAIL: keychain load (\(error)) → user-presence not granted"]
-    }
-    guard loaded == secret else { return ["FAIL: round-trip mismatch"] }
-    lines.append("load ok — Face ID/passcode released the key")
-
-    do {
-      let fromLoaded = try EthereumKeypair.from(secret: loaded)
-      guard fromLoaded.address == pair.address else { return ["FAIL: address drifted"] }
-      lines.append("re-derived address matches")
-    } catch { return ["FAIL: reload re-derive"] }
-
-    let digest = Keccak.keccak256(Array("keychain proof".utf8))
-    if let signature = try? EthereumSigner.sign(digest: digest, keypair: pair),
-      let recovered = try? EthereumSigner.recoverAddress(digest: digest, signature: signature),
-      recovered == pair.address
-    {
-      lines.append("sign+recover verify OK")
-    } else {
-      return ["FAIL: sign/recover"]
-    }
-
-    lines.insert("PASS", at: 0)
-    return lines
+#else
+  struct ContentView: View {
+    var body: some View { Text("Stupid Wallet") }
   }
-
-  private static func randomSecret() -> [UInt8]? {
-    for _ in 0..<8 {
-      var bytes = [UInt8](repeating: 0, count: 32)
-      let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-      if status == errSecSuccess, (try? EthereumKeypair.from(secret: bytes)) != nil { return bytes }
-    }
-    return nil
-  }
-}
+#endif

@@ -17,6 +17,7 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
   public let kind: RequestKind
   public let method: String
   public let origin: String
+  public let profileID: String?
   public let chainId: String
   public let account: String
   public let params: JSONValue
@@ -34,6 +35,7 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     kind: RequestKind,
     method: String,
     origin: String,
+    profileID: String? = nil,
     chainId: String,
     account: String,
     params: JSONValue,
@@ -48,6 +50,7 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     self.kind = kind
     self.method = method
     self.origin = origin
+    self.profileID = profileID
     self.chainId = chainId
     self.account = account
     self.params = params

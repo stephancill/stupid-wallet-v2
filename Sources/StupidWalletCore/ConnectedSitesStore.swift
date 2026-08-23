@@ -14,13 +14,25 @@ public struct ConnectedSite: Sendable, Codable, Equatable, Identifiable {
   public let address: String
   /// When the connection was established.
   public let connectedAt: Date
+  /// Normalized scheme + host + effective port for new grants. Nil for legacy entries.
+  public let origin: String?
+  /// Safari profile identifier supplied by native Safari context when available.
+  public let profileID: String?
 
-  public var id: String { domain }
+  public var id: String { [origin ?? domain, profileID ?? "default"].joined(separator: "|") }
 
-  public init(domain: String, address: String, connectedAt: Date = Date()) {
+  public init(
+    domain: String,
+    address: String,
+    connectedAt: Date = Date(),
+    origin: String? = nil,
+    profileID: String? = nil
+  ) {
     self.domain = domain.lowercased()
     self.address = address
     self.connectedAt = connectedAt
+    self.origin = origin.map(Origin.normalize)
+    self.profileID = profileID
   }
 }
 
@@ -29,6 +41,14 @@ public struct ConnectedSite: Sendable, Codable, Equatable, Identifiable {
 public actor ConnectedSitesStore {
   public static let defaultAppGroup = PendingRequestStore.defaultAppGroup
   private static let key = "connectedSites"
+  private static let normalizedKey = "connectedOriginsV2"
+
+  private struct NormalizedGrant: Sendable, Codable {
+    let origin: String
+    let address: String
+    let connectedAt: Date
+    let profileID: String?
+  }
 
   private let defaults: UserDefaults
   private let isoFormatter: ISO8601DateFormatter
@@ -58,26 +78,64 @@ public actor ConnectedSitesStore {
 
   /// All connected sites, most recently connected first.
   public func all() -> [ConnectedSite] {
-    sites().sorted { $0.connectedAt > $1.connectedAt }
+    let normalized = normalizedGrants().values.map {
+      ConnectedSite(
+        domain: Origin.downHost(of: $0.origin),
+        address: $0.address,
+        connectedAt: $0.connectedAt,
+        origin: $0.origin,
+        profileID: $0.profileID)
+    }
+    let normalizedDomains = Set(normalized.map(\.domain))
+    let legacyOnly = legacySites().filter { !normalizedDomains.contains($0.domain) }
+    return (normalized + legacyOnly).sorted { $0.connectedAt > $1.connectedAt }
   }
 
   /// Whether the given normalized origin has a connection grant for the account.
-  public func isConnected(origin: String, address: String) -> Bool {
+  public func isConnected(origin: String, address: String, profileID: String? = nil) -> Bool {
+    let normalized = Origin.normalize(origin)
+    let grants = normalizedGrants()
+    if let grant = grants[normalizedKey(origin: normalized, profileID: profileID)],
+      grant.address.caseInsensitiveCompare(address) == .orderedSame
+    {
+      return true
+    }
     let domain = Origin.downHost(of: origin)
-    return sites().contains { $0.domain == domain && $0.address == address }
+    if grants.values.contains(where: { Origin.downHost(of: $0.origin) == domain }) {
+      return false
+    }
+    // Existing hostname-only grants retain authorization by product decision. Every new
+    // approval also writes the stronger normalized grant below.
+    return legacySites().contains {
+      $0.domain == domain && $0.address.caseInsensitiveCompare(address) == .orderedSame
+    }
   }
 
   /// Establishes (or refreshes) a connection grant for the hostname, preserving the legacy
   /// `[domain: {address, connectedAt}]` shape so a downgraded/differently-versioned reader
   /// of the key sees a valid entry. Idempotent re-connect just updates the timestamp.
   public func connect(site: ConnectedSite) {
+    if let origin = site.origin {
+      var grants = normalizedGrants()
+      let normalized = Origin.normalize(origin)
+      grants[normalizedKey(origin: normalized, profileID: site.profileID)] = NormalizedGrant(
+        origin: normalized,
+        address: site.address,
+        connectedAt: site.connectedAt,
+        profileID: site.profileID)
+      persistNormalized(grants)
+    }
     var dict = legacyDictionary()
     dict[site.domain] = meta(address: site.address, connectedAt: site.connectedAt)
     defaults.set(dict, forKey: ConnectedSitesStore.key)
   }
 
   /// Removes a connection grant by hostname. Idempotent.
-  public func disconnect(origin: String) {
+  public func disconnect(origin: String, profileID: String? = nil) {
+    let normalized = Origin.normalize(origin)
+    var grants = normalizedGrants()
+    grants.removeValue(forKey: normalizedKey(origin: normalized, profileID: profileID))
+    persistNormalized(grants)
     let domain = Origin.downHost(of: origin)
     var dict = legacyDictionary()
     dict.removeValue(forKey: domain)
@@ -95,7 +153,7 @@ public actor ConnectedSitesStore {
     ["address": address, "connectedAt": isoFormatter.string(from: connectedAt)]
   }
 
-  private func sites() -> [ConnectedSite] {
+  private func legacySites() -> [ConnectedSite] {
     let dict = legacyDictionary()
     var out: [ConnectedSite] = []
     out.reserveCapacity(dict.count)
@@ -109,6 +167,20 @@ public actor ConnectedSitesStore {
         ))
     }
     return out
+  }
+
+  private func normalizedKey(origin: String, profileID: String?) -> String {
+    origin + "|" + (profileID ?? "default")
+  }
+
+  private func normalizedGrants() -> [String: NormalizedGrant] {
+    guard let data = defaults.data(forKey: ConnectedSitesStore.normalizedKey) else { return [:] }
+    return (try? JSONDecoder().decode([String: NormalizedGrant].self, from: data)) ?? [:]
+  }
+
+  private func persistNormalized(_ grants: [String: NormalizedGrant]) {
+    guard let data = try? JSONEncoder().encode(grants) else { return }
+    defaults.set(data, forKey: ConnectedSitesStore.normalizedKey)
   }
 
   private func parseISODate(_ string: String?) -> Date {

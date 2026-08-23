@@ -9,7 +9,11 @@ import Security
 public enum WalletFactory {
   public enum CreateError: Error, Sendable {
     case randomFailure
+    case invalidPrivateKey
+    case walletAlreadyExists
     case saveFailed
+    case verificationFailed
+    case registrationFailed
   }
 
   @discardableResult
@@ -21,7 +25,65 @@ public enum WalletFactory {
     defer {
       for index in secret.indices { secret[index] = 0 }
     }
-    let pair = try EthereumKeypair.from(secret: secret)
+    return try provision(secret: secret, appGroup: appGroup, keychainService: keychainService)
+  }
+
+  @discardableResult
+  public static func importPrivateKey(
+    _ privateKey: String,
+    appGroup: String = PendingRequestStore.defaultAppGroup,
+    keychainService: String = "co.za.stephancill.stupid-wallet.keys"
+  ) throws -> String {
+    guard var secret = Hex.data(privateKey), secret.count == 32 else {
+      throw CreateError.invalidPrivateKey
+    }
+    defer {
+      for index in secret.indices { secret[index] = 0 }
+    }
+    return try provision(secret: secret, appGroup: appGroup, keychainService: keychainService)
+  }
+
+  @discardableResult
+  public static func importSeedPhrase(
+    _ mnemonic: String,
+    appGroup: String = PendingRequestStore.defaultAppGroup,
+    keychainService: String = "co.za.stephancill.stupid-wallet.keys"
+  ) throws -> String {
+    var secret = try EthereumSeedPhrase.privateKey(mnemonic: mnemonic)
+    defer {
+      for index in secret.indices { secret[index] = 0 }
+    }
+    return try provision(secret: secret, appGroup: appGroup, keychainService: keychainService)
+  }
+
+  public static func exportPrivateKey(
+    account: String,
+    keychainService: String = "co.za.stephancill.stupid-wallet.keys"
+  ) throws -> String {
+    var secret = try KeychainKeyStore(service: keychainService).load(
+      account: account,
+      reason: "Unlock your wallet to reveal your private key"
+    )
+    defer {
+      for index in secret.indices { secret[index] = 0 }
+    }
+    guard secret.count == 32, (try? EthereumKeypair.from(secret: secret)) != nil else {
+      throw CreateError.invalidPrivateKey
+    }
+    return "0x" + Hex.encode(secret)
+  }
+
+  private static func provision(
+    secret: [UInt8],
+    appGroup: String,
+    keychainService: String
+  ) throws -> String {
+    guard WalletStore.activeAddress(appGroup: appGroup) == nil else {
+      throw CreateError.walletAlreadyExists
+    }
+    guard let pair = try? EthereumKeypair.from(secret: secret) else {
+      throw CreateError.invalidPrivateKey
+    }
 
     let store = KeychainKeyStore(service: keychainService)
     do {
@@ -29,7 +91,32 @@ public enum WalletFactory {
     } catch {
       throw Self.CreateError.saveFailed
     }
-    WalletStore.setAddress(pair.address, appGroup: appGroup)
+
+    do {
+      var loaded = try store.load(
+        account: pair.address,
+        reason: "Unlock your wallet to verify it was saved securely")
+      defer {
+        for index in loaded.indices { loaded[index] = 0 }
+      }
+      let loadedPair = try EthereumKeypair.from(secret: loaded)
+      let digest = Keccak.keccak256(Array("stupid-wallet provisioning proof".utf8))
+      let signature = try EthereumSigner.sign(digest: digest, keypair: loadedPair)
+      let recovered = try EthereumSigner.recoverAddress(digest: digest, signature: signature)
+      guard let recovered, recovered.caseInsensitiveCompare(pair.address) == .orderedSame else {
+        throw Self.CreateError.verificationFailed
+      }
+    } catch {
+      store.delete(account: pair.address)
+      throw Self.CreateError.verificationFailed
+    }
+
+    do {
+      try WalletStore.setAddress(pair.address, appGroup: appGroup)
+    } catch {
+      store.delete(account: pair.address)
+      throw Self.CreateError.registrationFailed
+    }
     return pair.address
   }
 

@@ -50,6 +50,128 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Normalized And Safari-Profile-Bound Grants
+
+### Summary
+
+- Added a V2 connected-site grant store keyed by normalized scheme, hostname, effective
+  port, and Safari profile identifier when native Safari supplies `SFExtensionProfileKey`.
+- New grants also mirror the legacy hostname-only `connectedSites` dictionary so the old app
+  can continue reading and disconnecting sites.
+- Bound canonical pending requests to the native Safari profile. Pending list, summary,
+  status, approval, and rejection operations filter or reject across profile boundaries;
+  profile identity never comes from page JavaScript.
+- Implemented the product owner's compatibility choice: pre-existing hostname-only grants
+  remain authorized. Once a domain reconnects and receives any V2 grant, authorization for
+  that domain requires an exact normalized origin/profile match and no longer falls back to
+  the mirrored hostname entry.
+- Updated Connected Apps disconnection to remove the selected normalized profile/origin
+  grant while preserving the old screen presentation.
+
+### Verification
+
+- Added regressions proving scheme/port separation, Safari-profile separation, cross-profile
+  approval rejection, normalized reconnect behavior, and continued legacy authorization.
+- `swift test`: 111 tests in 21 suites passed.
+- `stupid-app doctor`: 0 failures and 0 warnings. `stupid-app build` succeeded.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Verify the concrete runtime type and stability of `SFExtensionProfileKey` on physical
+  iOS 17+ devices and exercise two Safari profiles end to end.
+- The retained hostname fallback is intentionally weaker. Removing it requires a later
+  product decision and user-visible reconnect path.
+
+## 2026-08-23 - BIP-39 Seed Import And Verified Provisioning
+
+### Summary
+
+- Implemented English BIP-39 vocabulary/checksum validation, NFKD normalization,
+  PBKDF2-HMAC-SHA512 seed derivation, and BIP-32 private derivation for the old app's first
+  Ethereum account path, `m/44'/60'/0'/0/0`.
+- Added compressed public-key serialization and private-key tweak-add through the existing
+  vendored libsecp256k1 target. No BigInt, CryptoSwift, Dawn, MnemonicSwift runtime package,
+  or general wallet SDK was added.
+- Vendored only MnemonicSwift 2.2.5's BIP-39 English vocabulary with retained copyright and
+  MIT provenance in `THIRD_PARTY_NOTICES.md`; all validation and derivation code is
+  project-owned.
+- Wired seed phrases into the old-app-compatible import screen and added specific word-count,
+  unknown-word, checksum, and derivation errors.
+- Unified create, raw-key import, and seed import provisioning. A new key is saved under
+  `.userPresence`, authenticated back out with a fresh context, used for a sign-and-recover
+  self-test, and only then registered in the App Group. Failure or cancellation removes the
+  newly saved key. App Group registration is now throwing instead of silently ignoring a
+  failed write.
+- Updated migration saving to use the same loud App Group registration behavior and remove
+  a newly saved key if registration fails.
+
+### Verification
+
+- The standard Hardhat mnemonic derived private key
+  `ac0974...ff80` and first address `0xf39F...2266`, matching independent ecosystem vectors.
+- Regression coverage rejects an unknown BIP-39 word and a valid-vocabulary phrase with an
+  invalid checksum.
+- `swift test`: 109 tests in 21 suites passed.
+- `stupid-app build` succeeded, and
+  `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Prove create, private-key import, seed import, cancellation rollback, backup, and Safari
+  signing on a physical device. Hermetic tests do not prove LocalAuthentication/keychain
+  lifecycle behavior.
+- Complete the normalized origin + effective port + Safari profile grant migration without
+  breaking the legacy hostname store.
+
+## 2026-08-23 - Gate 6 Old-App Screen Parity And Wallet Settings
+
+### Summary
+
+- Replaced the diagnostic containing-app shell with the shipped app's Gate 6 SwiftUI screen
+  hierarchy and presentation: welcome, import, wallet home, Settings, Connected Apps,
+  Networks/RPC editor, authenticated Private Key reveal, Activity, and activity details.
+- Restored the old home treatment including the large diamond-prefixed balance, disclosure
+  menu, deterministic address blockie, shortened copyable address, and clock/gear toolbar.
+- Added strict raw private-key import, operation-specific authenticated private-key export,
+  selected-chain native balance reads, full-width quantity formatting, and atomic persisted
+  RPC overrides shared by the app and Safari extension.
+- RPC overrides are validated for transport security, reachability, and exact chain identity
+  before persistence. Backup plaintext is privacy-sensitive and clears after 60 seconds,
+  when the scene becomes inactive, or when the view disappears; pasteboard copies are local
+  and expire.
+- The containing app now attempts the already-proven old-format migration only when old
+  material exists and no active new-format wallet is registered. Fixed the production
+  migration backend's new-wallet check to include the shared WalletStore file.
+- Preserved the new privacy and RPC boundaries instead of copying old behavior: the home
+  shows only the selected chain's native balance, signature activity stays redacted, and
+  dapp RPC suggestions are not silently saved.
+
+### Verification
+
+- `swift format --in-place --recursive Sources Tests` completed.
+- `swift test`: 107 tests in 20 suites passed, including new persisted-RPC and full-width
+  native-balance formatting coverage.
+- `stupid-app doctor`: 0 failures and 0 warnings. `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension.
+- Simulator accessibility inspection confirmed the wallet home toolbar/address, Settings
+  actions, and the Networks list containing Ethereum, Base, Arbitrum One, and Optimism.
+
+### Follow-Up
+
+- BIP-39 seed-phrase import and BIP-32 derivation are still unimplemented; the matching old
+  import screen currently reports this limitation rather than accepting an unvalidated
+  phrase.
+- Complete authenticated provisioning verification/rollback and physical-device tests for
+  create, raw import, backup reveal/cancellation/timeout, and automatic migration launch.
+- Migrate hostname-only legacy grants to normalized scheme + effective port + Safari profile
+  identity without breaking installed-wallet compatibility.
+- Reviewed wallet deletion/logout, custom chain metadata, ENS/avatar resolution, aggregate
+  balances, and richer activity details remain later work.
+
 ## 2026-08-23 - SQLite Activity And Base Receipt Polling
 
 ### Summary

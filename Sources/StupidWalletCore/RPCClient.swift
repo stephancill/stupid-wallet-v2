@@ -100,6 +100,10 @@ public struct RPCResolver: Sendable {
     self.overrides = overrides
   }
 
+  public static func persisted(store: RPCOverrideStore = RPCOverrideStore()) -> RPCResolver {
+    RPCResolver(overrides: (try? store.all()) ?? [:])
+  }
+
   /// The effective endpoint for a chain: a validated override or the stupidtech default.
   public func resolve(chainID: String) -> URL {
     overrides[chainID] ?? Self.defaultURL(forChainID: chainID)

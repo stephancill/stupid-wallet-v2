@@ -7,6 +7,10 @@ import Foundation
 /// entitlement, which the pending-request store already relies on. The file holds only a
 /// public EIP-55 address (never a key), so it is not secret.
 public enum WalletStore {
+  public enum StoreError: Error, Sendable, Equatable {
+    case unavailable
+  }
+
   public static func containerURL(appGroup: String) -> URL? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
   }
@@ -31,11 +35,15 @@ public enum WalletStore {
   /// Persists the active address. Atomic write so a partially-written file is never read.
   public static func setAddress(
     _ address: String, appGroup: String = PendingRequestStore.defaultAppGroup
-  ) {
+  ) throws {
     guard let url = addressFileURL(appGroup: appGroup),
       let data = address.appending("\n").data(using: .utf8)
-    else { return }
-    try? data.write(to: url, options: [.atomic])
+    else { throw StoreError.unavailable }
+    do {
+      try data.write(to: url, options: [.atomic])
+    } catch {
+      throw StoreError.unavailable
+    }
   }
 }
 

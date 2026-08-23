@@ -59,9 +59,13 @@ public final class KeychainKeyStore: Sendable {
   /// Reads and auto-decrypts the key with a fresh, authenticated `LAContext` bound to the
   /// read. Release the returned bytes promptly. Yes, presents the device-owner Face ID /
   /// passcode prompt once per call.
-  public func load(account: String) throws -> [UInt8] {
+  public func load(
+    account: String,
+    reason: String = "Unlock your wallet to sign"
+  ) throws -> [UInt8] {
     let context = LAContext()
-    context.localizedReason = "Unlock your wallet to sign"
+    context.localizedReason = reason
+    context.touchIDAuthenticationAllowableReuseDuration = 0
     var query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,

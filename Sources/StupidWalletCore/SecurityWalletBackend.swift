@@ -25,7 +25,10 @@ public struct SecurityWalletBackend: OldWalletBackend {
 
   public func oldAddress() -> String? { defaults().string(forKey: constants.oldAddressKey) }
 
-  public func hasNewWallet() -> Bool { defaults().string(forKey: constants.newWalletKey) != nil }
+  public func hasNewWallet() -> Bool {
+    WalletStore.activeAddress(appGroup: appGroup) != nil
+      || defaults().string(forKey: constants.newWalletKey) != nil
+  }
 
   public func isMigrated() -> Bool {
     defaults().bool(forKey: constants.migratedKey)
@@ -64,8 +67,13 @@ public struct SecurityWalletBackend: OldWalletBackend {
     do { try keyStore.save(key: key, account: account) } catch {
       throw WalletMigrationFailure.saveFailed
     }
-    defaults().set(account, forKey: constants.newWalletKey)
-    WalletStore.setAddress(account, appGroup: appGroup)
+    do {
+      try WalletStore.setAddress(account, appGroup: appGroup)
+      defaults().set(account, forKey: constants.newWalletKey)
+    } catch {
+      keyStore.delete(account: account)
+      throw WalletMigrationFailure.saveFailed
+    }
   }
 
   public func loadKey(account: String) throws -> [UInt8] {

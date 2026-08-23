@@ -17,6 +17,14 @@ enum Secp256k1 {
 
   /// Serializes an uncompressed 64-byte public key (x || y).
   static func publicKeyUncompressed(secret: [UInt8]) throws -> [UInt8] {
+    try publicKey(secret: secret, compressed: false)
+  }
+
+  static func publicKeyCompressed(secret: [UInt8]) throws -> [UInt8] {
+    try publicKey(secret: secret, compressed: true)
+  }
+
+  private static func publicKey(secret: [UInt8], compressed: Bool) throws -> [UInt8] {
     guard secret.count == 32, let context else { throw Error.invalidSecretKey }
     var key = secret
     defer { key = [UInt8](repeating: 0, count: key.count) }
@@ -27,15 +35,37 @@ enum Secp256k1 {
     guard secp256k1_ec_pubkey_create(context, &pub, &key) == 1 else {
       throw Error.pubkeyFailure
     }
-    var output = [UInt8](repeating: 0, count: 65)
+    var output = [UInt8](repeating: 0, count: compressed ? 33 : 65)
     var len = output.count
     guard
-      secp256k1_ec_pubkey_serialize(context, &output, &len, &pub, UInt32(SECP256K1_EC_UNCOMPRESSED))
+      secp256k1_ec_pubkey_serialize(
+        context,
+        &output,
+        &len,
+        &pub,
+        UInt32(compressed ? SECP256K1_EC_COMPRESSED : SECP256K1_EC_UNCOMPRESSED)
+      )
         == 1
     else {
       throw Error.pubkeyFailure
     }
     return output
+  }
+
+  static func addTweak(secret: [UInt8], tweak: [UInt8]) throws -> [UInt8] {
+    guard secret.count == 32, tweak.count == 32, let context else {
+      throw Error.invalidSecretKey
+    }
+    var child = secret
+    var mutableTweak = tweak
+    defer {
+      mutableTweak = [UInt8](repeating: 0, count: mutableTweak.count)
+    }
+    guard secp256k1_ec_seckey_tweak_add(context, &child, &mutableTweak) == 1 else {
+      child = [UInt8](repeating: 0, count: child.count)
+      throw Error.invalidSecretKey
+    }
+    return child
   }
 
   /// Ethereum address = last 20 bytes of Keccak-256(uncompressed pubkey minus 0x04).

@@ -225,8 +225,9 @@ public actor WalletService {
   // MARK: Connection grants
 
   /// Whether this origin already has a connection grant to the active account.
-  public nonisolated func isConnected(origin: String) async -> Bool {
-    await connectedSites.isConnected(origin: origin, address: signing.account)
+  public nonisolated func isConnected(origin: String, profileID: String? = nil) async -> Bool {
+    await connectedSites.isConnected(
+      origin: origin, address: signing.account, profileID: profileID)
   }
 
   /// All persisted connection grants.
@@ -235,15 +236,19 @@ public actor WalletService {
   }
 
   /// Grants a connection and binds it to the active account. Idempotent.
-  public func connect(origin: String) async {
+  public func connect(origin: String, profileID: String? = nil) async {
     await connectedSites.connect(
-      site: ConnectedSite(domain: Origin.downHost(of: origin), address: signing.account)
+      site: ConnectedSite(
+        domain: Origin.downHost(of: origin),
+        address: signing.account,
+        origin: origin,
+        profileID: profileID)
     )
   }
 
   /// Revokes a connection. Idempotent.
-  public func disconnect(origin: String) async {
-    await connectedSites.disconnect(origin: origin)
+  public func disconnect(origin: String, profileID: String? = nil) async {
+    await connectedSites.disconnect(origin: origin, profileID: profileID)
   }
 
   public nonisolated var account: String { signing.account }
@@ -292,14 +297,19 @@ public actor WalletService {
   /// Creates a canonical pending record with a derived payload digest. Requests whose
   /// policy kind is not approval-worthy are rejected up front.
   public func prepare(
-    method: String, params: JSONValue, origin: String, chainId _: String = "1"
+    method: String,
+    params: JSONValue,
+    origin: String,
+    chainId _: String = "1",
+    profileID: String? = nil
   ) async throws -> UUID {
     let chainId = try await activeChainID()
     let kind = RequestKind.kind(for: method)
     guard kind.requiresApproval else { throw WalletError.methodNotApproved }
     guard signing.hasKey() else { throw WalletError.notReady }
     if kind == .chain,
-      !(await connectedSites.isConnected(origin: origin, address: signing.account))
+      !(await connectedSites.isConnected(
+        origin: origin, address: signing.account, profileID: profileID))
     {
       throw WalletError.unauthorized
     }
@@ -319,6 +329,7 @@ public actor WalletService {
       kind: kind,
       method: method,
       origin: Origin.normalize(origin),
+      profileID: profileID,
       chainId: chainId,
       account: signing.account,
       params: canonicalParams,
@@ -338,14 +349,17 @@ public actor WalletService {
   }
 
   /// Display-safe canonical summary for one pending request.
-  public func summarize(request: UUID) async throws -> Summary? {
+  public func summarize(request: UUID, profileID: String? = nil) async throws -> Summary? {
     guard let record = try await store.record(request) else { return nil }
+    guard record.profileID == profileID else { return nil }
     return await makeSummary(record)
   }
 
   /// Summaries for all pending records, oldest first (queue order) with the active head.
-  public func list() async throws -> [Summary] {
-    let records = try await store.pending().sorted { $0.createdAt < $1.createdAt }
+  public func list(profileID: String? = nil) async throws -> [Summary] {
+    let records = try await store.pending().filter { $0.profileID == profileID }.sorted {
+      $0.createdAt < $1.createdAt
+    }
     var summaries: [Summary] = []
     for record in records { summaries.append(await makeSummary(record)) }
     return summaries
@@ -370,20 +384,23 @@ public actor WalletService {
   }
 
   /// Persisted status so a suspending service worker and a polling page converge.
-  public func status(for id: UUID) async -> RequestStatus? {
-    guard let record = try? await store.record(id) else { return nil }
+  public func status(for id: UUID, profileID: String? = nil) async -> RequestStatus? {
+    guard let record = try? await store.record(id), record.profileID == profileID else {
+      return nil
+    }
     return RequestStatus(
       status: record.status.rawValue, result: record.result, error: record.error)
   }
 
   /// Approve the active head: verify binding, queue eligibility, expiry, recomputed
   /// digest, authenticate, then sign with the real account key and consume the record.
-  public func approve(request: UUID) async throws -> JSONValue {
+  public func approve(request: UUID, profileID: String? = nil) async throws -> JSONValue {
     guard try await store.record(request) != nil else { throw WalletError.notFound }
     guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
     defer { store.releaseClaim(claim) }
 
     guard var record = try await store.record(request) else { throw WalletError.notFound }
+    guard record.profileID == profileID else { throw WalletError.bindingMismatch }
     // store.record() normalizes an expired pending record to `.expired`.
     if record.status == .expired { throw WalletError.expired }
     guard record.status == .pending else { throw WalletError.alreadyConsumed }
@@ -410,7 +427,8 @@ public actor WalletService {
       throw WalletError.bindingMismatch
     }
     if record.kind == .chain,
-      !(await connectedSites.isConnected(origin: record.origin, address: record.account))
+      !(await connectedSites.isConnected(
+        origin: record.origin, address: record.account, profileID: profileID))
     {
       let rpcError = JSONValue.object([
         "code": .number(4100),
@@ -517,7 +535,11 @@ public actor WalletService {
     // connection so a subsequent eth_requestAccounts from the same origin short-circuits.
     if record.kind == .connect {
       await connectedSites.connect(
-        site: ConnectedSite(domain: Origin.downHost(of: record.origin), address: record.account)
+        site: ConnectedSite(
+          domain: Origin.downHost(of: record.origin),
+          address: record.account,
+          origin: record.origin,
+          profileID: record.profileID)
       )
     }
     return result
@@ -860,11 +882,12 @@ public actor WalletService {
     }
   }
 
-  public func reject(request: UUID) async throws {
+  public func reject(request: UUID, profileID: String? = nil) async throws {
     guard try await store.record(request) != nil else { throw WalletError.notFound }
     guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
     defer { store.releaseClaim(claim) }
     guard let record = try await store.record(request) else { throw WalletError.notFound }
+    guard record.profileID == profileID else { throw WalletError.bindingMismatch }
     guard record.status == .pending else { throw WalletError.alreadyConsumed }
     var rejected = record
     rejected.status = .rejected

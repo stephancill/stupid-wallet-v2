@@ -39,11 +39,20 @@ public final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandli
     }
 
     let envelope = Envelope.parse(message)
+    let profileID: String?
+    if let profile = userInfo[SFExtensionProfileKey] as? UUID {
+      profileID = profile.uuidString.lowercased()
+    } else if let profile = userInfo[SFExtensionProfileKey] as? NSUUID {
+      profileID = profile.uuidString.lowercased()
+    } else {
+      profileID = userInfo[SFExtensionProfileKey] as? String
+    }
     // A fresh service per native message resolves the current wallet account lazily.
-    let service = WalletService(signing: Self.makeSigning())
+    let service = WalletService(signing: Self.makeSigning(), resolver: .persisted())
     let box = ContextBox(context)
     Task {
-      let response = await Server.dispatch(service: service, envelope: envelope)
+      let response = await Server.dispatch(
+        service: service, envelope: envelope, profileID: profileID)
       let responseItem = NSExtensionItem()
       responseItem.userInfo = [SFExtensionMessageKey: response.unwrapped]
       box.context.completeRequest(returningItems: [responseItem], completionHandler: nil)
@@ -57,7 +66,9 @@ private struct ContextBox: @unchecked Sendable {
 }
 
 private enum Server {
-  static func dispatch(service: WalletService, envelope: Envelope) async -> JSONValue {
+  static func dispatch(
+    service: WalletService, envelope: Envelope, profileID: String?
+  ) async -> JSONValue {
     switch envelope.action {
     case "me":
       return success(["account": .string(service.account)])
@@ -76,7 +87,9 @@ private enum Server {
 
     case "isConnected":
       let origin = envelope.origin ?? "unknown"
-      return success(["connected": .bool(await service.isConnected(origin: origin))])
+      return success([
+        "connected": .bool(await service.isConnected(origin: origin, profileID: profileID))
+      ])
 
     case "listSites":
       let sites = await service.connectedSitesList()
@@ -92,7 +105,7 @@ private enum Server {
 
     case "disconnectSite":
       let origin = envelope.origin ?? "unknown"
-      await service.disconnect(origin: origin)
+      await service.disconnect(origin: origin, profileID: profileID)
       return success(["ok": .bool(true)])
 
     case "passthrough":
@@ -116,7 +129,7 @@ private enum Server {
 
     case "list":
       do {
-        let summaries = try await service.list()
+        let summaries = try await service.list(profileID: profileID)
         return success(["pending": .array(summaries.map(summaryJSON))])
       } catch {
         return failure("list failed")
@@ -133,7 +146,8 @@ private enum Server {
           method: method,
           params: envelope.params ?? .array([]),
           origin: envelope.origin ?? "unknown",
-          chainId: activeChainID
+          chainId: activeChainID,
+          profileID: profileID
         )
         return success(["requestId": .string(id.uuidString)])
       } catch WalletError.methodNotApproved {
@@ -152,7 +166,7 @@ private enum Server {
 
     case "summary":
       guard let uuid = envelope.requestID() else { return failure("invalid requestId") }
-      guard let summary = try? await service.summarize(request: uuid) else {
+      guard let summary = try? await service.summarize(request: uuid, profileID: profileID) else {
         return failure("not found")
       }
       return successObject(summaryJSON(summary))
@@ -160,7 +174,7 @@ private enum Server {
     case "approve":
       guard let uuid = envelope.requestID() else { return failure("invalid requestId") }
       do {
-        let result = try await service.approve(request: uuid)
+        let result = try await service.approve(request: uuid, profileID: profileID)
         return success(["result": result])
       } catch WalletError.notFound {
         return errorJSON(4100, "Request no longer exists")
@@ -182,7 +196,7 @@ private enum Server {
 
     case "get":
       guard let uuid = envelope.requestID() else { return failure("invalid requestId") }
-      if let status = await service.status(for: uuid) {
+      if let status = await service.status(for: uuid, profileID: profileID) {
         var object: [String: JSONValue] = ["status": .string(status.status)]
         if let result = status.result {
           object["result"] = result
@@ -197,7 +211,7 @@ private enum Server {
     case "reject":
       guard let uuid = envelope.requestID() else { return failure("invalid requestId") }
       do {
-        try await service.reject(request: uuid)
+        try await service.reject(request: uuid, profileID: profileID)
         return success(["ok": .bool(true)])
       } catch {
         return failure("reject failed")

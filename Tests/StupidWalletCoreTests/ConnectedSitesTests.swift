@@ -22,13 +22,40 @@ struct ConnectedSitesTests {
     let suite = "grants-\(UUID().uuidString)"
     let store = ConnectedSitesStore(suiteName: suite)
     await store.connect(
-      site: ConnectedSite(domain: "dapp.example", address: "0x1234567890abcdef1234567890abcdef12345678"))
+      site: ConnectedSite(
+        domain: "dapp.example",
+        address: "0x1234567890abcdef1234567890abcdef12345678",
+        origin: "https://dapp.example",
+        profileID: "profile-a"))
     let sites = await store.all()
     #expect(sites.count == 1)
     #expect(sites.first?.domain == "dapp.example")
     #expect(
       await store.isConnected(
-        origin: "https://dapp.example", address: "0x1234567890abcdef1234567890abcdef12345678"))
+        origin: "https://dapp.example",
+        address: "0x1234567890abcdef1234567890abcdef12345678",
+        profileID: "profile-a"))
+    #expect(
+      !(await store.isConnected(
+        origin: "https://dapp.example:8443",
+        address: "0x1234567890abcdef1234567890abcdef12345678",
+        profileID: "profile-a")))
+    #expect(
+      !(await store.isConnected(
+        origin: "https://dapp.example",
+        address: "0x1234567890abcdef1234567890abcdef12345678",
+        profileID: "profile-b")))
+  }
+
+  @Test("legacy hostname grant remains authorized until a normalized reconnect")
+  func legacyGrantCompatibility() async {
+    let suite = "grants-\(UUID().uuidString)"
+    let store = ConnectedSitesStore(suiteName: suite)
+    await store.connect(site: ConnectedSite(domain: "legacy.example", address: "0x1"))
+
+    #expect(
+      await store.isConnected(
+        origin: "http://legacy.example:8080", address: "0x1", profileID: "profile-a"))
   }
 
   @Test("disconnect is idempotent and removes only the target origin")
@@ -38,7 +65,7 @@ struct ConnectedSitesTests {
     await store.connect(site: ConnectedSite(domain: "a.example", address: "0x1"))
     await store.connect(site: ConnectedSite(domain: "b.example", address: "0x1"))
     await store.disconnect(origin: "https://a.example")
-    await store.disconnect(origin: "https://a.example") // idempotent
+    await store.disconnect(origin: "https://a.example")  // idempotent
     let sites = await store.all()
     #expect(sites.map(\.domain) == ["b.example"])
   }
@@ -63,6 +90,24 @@ struct ConnectedSitesTests {
       method: "eth_requestAccounts", params: .array([]), origin: "https://dapp.example")
     _ = try await svc.approve(request: id)
     #expect(await svc.isConnected(origin: "https://dapp.example"))
+  }
+
+  @Test("pending approval is bound to the native Safari profile")
+  func approvalProfileBinding() async throws {
+    let suite = "grants-\(UUID().uuidString)"
+    let svc = svc(suite)
+    let id = try await svc.prepare(
+      method: "eth_requestAccounts",
+      params: .array([]),
+      origin: "https://dapp.example",
+      profileID: "profile-a")
+
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await svc.approve(request: id, profileID: "profile-b")
+    }
+    _ = try await svc.approve(request: id, profileID: "profile-a")
+    #expect(await svc.isConnected(origin: "https://dapp.example", profileID: "profile-a"))
+    #expect(!(await svc.isConnected(origin: "https://dapp.example", profileID: "profile-b")))
   }
 
   @Test("approving a message does not create a connection grant")
