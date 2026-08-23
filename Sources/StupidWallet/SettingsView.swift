@@ -18,9 +18,6 @@ import SwiftUI
       NavigationView {
         List {
           Section {
-            NavigationLink(destination: ConnectedAppsView(address: address)) {
-              Text("Connected Apps")
-            }
             NavigationLink(destination: NetworksView()) {
               Text("Networks")
             }

@@ -154,8 +154,8 @@ independent RPCs agreed on receipt success and 21,000 gas used.
 
 The Gate 6 containing-app shell now follows the shipped app's SwiftUI screen hierarchy and
 presentation: the lowercase welcome and import screens; centered large native balance with
-an anchored details popover; top-leading account blockie menu with a copy-address action;
-clock and gear toolbar actions; Settings sheet; Connected Apps list/detail/disconnect;
+an anchored details popover; top-trailing account blockie menu with Copy Address, Activity,
+Connected Apps, and Settings actions; Settings sheet; Connected Apps list/detail/disconnect;
 default Networks list and RPC detail/editor; authenticated
 Private Key reveal; and Activity list/detail. The implementation keeps the old native
 labels, spacing, forms, inset-grouped lists, typography, and SF Symbols while using the new
@@ -176,6 +176,13 @@ account registration and migration remnants (including retained old-format mater
 that same account), revokes that account's legacy and normalized site grants, dismisses
 Settings, and returns to setup. Account-mismatch and keychain-deletion failures do not
 silently clear the visible registration. Activity and network preferences are retained.
+
+The aggregate native balance uses an account-bound, atomically written App Group cache.
+The containing app hydrates the last successful formatted total during initialization, keeps
+that stale value visible while revalidating all included networks, and replaces it only after
+at least one network succeeds. A transient complete outage retains the stale total; without a
+cached or previously successful value, the UI reports the balance as unavailable. Forgetting
+the matching account removes its cached total.
 
 `RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
 App Group. Both the app and Safari handler construct their resolver from this store, and

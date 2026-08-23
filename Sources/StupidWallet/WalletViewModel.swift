@@ -3,6 +3,7 @@ import StupidWalletCore
 
 @MainActor
 final class WalletViewModel: ObservableObject {
+  private let balanceCache = BalanceCache()
   @Published var addressHex = ""
   @Published var balance: String?
   @Published var networkBalances: [NetworkBalanceItem] = []
@@ -17,19 +18,23 @@ final class WalletViewModel: ObservableObject {
   init() {
     if let address = WalletStore.activeAddress() {
       addressHex = address
-      return
+    } else {
+      let backend = SecurityWalletBackend()
+      if backend.oldAddress() != nil {
+        switch WalletMigration.migrate(backend: backend) {
+        case .success(.migrated(let address)):
+          addressHex = address
+        case .success(.alreadyMigrated):
+          addressHex = WalletStore.activeAddress() ?? ""
+        case .success:
+          break
+        case .failure:
+          errorMessage = "Your existing wallet could not be migrated. Please try again."
+        }
+      }
     }
-    let backend = SecurityWalletBackend()
-    guard backend.oldAddress() != nil else { return }
-    switch WalletMigration.migrate(backend: backend) {
-    case .success(.migrated(let address)):
-      addressHex = address
-    case .success(.alreadyMigrated):
-      addressHex = WalletStore.activeAddress() ?? ""
-    case .success:
-      break
-    case .failure:
-      errorMessage = "Your existing wallet could not be migrated. Please try again."
+    if hasWallet {
+      balance = try? balanceCache.balance(account: addressHex)
     }
   }
 
@@ -67,6 +72,7 @@ final class WalletViewModel: ObservableObject {
     let account = addressHex
     try WalletFactory.forget(account: account)
     await ConnectedSitesStore().disconnectAll(address: account)
+    try? balanceCache.remove(account: account)
     addressHex = ""
     balance = nil
     networkBalances = []
@@ -75,14 +81,14 @@ final class WalletViewModel: ObservableObject {
 
   func refreshBalance() async {
     guard hasWallet else { return }
-    balance = nil
-    networkBalances = []
+    let account = addressHex
     do {
       chainID = try ChainStore().currentChainID()
       let included = try NetworkStore().all().filter(\.includeInBalance)
       includedNetworkCount = included.count
       let results = await NativeBalanceService().balances(
-        account: addressHex, chainIDs: included.map(\.id))
+        account: account, chainIDs: included.map(\.id))
+      guard addressHex.caseInsensitiveCompare(account) == .orderedSame else { return }
       let resultsByChain = Dictionary(uniqueKeysWithValues: results.map { ($0.chainID, $0.wei) })
       networkBalances = included.compactMap { network in
         let wei = resultsByChain[network.id] ?? nil
@@ -92,16 +98,20 @@ final class WalletViewModel: ObservableObject {
           balance: wei.map(NativeBalanceService.formatEther))
       }
       let successful = results.compactMap(\.wei)
+      let refreshedBalance: String
       if included.isEmpty {
-        balance = NativeBalanceService.formatEther(bytes: [0])
+        refreshedBalance = NativeBalanceService.formatEther(bytes: [0])
       } else if successful.isEmpty {
-        balance = "Unavailable"
+        if balance == nil { balance = "Unavailable" }
+        return
       } else {
-        balance = NativeBalanceService.formatEther(
+        refreshedBalance = NativeBalanceService.formatEther(
           bytes: successful.reduce([0], NativeBalanceService.add))
       }
+      balance = refreshedBalance
+      try? balanceCache.save(balance: refreshedBalance, account: account)
     } catch {
-      balance = "Unavailable"
+      if balance == nil { balance = "Unavailable" }
     }
   }
 

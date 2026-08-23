@@ -61,6 +61,24 @@ struct Gate6AppCoreTests {
         == "115792089237316195423570985008687907853269984665640564039457.584007")
   }
 
+  @Test("cached total balance is account-bound and removable")
+  func cachedTotalBalance() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "BalanceCacheTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = BalanceCache(directory: directory)
+    let account = "0x1234567890abcdef1234567890abcdef12345678"
+
+    #expect(try store.balance(account: account) == nil)
+    try store.save(balance: "3.000000", account: account)
+    #expect(try store.balance(account: account.uppercased()) == "3.000000")
+    #expect(
+      try store.balance(account: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd") == nil)
+    try store.remove(account: account)
+    #expect(try store.balance(account: account) == nil)
+  }
+
   @Test("native balances aggregate wei values across networks")
   func nativeBalanceAggregation() async throws {
     let configuration = URLSessionConfiguration.ephemeral

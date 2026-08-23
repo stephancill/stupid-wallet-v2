@@ -9,6 +9,8 @@ import SwiftUI
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var vm = WalletViewModel()
     @State private var showBalanceDetails = false
+    @State private var showActivity = false
+    @State private var showConnectedApps = false
     @State private var showSettingsSheet = false
 
     var body: some View {
@@ -20,23 +22,35 @@ import SwiftUI
             SetupView(vm: vm)
           }
         }
+        .background {
+          NavigationLink(destination: ActivityView(), isActive: $showActivity) {
+            EmptyView()
+          }
+          .hidden()
+          NavigationLink(
+            destination: ConnectedAppsView(address: vm.addressHex),
+            isActive: $showConnectedApps
+          ) {
+            EmptyView()
+          }
+          .hidden()
+        }
         .toolbar {
           if vm.hasWallet {
-            ToolbarItem(placement: .navigationBarLeading) {
-              AddressMenuButton(address: vm.addressHex)
-                .frame(width: 28, height: 28)
-            }
             ToolbarItem(placement: .navigationBarTrailing) {
-              NavigationLink(destination: ActivityView()) {
-                Image(systemName: "clock")
-              }
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-              Button {
-                showSettingsSheet = true
-              } label: {
-                Image(systemName: "gear")
-              }
+              AddressMenuButton(
+                address: vm.addressHex,
+                showActivity: {
+                  showActivity = true
+                },
+                showConnectedApps: {
+                  showConnectedApps = true
+                },
+                showSettings: {
+                  showSettingsSheet = true
+                }
+              )
+              .frame(width: 28, height: 28)
             }
           }
         }
@@ -143,6 +157,9 @@ import SwiftUI
 
   private struct AddressMenuButton: UIViewRepresentable {
     let address: String
+    let showActivity: () -> Void
+    let showConnectedApps: () -> Void
+    let showSettings: () -> Void
 
     func makeUIView(context: Context) -> UIButton {
       let button = UIButton(type: .custom)
@@ -171,7 +188,26 @@ import SwiftUI
       }
       copyAction.subtitle =
         address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
-      button.menu = UIMenu(children: [copyAction])
+      let activityAction = UIAction(
+        title: "Activity",
+        image: UIImage(systemName: "clock")
+      ) { _ in
+        showActivity()
+      }
+      let connectedAppsAction = UIAction(
+        title: "Connected Apps",
+        image: UIImage(systemName: "puzzlepiece.extension")
+      ) { _ in
+        showConnectedApps()
+      }
+      let settingsAction = UIAction(
+        title: "Settings",
+        image: UIImage(systemName: "gear")
+      ) { _ in
+        showSettings()
+      }
+      button.menu = UIMenu(
+        children: [copyAction, activityAction, connectedAppsAction, settingsAction])
     }
   }
 #else

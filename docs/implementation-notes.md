@@ -50,6 +50,113 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Stale-While-Revalidate Total Balance
+
+### Summary
+
+- Added an atomic App Group cache for the last successfully aggregated native balance, bound
+  to the active account so one account's total is never shown for another.
+- Hydrated the cached total when the wallet view model initializes and stopped clearing the
+  visible total at the start of a refresh.
+- Successful refreshes replace and persist the total. Complete network or store failures keep
+  an existing stale total visible; only a wallet without any cached or successful total shows
+  Unavailable.
+- Account deletion removes the matching cached total, and an in-flight response cannot restore
+  state after the active account changes.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` completed.
+- `swift test`: 118 tests in 21 suites passed, including account binding, case-insensitive
+  lookup, mismatch rejection, persistence, and removal for the balance cache.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension.
+- A successful simulator refresh created the App Group balance-cache file. An immediate app
+  terminate and relaunch exposed the formatted total balance instead of a progress indicator
+  while revalidation ran.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-23 - Account Menu Navigation Consolidation
+
+### Summary
+
+- Removed the standalone Settings cog and added a Settings item to the account menu.
+- Moved Connected Apps out of the Settings list and added it directly to the account menu.
+- Added familiar icons to Copy Address, Activity, Connected Apps, and Settings.
+- Preserved Settings as a sheet and Connected Apps as a direct navigation push.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift
+  Sources/StupidWallet/SettingsView.swift` completed.
+- `swift test`: 117 tests in 21 suites passed.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension.
+- Simulator accessibility inspection found Copy Address, Activity, Connected Apps, and Settings
+  in the account menu. Settings opened as a sheet containing Networks, Private Key, and Forget
+  Account, with no duplicate Connected Apps row.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-23 - Activity Moved Into Account Menu
+
+### Summary
+
+- Moved the account blockie from the leading toolbar position into the former trailing
+  Activity-button position beside Settings.
+- Removed the standalone Activity clock button and added Activity to the account menu while
+  retaining Copy Address and its shortened address subtitle.
+- Preserved Activity as a navigation push rather than changing its presentation.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift` completed.
+- `swift test`: 117 tests in 21 suites passed.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and Safari extension.
+- Simulator accessibility inspection found the account button at the former trailing Activity
+  position and no standalone clock button. Opening the account menu exposed Copy Address and
+  Activity; selecting Activity pushed the existing activity list.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-23 - Legacy Wallet Reinstalled On iPhone
+
+### Summary
+
+- Reinstalled and launched the previously validated legacy wallet build on the paired
+  physical iPhone under the production app and Safari extension bundle identities.
+- Installed in place rather than uninstalling first so the production App Group and
+  keychain state remain available for upgrade and migration testing.
+
+### Verification
+
+- Verified the legacy app and nested Safari extension signatures, production bundle IDs,
+  App Group and keychain entitlements, unexpired development profile, and target-device
+  provisioning before installation.
+- `xcrun devicectl device install app --device <paired-device> <legacy-app>` acquired the
+  device tunnel and reported the production app bundle installed successfully.
+- `xcrun devicectl device process launch --device <paired-device> --terminate-existing
+  co.za.stephancill.stupid-wallet` launched the installed legacy app successfully.
+
+### Follow-Up
+
+- A future rebuild migration test can upgrade this installation in place without first
+  deleting the legacy app.
+
 ## 2026-08-23 - Signing-Time Transaction Nonce And Gas Resolution
 
 ### Summary
