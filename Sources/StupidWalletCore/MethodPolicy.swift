@@ -31,10 +31,12 @@ public enum MethodPolicy {
     return .passthrough
   }
 
-  /// Whether a method should present an approval surface for this prototype slice.
-  public static func requiresApproval(_ kind: MethodClass) -> Bool {
-    switch kind {
-    case .connect, .sign, .send, .chain: return true
+  /// Native-authoritative approval policy. Chain reads and switching are handled without
+  /// review; adding a chain remains an explicit approval.
+  public static func requiresApproval(_ method: String) -> Bool {
+    switch classify(method) {
+    case .connect, .sign, .send: return true
+    case .chain: return method.lowercased() == "wallet_addethereumchain"
     case .denied, .passthrough: return false
     }
   }

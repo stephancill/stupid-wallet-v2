@@ -1,11 +1,12 @@
 import { createConfig, http } from "wagmi";
-import { base, mainnet } from "wagmi/chains";
+import { base, mainnet, polygon } from "wagmi/chains";
 
 export const config = createConfig({
-  chains: [mainnet, base],
+  chains: [mainnet, base, polygon],
   transports: {
     [mainnet.id]: http("https://evm.stupidtech.net/v1/1"),
     [base.id]: http("https://evm.stupidtech.net/v1/8453"),
+    [polygon.id]: http("https://evm.stupidtech.net/v1/137"),
   },
 });
 

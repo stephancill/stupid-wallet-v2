@@ -5,7 +5,9 @@ import StupidWalletCore
 final class WalletViewModel: ObservableObject {
   @Published var addressHex = ""
   @Published var balance: String?
+  @Published var networkBalances: [NetworkBalanceItem] = []
   @Published var chainID = ChainStore.defaultChainID
+  @Published var includedNetworkCount = 0
   @Published var isSaving = false
   @Published var errorMessage: String?
 
@@ -67,15 +69,37 @@ final class WalletViewModel: ObservableObject {
     await ConnectedSitesStore().disconnectAll(address: account)
     addressHex = ""
     balance = nil
+    networkBalances = []
     errorMessage = nil
   }
 
   func refreshBalance() async {
     guard hasWallet else { return }
     balance = nil
+    networkBalances = []
     do {
       chainID = try ChainStore().currentChainID()
-      balance = try await NativeBalanceService().balance(account: addressHex, chainID: chainID)
+      let included = try NetworkStore().all().filter(\.includeInBalance)
+      includedNetworkCount = included.count
+      let results = await NativeBalanceService().balances(
+        account: addressHex, chainIDs: included.map(\.id))
+      let resultsByChain = Dictionary(uniqueKeysWithValues: results.map { ($0.chainID, $0.wei) })
+      networkBalances = included.compactMap { network in
+        let wei = resultsByChain[network.id] ?? nil
+        guard wei?.contains(where: { $0 != 0 }) == true else { return nil }
+        return NetworkBalanceItem(
+          id: network.id, name: network.name,
+          balance: wei.map(NativeBalanceService.formatEther))
+      }
+      let successful = results.compactMap(\.wei)
+      if included.isEmpty {
+        balance = NativeBalanceService.formatEther(bytes: [0])
+      } else if successful.isEmpty {
+        balance = "Unavailable"
+      } else {
+        balance = NativeBalanceService.formatEther(
+          bytes: successful.reduce([0], NativeBalanceService.add))
+      }
     } catch {
       balance = "Unavailable"
     }
@@ -105,18 +129,20 @@ final class WalletViewModel: ObservableObject {
   }
 }
 
+struct NetworkBalanceItem: Identifiable, Sendable {
+  let id: String
+  let name: String
+  let balance: String?
+}
+
 struct NetworkInfo: Identifiable, Sendable {
   let id: String
   let name: String
 
-  static let defaults = [
-    NetworkInfo(id: "1", name: "Ethereum"),
-    NetworkInfo(id: "8453", name: "Base"),
-    NetworkInfo(id: "42161", name: "Arbitrum One"),
-    NetworkInfo(id: "10", name: "Optimism"),
-  ]
+  static let defaults = WalletNetwork.defaults.map { NetworkInfo(id: $0.id, name: $0.name) }
 
   static func name(for chainID: String) -> String {
-    defaults.first { $0.id == chainID }?.name ?? "Chain \(chainID)"
+    ((try? NetworkStore().all()) ?? []).first { $0.id == chainID }?.name
+      ?? defaults.first { $0.id == chainID }?.name ?? "Chain \(chainID)"
   }
 }

@@ -127,6 +127,25 @@ private enum Server {
         return .object(["ok": .bool(false), "error": nodeError])
       }
 
+    case "switchChain":
+      do {
+        let result = try await service.switchChain(
+          params: envelope.params ?? .array([]),
+          origin: envelope.origin ?? "unknown",
+          profileID: profileID)
+        return success(["result": result])
+      } catch WalletError.invalidParams {
+        return errorJSON(-32602, "Invalid chain parameters")
+      } catch WalletError.unauthorized {
+        return errorJSON(4100, "Origin is not connected")
+      } catch WalletError.notReady {
+        return errorJSON(4900, "No wallet key is available yet")
+      } catch WalletError.queued {
+        return errorJSON(-32000, "Another chain switch is in progress")
+      } catch {
+        return errorJSON(4900, "Active chain is unavailable")
+      }
+
     case "list":
       do {
         let summaries = try await service.list(profileID: profileID)

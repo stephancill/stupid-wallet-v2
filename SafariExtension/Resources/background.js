@@ -4,9 +4,8 @@
 (() => {
   const pending = new Map(); // requestId -> { sendResponse }
 
-  // Method kinds that require the native approval surface. `eth_requestAccounts` is a
-  // connect; chain/switch/add/typed-data/send also approve. Everything else is
-  // classified locally or passed through.
+  // Method kinds that require the native approval surface. Network switching is handled
+  // immediately below after native authorization; adding a chain still requires review.
   const APPROVAL_METHODS = new Set([
     "eth_requestaccounts",
     "wallet_connect",
@@ -15,7 +14,6 @@
     "eth_sendtransaction",
     "eth_addethereumchain",
     "wallet_addethereumchain",
-    "wallet_switchethereumchain",
     // Explicitly unsafe and intentionally unsupported:
     "eth_sign",
     "eth_signtransaction",
@@ -241,6 +239,31 @@
       return;
     }
 
+    // An authorized origin may switch the wallet's active chain immediately. Native code
+    // validates the standard params and serializes the persistent state change; no popup
+    // approval or keychain authentication is involved.
+    if (method === "wallet_switchethereumchain") {
+      const switched = await native({
+        action: "switchChain",
+        params: message.params,
+        origin: pageOrigin,
+      });
+      if (switched.ok && switched.data) {
+        await broadcastChainChanged();
+        envelope(sendResponse, { ok: true, result: switched.data.result });
+        return;
+      }
+      const switchError = switched && switched.error;
+      envelope(sendResponse, {
+        ok: false,
+        error:
+          switchError && typeof switchError === "object"
+            ? switchError
+            : { code: -32603, message: String(switchError || "Network switch failed") },
+      });
+      return;
+    }
+
     // eth_requestAccounts / wallet_connect: if this origin already holds a grant for the
     // active account, resolve immediately without a new approval card / queue entry.
     if (method === "eth_requestaccounts" || method === "wallet_connect") {
@@ -255,7 +278,7 @@
       }
     }
 
-    // Connect / signing / sending / chain-change methods are canonical approvals.
+    // Connect / signing / sending / add-chain methods are canonical approvals.
     if (APPROVAL_METHODS.has(method)) {
       const chain = await activeChain();
       if (!chain) {

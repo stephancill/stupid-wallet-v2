@@ -11,7 +11,8 @@ public enum RequestKind: String, Sendable, Codable {
   case typedData
   /// eth_sendTransaction — a transaction to send.
   case send
-  /// wallet_addEthereumChain / wallet_switchEthereumChain — a network change.
+  /// A network-state change. Add-chain requests use the approval queue; new switch requests
+  /// are authorized and applied immediately, while old persisted switch records remain readable.
   case chain
   /// eth_sign / unsafe variants — deliberately denied.
   case denied
@@ -34,13 +35,6 @@ public enum RequestKind: String, Sendable, Codable {
     }
   }
 
-  /// Only these kinds are reviewable in the popup and require native approval.
-  public var requiresApproval: Bool {
-    switch self {
-    case .connect, .message, .typedData, .send, .chain: return true
-    case .denied, .passthrough: return false
-    }
-  }
 }
 
 /// Canonical, immutable binding pieces a pending approval records and that the native

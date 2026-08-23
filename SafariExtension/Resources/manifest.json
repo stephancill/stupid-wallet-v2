@@ -1,7 +1,7 @@
 {
   "name": "Stupid Wallet",
   "description": "EIP-1193 Ethereum provider prototype with signl message review",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "icons": {

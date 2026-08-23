@@ -72,7 +72,7 @@ standard-params work:
   service-worker suspension.
 - The canonical review surface (`RequestKind`, `WalletPendingRequest.kind` and
   `payloadDigest`) renders per-kind native summaries via `ApprovalSummary.title/rows` for
-  connect, message, typed-data, send, and chain requests. `WalletService.Summary` carries
+  connect, message, typed-data, send, and add-chain requests. `WalletService.Summary` carries
   `kind`, `title`, ordered `rows`, a `queued` flag, and the active-head queue.
 - Approval is bound to request ID, kind, method, origin, chain, `payloadDigest` (keccak
   of the request ID + canonical sorted-key params), expiry, and unconsumed state. On
@@ -92,17 +92,17 @@ standard-params work:
   grant; `eth_accounts` returns `[]` without a grant, `eth_requestAccounts`/`wallet_connect`
   short-circuit to the account when a grant exists, and `wallet_disconnect` revokes it.
   Native actions: `isConnected`, `listSites`, `disconnectSite`.
-- Native approval accepts standard EIP-1193 params throughout: `personal_sign` as
+- Native handling accepts standard EIP-1193 params throughout: `personal_sign` as
   `[messageHex, address]`, `eth_signTypedData_v4` as `[address, jsonString]` (unwrapped to
-  the EIP-712 object), and chain methods as `[chainObject]` reading the standard `chainId`
-  key.
+  the EIP-712 object), and add/switch chain methods as `[chainObject]` reading the standard
+  `chainId` key.
 - Error mapping in `SafariWebExtensionHandler` covers not-found (4100), already-consumed/
   expired/auth-cancelled (4001), queued/binding-mismatch (‑32000/‑32602), and
   not-ready (4900). Denied methods never prepare.
 
 - The physical-device wagmi flow was completed through the Safari popup for connect,
-  message, typed-data, send, and chain approvals. Reconnect after a grant did not enqueue
-  a duplicate approval, rejection returned `4001`, and concurrent requests followed the
+  message, typed-data, and send approvals. Reconnect after a grant did not enqueue a
+  duplicate approval, rejection returned `4001`, and concurrent requests followed the
   documented queue order.
 
 Gate 6 is underway. `eth_sendTransaction` now fills missing nonce, gas limit, and legacy
@@ -123,12 +123,17 @@ with 21,000 gas used. Physical-device broadcast remains separate from this simul
 Active chain state is no longer a JavaScript/build constant. `ChainStore` persists the
 normalized decimal chain ID in the shared App Group (mainnet on first run), and native code
 is authoritative for `eth_chainId`, `net_version`, approval binding, transaction
-preparation, and passthrough routing. Approved `wallet_switchEthereumChain` requests from a
-currently connected origin update that state; `wallet_addEthereumChain` does not switch.
-Stale queued requests fail terminally with `4901`. A global advisory lock plus a write-ahead
-switch journal prevents concurrent readers from observing an uncommitted chain and recovers
-the old or target chain according to durable request consumption after interruption. The
-worker broadcasts the canonical native chain to every tab, including after recovery.
+preparation, and passthrough routing. `wallet_switchEthereumChain` requests from a currently
+connected origin are validated and applied immediately without a popup or biometric prompt;
+`wallet_addEthereumChain` remains a canonical approval and does not switch. Automatic
+switches serialize the one atomic chain-state write under the global advisory lock. The
+write-ahead journal remains for recovery of already-persisted approval-era switch records.
+Stale queued approvals fail terminally with `4901`, and the worker broadcasts the canonical
+native chain to every tab after a switch or recovery. Every successful switch also records
+the target in the shared `NetworkStore`; known chain 137 is displayed as Polygon and an
+otherwise unknown switched chain receives a `Chain N` name. Confirmed
+`wallet_addEthereumChain` metadata records its supplied name but never adopts its RPC URL
+suggestions.
 
 Gate 6 activity persistence is implemented. `ActivityStore` extends the existing shared
 App Group `Activity.sqlite` schema in place so installed transaction and signature history
@@ -150,9 +155,15 @@ clock and gear toolbar actions; Settings sheet; Connected Apps list/detail/disco
 default Networks list and RPC detail/editor; authenticated
 Private Key reveal; and Activity list/detail. The implementation keeps the old native
 labels, spacing, forms, inset-grouped lists, typography, and SF Symbols while using the new
-core boundaries. The home balance is intentionally the selected chain's native balance,
-not the old app's invalid sum of native units across unrelated chains. Signature activity
-details remain redacted rather than restoring persisted plaintext messages or signatures.
+core boundaries. Networks now has separate default and custom sections, a manually populated
+Add Network sheet, and a per-network Include in Total Balance setting. The home balance is
+the full-width sum of native wei balances from every included network; individual RPC
+failures do not discard successful balances, while a complete included-network outage is
+shown as unavailable. Expanding the aggregate balance lists every included network with a
+non-zero balance as an individual row, using the same fetch results as the total. Zero and
+unavailable balances are omitted; when no non-zero rows exist, the expansion affordance is
+hidden and disabled. Signature activity details remain redacted rather than restoring
+persisted plaintext messages or signatures.
 
 Settings also includes a separate destructive Forget Account section. Its modal confirmation
 alert warns that the private key will be removed and requires an explicit destructive choice.
@@ -168,7 +179,11 @@ the editor displays exactly one effective endpoint per chain. The user may repla
 restore the Stupidtech default; the editor requires HTTPS (except explicit loopback
 development), reachability, and an exact `eth_chainId` match before saving.
 `NativeBalanceService` uses that same resolver and
-formats full-width 256-bit quantities without a BigInt dependency. Raw private-key import
+formats and adds full-width 256-bit quantities without a BigInt dependency. `NetworkStore`
+atomically persists custom metadata, imports legacy `customChains` names for visibility, and
+continues to read and mirror the old `excludedFromBalance` preference so installed users
+retain their Include choices. Manual network addition validates the entered RPC's exact
+chain identity before saving it as a deliberate override. Raw private-key import
 strictly validates a 32-byte secp256k1 scalar. Private-key reveal uses a fresh
 operation-specific authentication prompt, is privacy-sensitive, clears after 60 seconds,
 on backgrounding, and on navigation away, and copies only to a local expiring pasteboard.
@@ -216,11 +231,11 @@ structured EIP-1193 errors surface on the dapp; the method casing is normalized 
 `background.js` so approval methods do not fall through to RPC passthrough. `WalletFactory`
 creates a new wallet at runtime.
 
-The prototype is gate-complete through Gate 5. The complete wagmi flow is proven on both
+The prototype is gate-complete through Gate 5. The wagmi flow is proven on both
 the iOS simulator and physical iPhone: connect; personal-sign and typed-data signatures;
 complete legacy transaction signing and broadcast plumbing (including live Base network
-acceptance); chain-change approval and `4001` rejection; queue ordering; and disconnect
-followed by a fresh connect approval. The simulator run fixed a JavaScript casing bug that
+acceptance); queue ordering; and disconnect followed by a fresh connect approval. The
+simulator run fixed a JavaScript casing bug that
 sent `eth_chainId` to passthrough and a transaction quantity parser that rejected canonical
 odd-nibble JSON-RPC quantities such as `0x0`.
 It preserves the identity, security, and documentation rules and its
@@ -229,10 +244,11 @@ old-format migration, canonical approval protocol, and real keychain signing all
 The physical device remains the authoritative surface for provisioning and keychain-group
 continuity.
 
-The wagmi fixture now includes mainnet and Base. WebExtension manifest `0.1.9` invalidates
-the previous Base-only worker. Simulator verification proved mainnet default → approved
-Base switch → `chainChanged`/wagmi chain 8453 → App Group persistence → Safari reload and
-reconnect still reporting Base. Live Uniswap verification found that the worker normalized
+The wagmi fixture now includes mainnet and Base. WebExtension manifest `0.1.10` invalidates
+the previous approval-routed switch worker. Simulator verification proved immediate Base →
+Ethereum → Base switches, `chainChanged`/wagmi updates, no popup/authentication or pending
+switch record, App Group persistence, and Safari reload still reporting Base. Live Uniswap
+verification found that the worker normalized
 method names for classification and accidentally forwarded the normalized spelling to the
 case-sensitive RPC. For example, `eth_blockNumber` became invalid `eth_blocknumber`, so
 Uniswap failed before requesting the swap transaction. Passthrough now forwards the
@@ -371,7 +387,7 @@ Known weaknesses that the rebuild must not reproduce:
 - Supported methods are duplicated across provider, content UI, background worker, and
   native switches, causing ordinary node methods to fail as unsupported wallet methods.
 - Native, modal, and ENS code use different RPC sources.
-- Chain additions and switches mutate global state without confirmation.
+- Chain additions and switches mutate global state without one authoritative native policy.
 - The generic JSON-RPC helper casts results to expected Swift types and loses arbitrary
   JSON values, `null`, and structured node errors.
 - Pending requests live only in an in-memory service-worker `Map`, which is not durable
@@ -388,7 +404,7 @@ The first usable milestone includes:
 - Import a raw private key or BIP-39 seed phrase and derive the standard first Ethereum
   account.
 - Preserve or migrate an existing installed wallet.
-- Display the account address and native-token balance for the selected chain.
+- Display the account address and aggregate native-token balance across included networks.
 - Authenticated private-key backup with explicit warnings and no persistent plaintext.
 - Connect, list, and disconnect authorized sites.
 - EIP-1193 request transport and EIP-6963 discovery.
@@ -396,7 +412,7 @@ The first usable milestone includes:
 - `personal_sign`.
 - `eth_signTypedData_v4`.
 - `eth_sendTransaction` with legacy and EIP-1559 serialization.
-- Confirmed `wallet_addEthereumChain` and `wallet_switchEthereumChain`.
+- Confirmed `wallet_addEthereumChain`; authorized immediate `wallet_switchEthereumChain`.
 - Durable site connect/disconnect grants (legacy `connectedSites` key) with
   eth_accounts/eth_requestAccounts gating and app-side list/detail/disconnect UI.
 - Generic passthrough for all methods not explicitly handled or denied.
@@ -411,7 +427,6 @@ Implement only after the Secure Wallet Core gates pass:
 - SIWE capability handling in `wallet_connect`.
 - EIP-5792 `wallet_sendCalls`, `wallet_getCallsStatus`, and capability reporting.
 - EIP-7702 authorization management.
-- Aggregate balances across selected chains.
 - ENS names and avatars.
 - Transaction simulation and fee/value previews.
 - ABI and contract metadata resolution.
@@ -485,6 +500,11 @@ Keep boundaries explicit:
 5. The method classifier either handles the request locally/natively or proxies it to
    the selected RPC.
 6. The bridge posts the structured result or error to the original page request.
+
+`wallet_switchEthereumChain` follows this non-approval path: native code requires an active
+wallet and an exact connected-origin/profile grant, validates `[chainObject].chainId`,
+serializes and persists the switch, and returns `null`; the worker then broadcasts
+`chainChanged`. It never accesses the private key.
 
 ### Approval request
 
@@ -576,6 +596,14 @@ https://evm.stupidtech.net/v1/N
 Metadata such as display name, native currency, and explorer URL is optional and may come
 from confirmed dapp suggestions or user settings.
 
+`NetworkStore` merges the four bundled default networks with custom metadata from confirmed
+add-chain requests, successful switches, manual additions, and legacy `customChains` names.
+Switching to a chain is sufficient to make it visible in Settings. The Include in Total
+Balance preference defaults on, preserves the legacy `excludedFromBalance` values, and gates
+both fetching and home-screen aggregation. Manual additions require a name, chain ID, and an
+RPC URL that passes the same HTTPS, reachability, and exact-chain validation as an edited
+override.
+
 Each chain may have one user-selected override. Saving an override requires:
 
 - A syntactically valid URL.
@@ -589,7 +617,8 @@ not create independent RPC hierarchies.
 
 `wallet_addEthereumChain` may record confirmed metadata, but a dapp-provided `rpcUrls`
 array is a suggestion, not an automatic user override. `wallet_switchEthereumChain`
-requires an authorized origin and explicit confirmation before changing wallet state.
+requires an authorized origin/profile grant but changes the active chain immediately without
+popup confirmation or biometric authentication. It never saves dapp-supplied RPC URLs.
 
 ## Signing Security Model
 
@@ -786,8 +815,8 @@ Exit conditions:
 
 Exit conditions:
 
-- The popup renders the native canonical summary for connect, message, typed-data, chain,
-  and transaction requests.
+- The popup renders the native canonical summary for connect, message, typed-data,
+  add-chain, and transaction requests.
 - Approval is bound to origin, chain, method, canonical payload digest, request ID, and
   expiry.
 - Replay, mutation, origin mismatch, navigation, closed tabs, expired requests, and
@@ -805,7 +834,8 @@ Exit conditions:
   available; legacy hostname grants retain the documented compatibility fallback.
 - Required signing and transaction methods work against representative dapps.
 - Generic node methods no longer require wallet code changes.
-- Chain add/switch requires approval and cannot silently replace RPC preferences.
+- Chain addition requires approval; authorized switching is immediate and neither path can
+  silently replace RPC preferences.
 - Transactions are logged and receipt status updates correctly.
 - App and extension use one RPC resolver and one canonical transaction implementation.
 - The app builds, installs, launches, and signs through `stupid-app` on the preferred
@@ -910,9 +940,9 @@ investigation history in implementation notes.
    supported iOS version. The product owner chose seamless authorization for pre-existing
    hostname grants; consider a later user-visible reconnect campaign before removing that
    compatibility fallback.
-3. Finish parity details that do not weaken the new model: custom chain metadata and richer
-   activity detail. ENS/avatar resolution and aggregate balances remain deferred rather
-   than being hidden inside Gate 6.
+3. Finish parity details that do not weaken the new model: richer activity detail and broader
+   optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
+   inside Gate 6.
 4. Gate 7 and later per the implementation gates.
 
 ## Reference Sources

@@ -3,27 +3,69 @@ import SwiftUI
 
 #if os(iOS)
   struct NetworksView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var networks: [WalletNetwork] = []
+    @State private var showAddSheet = false
+
     var body: some View {
       List {
         Section("Default Networks") {
-          ForEach(NetworkInfo.defaults) { network in
-            NavigationLink(destination: NetworkDetailView(network: network)) {
-              Text(network.name).font(.body)
-            }
+          ForEach(networks.filter(\.isDefault)) { networkRow($0) }
+        }
+
+        let custom = networks.filter { !$0.isDefault }
+        if !custom.isEmpty {
+          Section("Custom Networks") {
+            ForEach(custom) { networkRow($0) }
           }
+        }
+
+        Section {
+          Button("Add...") { showAddSheet = true }
         }
       }
       .listStyle(.insetGrouped)
       .navigationTitle("Networks")
       .navigationBarTitleDisplayMode(.inline)
+      .onAppear(perform: load)
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .active { load() }
+      }
+      .sheet(isPresented: $showAddSheet, onDismiss: load) {
+        NavigationView { AddNetworkView() }
+      }
+    }
+
+    private func networkRow(_ network: WalletNetwork) -> some View {
+      NavigationLink(destination: NetworkDetailView(network: network, onChange: load)) {
+        HStack {
+          Text(network.name).font(.body)
+          Spacer()
+          if !network.includeInBalance {
+            Image(systemName: "eye.slash").foregroundStyle(.secondary).font(.caption)
+          }
+        }
+      }
+    }
+
+    private func load() {
+      networks = (try? NetworkStore().all()) ?? []
     }
   }
 
   struct NetworkDetailView: View {
-    let network: NetworkInfo
+    let network: WalletNetwork
+    let onChange: () -> Void
     @State private var overrideURL: URL?
+    @State private var includeInBalance: Bool
     @State private var showEditRPCSheet = false
     @State private var showChainIDAsHex = false
+
+    init(network: WalletNetwork, onChange: @escaping () -> Void = {}) {
+      self.network = network
+      self.onChange = onChange
+      _includeInBalance = State(initialValue: network.includeInBalance)
+    }
 
     private var effectiveURL: URL {
       overrideURL ?? RPCResolver.defaultURL(forChainID: network.id)
@@ -52,17 +94,21 @@ import SwiftUI
         }
 
         Section {
+          Toggle("Include in Total Balance", isOn: $includeInBalance)
+            .onChange(of: includeInBalance) { _, included in
+              try? NetworkStore().setIncluded(included, chainID: network.id)
+              onChange()
+            }
+        } footer: {
+          Text("Balances on included networks are added to the total on the home screen.")
+        }
+
+        Section {
           Text(effectiveURL.absoluteString)
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
-
-          Button {
-            showEditRPCSheet = true
-          } label: {
-            Text("Change")
-          }
-
+          Button("Change") { showEditRPCSheet = true }
           if overrideURL != nil {
             Button("Use Default RPC", role: .destructive) { removeOverride() }
           }
@@ -85,11 +131,89 @@ import SwiftUI
 
     private func load() {
       overrideURL = try? RPCOverrideStore().all()[network.id]
+      includeInBalance =
+        (try? NetworkStore().network(chainID: network.id))??.includeInBalance
+        ?? network.includeInBalance
     }
 
     private func removeOverride() {
       try? RPCOverrideStore().remove(forChainID: network.id)
       overrideURL = nil
+    }
+  }
+
+  struct AddNetworkView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var chainID = ""
+    @State private var rpcURL = ""
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+      Form {
+        Section("Network Information") {
+          TextField("Name", text: $name).autocorrectionDisabled()
+          TextField("Chain ID (decimal or 0x)", text: $chainID).keyboardType(.asciiCapable)
+        }
+        Section("RPC URL") {
+          TextField("https://", text: $rpcURL)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .keyboardType(.URL)
+        }
+        if let errorMessage {
+          Section { Text(errorMessage).foregroundStyle(.red) }
+        }
+      }
+      .navigationTitle("Add Network")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+        ToolbarItem(placement: .confirmationAction) {
+          Button(isSaving ? "Checking..." : "Add") { add() }
+            .disabled(isSaving || name.isEmpty || chainID.isEmpty || rpcURL.isEmpty)
+        }
+      }
+    }
+
+    private func add() {
+      guard let normalized = ChainStore.normalize(chainID), let url = URL(string: rpcURL) else {
+        errorMessage = "Enter a valid chain ID and RPC URL."
+        return
+      }
+      isSaving = true
+      errorMessage = nil
+      Task {
+        switch await RPCOverrideValidator.validate(url: url, expectedChainID: normalized) {
+        case .success:
+          do {
+            let networkStore = NetworkStore()
+            guard try networkStore.network(chainID: normalized) == nil else {
+              throw NetworkStoreError.alreadyExists
+            }
+            try RPCOverrideStore().set(url, forChainID: normalized)
+            do {
+              try networkStore.add(name: name, chainID: normalized)
+              dismiss()
+            } catch {
+              try? RPCOverrideStore().remove(forChainID: normalized)
+              throw error
+            }
+          } catch NetworkStoreError.alreadyExists {
+            errorMessage = "That network is already in your wallet."
+          } catch {
+            errorMessage = "The network could not be saved."
+          }
+        case .failure(.chainMismatch):
+          errorMessage = "This RPC URL is for a different network."
+        case .failure(.insecure):
+          errorMessage = "Use an HTTPS RPC URL."
+        default:
+          errorMessage = "The RPC URL could not be reached."
+        }
+        isSaving = false
+      }
     }
   }
 
@@ -129,9 +253,7 @@ import SwiftUI
       .navigationTitle("Change RPC URL")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-        }
+        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
         ToolbarItem(placement: .confirmationAction) {
           Button(isValidating ? "Checking..." : "Save") { validateAndSave() }
             .disabled(isValidating || rpcURL.isEmpty)

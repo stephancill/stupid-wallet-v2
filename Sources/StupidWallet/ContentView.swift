@@ -6,6 +6,7 @@ import SwiftUI
 
 #if os(iOS)
   struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var vm = WalletViewModel()
     @State private var showBalanceDetails = false
     @State private var showSettingsSheet = false
@@ -40,13 +41,21 @@ import SwiftUI
           }
         }
       }
-      .sheet(isPresented: $showSettingsSheet) {
+      .sheet(
+        isPresented: $showSettingsSheet,
+        onDismiss: {
+          Task { await vm.refreshBalance() }
+        }
+      ) {
         SettingsView(address: vm.addressHex) {
           try await vm.forgetAccount()
         }
       }
       .task {
         await vm.refreshBalance()
+      }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .active { Task { await vm.refreshBalance() } }
       }
     }
 
@@ -71,24 +80,41 @@ import SwiftUI
                   } else {
                     ProgressView()
                   }
-                  Image(systemName: showBalanceDetails ? "chevron.up" : "chevron.down")
-                    .foregroundStyle(.secondary)
+                  if !vm.networkBalances.isEmpty {
+                    Image(systemName: showBalanceDetails ? "chevron.up" : "chevron.down")
+                      .foregroundStyle(.secondary)
+                  }
                 }
               }
               .buttonStyle(.plain)
+              .disabled(vm.networkBalances.isEmpty)
               .popover(
                 isPresented: $showBalanceDetails,
                 attachmentAnchor: .rect(.bounds),
                 arrowEdge: .top
               ) {
                 Group {
-                  if let balance = vm.balance {
-                    Text("\(vm.chainName) • \(balance)")
-                  } else {
+                  if !vm.networkBalances.isEmpty {
+                    VStack(spacing: 0) {
+                      ForEach(vm.networkBalances) { network in
+                        HStack(spacing: 16) {
+                          Text(network.name)
+                          Spacer()
+                          Text(network.balance.map { "♦ \($0)" } ?? "Unavailable")
+                            .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 6)
+                      }
+                    }
+                    .frame(minWidth: 280)
+                  } else if vm.balance == nil {
                     Text("Loading balances...")
+                  } else if vm.includedNetworkCount == 0 {
+                    Text("No networks included")
+                  } else {
+                    Text("Balances unavailable")
                   }
                 }
-                .foregroundStyle(.secondary)
                 .padding()
                 .presentationCompactAdaptation(.popover)
               }
@@ -101,6 +127,9 @@ import SwiftUI
         .frame(minHeight: contentHeight)
       }
       .refreshable { await vm.refreshBalance() }
+      .onChange(of: vm.networkBalances.isEmpty) { _, isEmpty in
+        if isEmpty { showBalanceDetails = false }
+      }
     }
 
     private var contentHeight: CGFloat {

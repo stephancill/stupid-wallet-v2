@@ -36,31 +36,35 @@ struct ChainStoreTests {
     }
   }
 
-  @Test("approved switch persists target while add-chain does not switch")
-  func approvedMutation() async throws {
+  @Test("authorized switch persists immediately while add-chain requires approval")
+  func switchMutation() async throws {
     let chainStore = ChainStore(directory: directory())
     let pendingDirectory = directory()
+    let networkStore = NetworkStore(
+      directory: directory(), legacySuiteName: UUID().uuidString)
     let service = WalletService(
       store: PendingRequestStore(directory: pendingDirectory),
       signing: StubSigner(),
       connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
-      chainStore: chainStore)
+      chainStore: chainStore,
+      networkStore: networkStore)
     await service.connect(origin: "https://dapp.example")
 
     let add = try await service.prepare(
       method: "wallet_addEthereumChain",
-      params: .array([.object(["chainId": .string("0x89")])]),
+      params: .array([.object(["chainId": .string("0x2105")])]),
       origin: "https://dapp.example")
     #expect(try await service.approve(request: add) == .null)
     #expect(try chainStore.currentChainID() == "1")
 
-    let change = try await service.prepare(
-      method: "wallet_switchEthereumChain",
-      params: .array([.object(["chainId": .string("0x2105")])]),
-      origin: "https://dapp.example")
-    #expect(try await service.approve(request: change) == .null)
-    #expect(try chainStore.currentChainID() == "8453")
-    #expect(try await service.activeChainID() == "8453")
+    #expect(
+      try await service.switchChain(
+        params: .array([.object(["chainId": .string("0x89")])]),
+        origin: "https://dapp.example") == .null)
+    #expect(try chainStore.currentChainID() == "137")
+    #expect(try await service.activeChainID() == "137")
+    #expect(try await service.list().isEmpty)
+    #expect(try networkStore.network(chainID: "137")?.name == "Polygon")
   }
 
   @Test("invalid chain params never become pending")
@@ -70,51 +74,57 @@ struct ChainStoreTests {
       grantsSuite: UUID().uuidString)
     await service.connect(origin: "https://dapp.example")
     await #expect(throws: WalletError.invalidParams) {
-      try await service.prepare(
-        method: "wallet_switchEthereumChain", params: .array([.object([:])]),
+      try await service.switchChain(
+        params: .array([.object([:])]),
         origin: "https://dapp.example")
     }
     #expect(try await service.list().isEmpty)
   }
 
-  @Test("unconnected origins cannot prepare global chain changes")
+  @Test("unconnected origins cannot switch the active chain")
   func unauthorized() async throws {
     let service = WalletService(
       store: PendingRequestStore(directory: directory()), signing: StubSigner(),
       grantsSuite: UUID().uuidString)
     await #expect(throws: WalletError.unauthorized) {
-      try await service.prepare(
-        method: "wallet_switchEthereumChain",
+      try await service.switchChain(
         params: .array([.object(["chainId": .string("0x2105")])]),
         origin: "https://dapp.example")
     }
   }
 
-  @Test("chain authorization is revalidated before approval")
-  func disconnectedBeforeApproval() async throws {
+  @Test("revoked origins cannot switch the active chain")
+  func disconnectedBeforeSwitch() async throws {
     let chainStore = ChainStore(directory: directory())
     let service = WalletService(
       store: PendingRequestStore(directory: directory()), signing: StubSigner(),
       connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
       chainStore: chainStore)
     await service.connect(origin: "https://dapp.example")
-    let id = try await service.prepare(
-      method: "wallet_switchEthereumChain",
-      params: .array([.object(["chainId": .string("0x2105")])]),
-      origin: "https://dapp.example")
     await service.disconnect(origin: "https://dapp.example")
 
-    await #expect(
-      throws: WalletError.rpc(
-        .object([
-          "code": .number(4100),
-          "message": .string("Origin disconnected before approval"),
-        ]))
-    ) {
-      try await service.approve(request: id)
+    await #expect(throws: WalletError.unauthorized) {
+      try await service.switchChain(
+        params: .array([.object(["chainId": .string("0x2105")])]),
+        origin: "https://dapp.example")
     }
-    #expect(await service.status(for: id)?.status == "failed")
     #expect(try chainStore.currentChainID() == "1")
+  }
+
+  @Test("switch requests cannot be inserted into the approval queue")
+  func switchCannotPrepare() async throws {
+    let service = WalletService(
+      store: PendingRequestStore(directory: directory()), signing: StubSigner(),
+      grantsSuite: UUID().uuidString)
+    await service.connect(origin: "https://dapp.example")
+
+    await #expect(throws: WalletError.methodNotApproved) {
+      try await service.prepare(
+        method: "wallet_switchEthereumChain",
+        params: .array([.object(["chainId": .string("0x2105")])]),
+        origin: "https://dapp.example")
+    }
+    #expect(try await service.list().isEmpty)
   }
 
   @Test("unfinished switch journal recovers according to durable request consumption")

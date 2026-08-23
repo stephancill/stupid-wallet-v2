@@ -180,6 +180,7 @@ public actor WalletService {
   public nonisolated let signing: any Signing
   public nonisolated let connectedSites: ConnectedSitesStore
   public nonisolated let chainStore: ChainStore
+  public nonisolated let networkStore: NetworkStore
   public nonisolated let activityStore: ActivityStore
   nonisolated let resolver: RPCResolver
   nonisolated let rpcClient: RPCClient
@@ -189,6 +190,7 @@ public actor WalletService {
     signing: any Signing,
     connectedSites: ConnectedSitesStore? = nil,
     chainStore: ChainStore = ChainStore(),
+    networkStore: NetworkStore = NetworkStore(),
     activityStore: ActivityStore = ActivityStore(),
     resolver: RPCResolver = RPCResolver(),
     rpcClient: RPCClient = RPCClient()
@@ -197,6 +199,7 @@ public actor WalletService {
     self.store = store ?? PendingRequestStore()
     self.connectedSites = connectedSites ?? ConnectedSitesStore()
     self.chainStore = chainStore
+    self.networkStore = networkStore
     self.activityStore = activityStore
     self.resolver = resolver
     self.rpcClient = rpcClient
@@ -216,6 +219,8 @@ public actor WalletService {
     try? FileManager.default.createDirectory(
       at: chainDirectory, withIntermediateDirectories: true)
     self.chainStore = ChainStore(directory: chainDirectory)
+    self.networkStore = NetworkStore(
+      directory: chainDirectory, legacySuiteName: grantsSuite)
     self.activityStore = ActivityStore(
       databaseURL: chainDirectory.appendingPathComponent("Activity.sqlite"))
     self.resolver = RPCResolver()
@@ -276,6 +281,32 @@ public actor WalletService {
     try await activeChainState().chainID
   }
 
+  /// Applies an authorized dapp's standard wallet_switchEthereumChain request immediately.
+  /// This is wallet-owned state, not an RPC passthrough, but it requires neither a popup
+  /// approval record nor keychain authentication.
+  public func switchChain(
+    params: JSONValue,
+    origin: String,
+    profileID: String? = nil
+  ) async throws -> JSONValue {
+    guard signing.hasKey() else { throw WalletError.notReady }
+    guard
+      await connectedSites.isConnected(
+        origin: origin, address: signing.account, profileID: profileID)
+    else { throw WalletError.unauthorized }
+    guard let target = Self.requestedChainID(params) else { throw WalletError.invalidParams }
+    guard let claim = chainStore.claimSwitch() else { throw WalletError.queued }
+    defer { chainStore.releaseSwitch(claim) }
+
+    if let journal = try chainStore.pendingSwitch() {
+      let consumed = try await store.record(journal.requestID)?.status == .consumed
+      try chainStore.recoverSwitch(journal, consumed: consumed)
+    }
+    try networkStore.record(chainID: target)
+    try chainStore.setChainID(target)
+    return .null
+  }
+
   public struct Summary: Sendable {
     public let id: String
     public let kind: String
@@ -305,7 +336,7 @@ public actor WalletService {
   ) async throws -> UUID {
     let chainId = try await activeChainID()
     let kind = RequestKind.kind(for: method)
-    guard kind.requiresApproval else { throw WalletError.methodNotApproved }
+    guard MethodPolicy.requiresApproval(method) else { throw WalletError.methodNotApproved }
     guard signing.hasKey() else { throw WalletError.notReady }
     if kind == .chain,
       !(await connectedSites.isConnected(
@@ -516,6 +547,15 @@ public actor WalletService {
       }
       switchJournal = journal
     }
+    if record.kind == .chain,
+      record.method.lowercased() == "wallet_addethereumchain"
+    {
+      guard let target = Self.requestedChainID(record.params) else {
+        throw WalletError.invalidParams
+      }
+      try networkStore.record(
+        chainID: target, suggestedName: Self.requestedChainName(record.params))
+    }
     record.status = .consumed
     record.result = result
     do {
@@ -556,6 +596,18 @@ public actor WalletService {
     }
     guard let raw = object?["chainId"]?.stringValue else { return nil }
     return ChainStore.normalize(raw)
+  }
+
+  private static func requestedChainName(_ params: JSONValue) -> String? {
+    let object: [String: JSONValue]?
+    if case .array(let values) = params, case .object(let value)? = values.first {
+      object = value
+    } else if case .object(let value) = params {
+      object = value
+    } else {
+      object = nil
+    }
+    return object?["chainName"]?.stringValue
   }
 
   private func prepareTransaction(params: JSONValue, chainID: String) async throws -> JSONValue {

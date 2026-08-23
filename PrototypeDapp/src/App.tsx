@@ -43,6 +43,8 @@ export default function App() {
   const { signTypedDataAsync } = useSignTypedData();
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
+  const switchTargetChainId = chainId === 137 ? 1 : 137;
+  const switchTargetName = chainId === 137 ? "Ethereum" : "Polygon";
 
   const [result, setResult] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -162,16 +164,18 @@ export default function App() {
         <button
           disabled={!isConnected || busy}
           onClick={() =>
-            run("wallet_switchEthereumChain", () => switchChainAsync({ chainId: 8453 }))
+            run("wallet_switchEthereumChain", () =>
+              switchChainAsync({ chainId: switchTargetChainId }),
+            )
           }
         >
-          wallet_switchEthereumChain (→ Base)
+          wallet_switchEthereumChain (→ {switchTargetName})
         </button>
       </section>
 
       {result && <pre style={{ background: "#dfd", padding: 8 }}>{result}</pre>}
       {error && <pre style={{ background: "#fdd", padding: 8 }}>{error}</pre>}
-      {busy && <p>Waiting for approval in the Safari toolbar…</p>}
+      {busy && <p>Waiting for wallet response…</p>}
     </main>
   );
 }

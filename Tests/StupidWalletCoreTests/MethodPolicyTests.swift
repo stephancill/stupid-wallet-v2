@@ -53,12 +53,14 @@ struct MethodPolicyTests {
 
   @Test("approval surfaces guard the wallet-owned subsets")
   func approvalSurface() {
-    #expect(MethodPolicy.requiresApproval(.connect))
-    #expect(MethodPolicy.requiresApproval(.sign))
-    #expect(MethodPolicy.requiresApproval(.send))
-    #expect(MethodPolicy.requiresApproval(.chain))
-    #expect(!MethodPolicy.requiresApproval(.denied))
-    #expect(!MethodPolicy.requiresApproval(.passthrough))
+    #expect(MethodPolicy.requiresApproval("eth_requestAccounts"))
+    #expect(MethodPolicy.requiresApproval("personal_sign"))
+    #expect(MethodPolicy.requiresApproval("eth_sendTransaction"))
+    #expect(MethodPolicy.requiresApproval("wallet_addEthereumChain"))
+    #expect(!MethodPolicy.requiresApproval("wallet_switchEthereumChain"))
+    #expect(!MethodPolicy.requiresApproval("eth_chainId"))
+    #expect(!MethodPolicy.requiresApproval("eth_sign"))
+    #expect(!MethodPolicy.requiresApproval("eth_blockNumber"))
   }
 }
 

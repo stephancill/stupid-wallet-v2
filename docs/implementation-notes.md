@@ -50,6 +50,133 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-23 - Persisted Networks And Aggregate Balance
+
+### Summary
+
+- Added shared, locked `NetworkStore` persistence. Successful
+  `wallet_switchEthereumChain` calls now make their target visible in Settings; chain 137 is
+  recognized as Polygon, while unknown switched chains receive a generic decimal name.
+- Confirmed `wallet_addEthereumChain` requests persist their chain ID and supplied name
+  without turning dapp RPC suggestions into user overrides.
+- Added Default Networks and Custom Networks sections, a separate Add... action, and a manual
+  network form for name, decimal/hex chain ID, and RPC URL. Manual RPC endpoints must pass
+  HTTPS, reachability, and exact `eth_chainId` validation before persistence.
+- Restored the per-network Include in Total Balance toggle. Existing `customChains` names and
+  `excludedFromBalance` choices are read from the production App Group, and inclusion changes
+  continue to mirror the old preference key for upgrade continuity.
+- Changed the home balance to fetch every included network concurrently and add full-width wei
+  quantities without a BigInt dependency. Network metadata and the total refresh when the app
+  returns to the foreground, and the total also refreshes after Settings closes.
+- Expanded balance details now retain and display one named row per included network from the
+  same RPC results used to calculate the aggregate. Zero and unavailable balances are omitted;
+  if no non-zero rows remain, the chevron is hidden and the balance control is disabled.
+- Extended the wagmi fixture with Polygon so the direct switch path can be exercised against
+  chain 137.
+
+### Why
+
+- Active-chain persistence alone made switched networks usable but invisible to users. One
+  shared metadata store now drives dapp additions, manual additions, Settings, activity names,
+  and aggregate-balance selection without accepting untrusted RPC preferences.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` completed.
+- `swift test`: 116 tests in 21 suites passed. Regressions cover direct Polygon switching and
+  visibility, legacy network/include import, manual metadata persistence, include mirroring,
+  ordered per-network results, and full-width aggregation across two RPC responses.
+- `PrototypeDapp`: `bunx oxfmt --write src/App.tsx src/wagmi.ts`, `bunx oxlint .`, and
+  `bun run build` passed with Polygon in the configured chain set.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and extension. The Add... sheet exposed name, decimal/hex chain ID, and RPC URL
+  fields, and Polygon details exposed chain ID 137, the Include toggle, and the shared default
+  RPC endpoint. The home balance detail reported five included networks after Polygon was
+  added, with separate Ethereum, Base, Arbitrum One, Optimism, and Polygon balance rows.
+- Simulator verification with all five balances at zero showed no chevron, no popover, and an
+  accessibility-disabled balance button. Unit coverage also distinguishes non-zero, zero, and
+  unavailable native balance results.
+- The connected wagmi fixture switched directly from Base to Polygon with no popup or
+  authentication, reported chain 137, and Settings then listed Polygon under Custom Networks.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Repeat network-addition visibility and aggregate-balance behavior on the physical device as
+  part of the broader Gate 6 acceptance pass.
+
+## 2026-08-23 - Immediate Authorized Network Switching
+
+### Summary
+
+- Removed `wallet_switchEthereumChain` from the Safari popup approval queue. A connected
+  origin now receives an immediate native switch with no popup or biometric authentication.
+- Native code remains authoritative: it requires the active wallet and exact origin/profile
+  grant, validates standard `[chainObject].chainId` params, serializes persistence under the
+  global switch lock, and returns `null` before the worker broadcasts `chainChanged`.
+- `wallet_addEthereumChain` remains confirmation-based and dapp-supplied RPC URLs still never
+  replace user preferences.
+- Native preparation rejects new switch requests so a stale or modified worker cannot put
+  them back into the approval queue. Recovery support remains for switch records persisted by
+  older installed workers.
+- Bumped the WebExtension manifest to `0.1.10` to invalidate Safari's cached worker.
+- Updated the wagmi fixture's network control to toggle between Ethereum and Base and its
+  busy copy to avoid claiming that every wallet response requires popup approval.
+
+### Why
+
+- The product owner chose immediate switching for already-connected sites; changing active
+  chain state does not require private-key access or device-owner authentication.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` and
+  `bunx oxfmt --write SafariExtension/Resources/background.js SafariExtension/Resources/manifest.json`
+  completed.
+- `swift test`: 114 tests in 21 suites passed, including immediate persistence,
+  authorization/revocation, malformed params, no pending switch record, stale prepare
+  rejection, stale approval invalidation, and approval-era journal recovery.
+- `bunx oxlint SafariExtension/Resources/background.js` and
+  `node --check SafariExtension/Resources/background.js` passed.
+- `PrototypeDapp`: `bunx oxfmt --write src/App.tsx`, `bunx oxlint .`, and `bun run build`
+  passed after correcting the toggle target to retain wagmi's `1 | 8453` chain-ID type.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and manifest `0.1.10` Safari extension.
+- The connected wagmi fixture switched Base -> Ethereum -> Base immediately. Its displayed
+  chain changed from 8453 -> 1 -> 8453, the button target toggled accordingly, no popup or
+  authentication appeared, and no switch pending record was created. Reload retained the
+  connected account on chain 8453.
+- The repository debugging skill passed `quick_validate.py` after recording the iOS 26
+  compact-toolbar Page Menu location used to open the extension popup.
+- `stupid-app run --network --udid <device> --sudo /usr/bin/sudo` signed, installed, and
+  launched the final current app and nested manifest `0.1.10` extension on the paired iPhone.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Repeat on the physical iPhone before closing the Gate 6 device acceptance work.
+
+## 2026-08-23 - Current Build Installed On iPhone
+
+### Summary
+
+- Built, development-signed, installed, and launched the current app and nested Safari
+  extension on the paired physical iPhone over the saved network connection.
+
+### Verification
+
+- `stupid-app doctor` completed with 0 failures and 0 warnings.
+- `stupid-app device list` found the saved network pairing.
+- `stupid-app run --network --udid <device> --sudo /usr/bin/sudo` signed the app and nested
+  extension, packaged the IPA, installed it, and launched the production app bundle.
+
+### Follow-Up
+
+- Exercise the physical-device Gate 6 checklist, especially the modal Forget Account flow
+  with a securely backed-up throwaway account.
+
 ## 2026-08-23 - Muted Read-Only RPC URL
 
 ### Summary

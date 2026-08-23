@@ -103,6 +103,8 @@ public implementation notes.
 ### 4. Inspect Popup And Queue Behavior
 
 - Open Safari Page Menu, choose **Stupid Wallet**, and read the card with OCR.
+- In the iOS 26 compact bottom toolbar, Page Menu is the rectangle-over-lines control to the
+  left of the address. The ellipsis opens tab actions and does not expose extensions.
 - Long transaction cards may need a swipe beginning inside the popup:
 
 ```bash
