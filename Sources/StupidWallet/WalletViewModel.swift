@@ -121,6 +121,9 @@ final class WalletViewModel: ObservableObject {
       return "Enter a valid 64-character private key."
     case WalletFactory.CreateError.walletAlreadyExists:
       return "A wallet already exists on this device."
+    case WalletFactory.CreateError.saveFailed:
+      return
+        "The private key could not be saved securely. Check your device passcode and try again."
     case WalletFactory.CreateError.verificationFailed:
       return "Wallet verification was cancelled or failed. No wallet was saved."
     case WalletFactory.CreateError.registrationFailed:

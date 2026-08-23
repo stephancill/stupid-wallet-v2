@@ -50,6 +50,44 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-24 - Reinstall-Safe Private-Key Import
+
+### Summary
+
+- Fixed raw private-key and seed import when a protected new-format keychain item survived
+  app uninstall but the App Group active-wallet registration did not.
+- `errSecDuplicateItem` no longer becomes a generic save failure. Provisioning now presents
+  device-owner authentication, requires the retained key bytes to exactly match the imported
+  secret, repeats the sign-and-recover proof, and restores only the shared address registration.
+- Existing retained items are never deleted or replaced on cancellation, mismatch, proof
+  failure, or registration failure. Newly inserted items retain the existing rollback behavior.
+- Added a specific secure-storage error message for genuine keychain-add failures and recorded
+  the no-prompt failure boundary in the debugging workflow.
+
+### Why
+
+- iOS keychain items can survive uninstall while App Group files are removed. Importing the
+  same key then failed before the verification prompt even though the protected key was intact.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` and `git diff --check` passed.
+- `swift test`: 120 tests in 21 suites passed, including matching retained-item recovery and
+  mismatch preservation without deletion.
+- The repository debugging skill passed `quick_validate.py`.
+- `stupid-app doctor` completed with 0 failures and 0 warnings.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and extension.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` signed the app and
+  nested extension, installed them in place, and launched the app on the physical iPhone.
+- Retrying the same previously failing private-key import on the iPhone succeeded, confirming
+  that the retained protected item authenticated, verified, and restored wallet registration.
+
+### Follow-Up
+
+- Confirm Safari signing with the recovered account as part of the remaining Gate 6 device
+  acceptance work.
+
 ## 2026-08-24 - Lowercase User-Facing Product Name
 
 ### Summary

@@ -135,6 +135,12 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   256-bit values and must enforce the declared width.
 - Authentication cancellation and invalid signing parameters are different failures. A
   fresh `.userPresence` keychain read should happen exactly once for each signature.
+- During create/import, no verification prompt means failure occurred at the keychain add,
+  before authenticated reload or App Group registration. After uninstall/reinstall,
+  `errSecDuplicateItem` can mean the protected key survived while `wallet-address.conf` did
+  not. Never delete or overwrite it to recover: authenticate the existing item, require it
+  to match the imported secret, repeat sign-and-recover verification, then restore only the
+  non-secret registration.
 - Never preflight authentication, cache an unlocked key, or sign arbitrary popup params.
 
 ### 6. Verify RPC Behavior

@@ -30,7 +30,11 @@ public enum WalletFactory {
     defer {
       for index in secret.indices { secret[index] = 0 }
     }
-    return try provision(secret: secret, appGroup: appGroup, keychainService: keychainService)
+    return try provision(
+      secret: secret,
+      appGroup: appGroup,
+      store: KeychainKeyStore(service: keychainService)
+    )
   }
 
   @discardableResult
@@ -45,7 +49,11 @@ public enum WalletFactory {
     defer {
       for index in secret.indices { secret[index] = 0 }
     }
-    return try provision(secret: secret, appGroup: appGroup, keychainService: keychainService)
+    return try provision(
+      secret: secret,
+      appGroup: appGroup,
+      store: KeychainKeyStore(service: keychainService)
+    )
   }
 
   @discardableResult
@@ -58,7 +66,11 @@ public enum WalletFactory {
     defer {
       for index in secret.indices { secret[index] = 0 }
     }
-    return try provision(secret: secret, appGroup: appGroup, keychainService: keychainService)
+    return try provision(
+      secret: secret,
+      appGroup: appGroup,
+      store: KeychainKeyStore(service: keychainService)
+    )
   }
 
   public static func exportPrivateKey(
@@ -107,21 +119,29 @@ public enum WalletFactory {
       .forgetMigrationMaterial(address: account)
   }
 
-  private static func provision(
+  static func provision(
     secret: [UInt8],
     appGroup: String,
-    keychainService: String
+    store: any WalletKeyStoring,
+    walletDirectory: URL? = nil
   ) throws -> String {
-    guard WalletStore.activeAddress(appGroup: appGroup) == nil else {
+    guard WalletStore.activeAddress(appGroup: appGroup, directory: walletDirectory) == nil else {
       throw CreateError.walletAlreadyExists
     }
     guard let pair = try? EthereumKeypair.from(secret: secret) else {
       throw CreateError.invalidPrivateKey
     }
 
-    let store = KeychainKeyStore(service: keychainService)
+    let insertedKey: Bool
     do {
       try store.save(key: secret, account: pair.address)
+      insertedKey = true
+    } catch KeychainKeyStore.StorageError.saveFailed(let status)
+      where status == errSecDuplicateItem
+    {
+      // Keychain items survive uninstall. Reuse one only after authenticated verification
+      // proves it is exactly the key the user is importing.
+      insertedKey = false
     } catch {
       throw Self.CreateError.saveFailed
     }
@@ -133,6 +153,7 @@ public enum WalletFactory {
       defer {
         for index in loaded.indices { loaded[index] = 0 }
       }
+      guard loaded == secret else { throw Self.CreateError.verificationFailed }
       let loadedPair = try EthereumKeypair.from(secret: loaded)
       let digest = Keccak.keccak256(Array("stupid-wallet provisioning proof".utf8))
       let signature = try EthereumSigner.sign(digest: digest, keypair: loadedPair)
@@ -141,14 +162,15 @@ public enum WalletFactory {
         throw Self.CreateError.verificationFailed
       }
     } catch {
-      try? store.delete(account: pair.address)
+      if insertedKey { try? store.delete(account: pair.address) }
       throw Self.CreateError.verificationFailed
     }
 
     do {
-      try WalletStore.setAddress(pair.address, appGroup: appGroup)
+      try WalletStore.setAddress(
+        pair.address, appGroup: appGroup, directory: walletDirectory)
     } catch {
-      try? store.delete(account: pair.address)
+      if insertedKey { try? store.delete(account: pair.address) }
       throw Self.CreateError.registrationFailed
     }
     return pair.address

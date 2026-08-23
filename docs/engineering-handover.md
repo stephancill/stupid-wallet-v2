@@ -222,6 +222,16 @@ PBKDF2-HMAC-SHA512, and derives `m/44'/60'/0'/0/0` with project-owned BIP-32 log
 CryptoKit and the existing vendored libsecp256k1 target. The standard Hardhat mnemonic
 matches its independently known first private key and address.
 
+If the active-wallet registration is absent but `SecItemAdd` finds a new-format item for
+the imported account, provisioning treats it as keychain state retained across uninstall.
+It never replaces or deletes that item: it authenticates the existing key, requires an
+exact match with the imported secret, repeats the sign-and-recover proof, and only then
+restores the shared address registration. A mismatch or cancelled authentication leaves
+the existing item untouched and fails the import.
+
+This retained-item recovery path is proven on a physical iPhone: the previously failing
+private-key import authenticated and completed after an in-place install of the fix.
+
 New connected-site approvals now persist a V2 grant keyed by normalized scheme, hostname,
 effective port, and Safari profile identifier when `SFExtensionProfileKey` is present.
 Canonical pending requests also persist that native profile identifier; list, summary,
@@ -967,10 +977,11 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Continue Gate 6 with physical-device proof of create, raw private-key import, BIP-39
-   seed import, backup reveal/cancellation/timeout, Forget Account, automatic migration
-   launch, and Safari signing with each newly provisioned key. The implementation and
-   hermetic vectors are complete, but these device-bound flows are not yet gate-proven.
+1. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
+   reveal/cancellation/timeout, Forget Account, automatic migration launch, and Safari
+   signing with each newly provisioned key. Raw private-key import, including recovery of a
+   protected item retained across uninstall, is proven on the physical iPhone; the remaining
+   device-bound flows are not yet gate-proven.
 2. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
    supported iOS version. The product owner chose seamless authorization for pre-existing
    hostname grants; consider a later user-visible reconnect campaign before removing that

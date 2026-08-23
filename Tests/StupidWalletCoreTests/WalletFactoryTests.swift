@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 
 @testable import StupidWalletCore
@@ -41,5 +42,79 @@ struct WalletFactoryTests {
 
     try WalletStore.removeAddress("0xaBc", directory: directory)
     #expect(WalletStore.activeAddress(directory: directory) == nil)
+  }
+
+  @Test("import recovers a matching keychain item that survived uninstall")
+  func recoversMatchingOrphanedKey() throws {
+    let secret = testSecret(1)
+    let store = StubWalletKeyStore(existingKey: secret)
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let address = try WalletFactory.provision(
+      secret: secret,
+      appGroup: "test.wallet",
+      store: store,
+      walletDirectory: directory
+    )
+
+    #expect(store.loadCount == 1)
+    #expect(store.deleteCount == 0)
+    #expect(WalletStore.activeAddress(directory: directory) == address)
+  }
+
+  @Test("import does not replace a mismatched surviving keychain item")
+  func rejectsMismatchedOrphanedKey() throws {
+    let store = StubWalletKeyStore(existingKey: testSecret(2))
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    #expect(throws: WalletFactory.CreateError.verificationFailed) {
+      try WalletFactory.provision(
+        secret: testSecret(1),
+        appGroup: "test.wallet",
+        store: store,
+        walletDirectory: directory
+      )
+    }
+    #expect(store.loadCount == 1)
+    #expect(store.deleteCount == 0)
+    #expect(WalletStore.activeAddress(directory: directory) == nil)
+  }
+
+  private func testSecret(_ value: UInt8) -> [UInt8] {
+    var secret = [UInt8](repeating: 0, count: 32)
+    secret[31] = value
+    return secret
+  }
+
+  private func temporaryDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("WalletFactoryTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+}
+
+private final class StubWalletKeyStore: WalletKeyStoring {
+  private let existingKey: [UInt8]
+  private(set) var loadCount = 0
+  private(set) var deleteCount = 0
+
+  init(existingKey: [UInt8]) {
+    self.existingKey = existingKey
+  }
+
+  func save(key: [UInt8], account: String) throws {
+    throw KeychainKeyStore.StorageError.saveFailed(errSecDuplicateItem)
+  }
+
+  func load(account: String, reason: String) throws -> [UInt8] {
+    loadCount += 1
+    return existingKey
+  }
+
+  func delete(account: String) throws {
+    deleteCount += 1
   }
 }

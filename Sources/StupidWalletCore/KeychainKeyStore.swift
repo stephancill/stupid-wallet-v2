@@ -136,3 +136,11 @@ public final class KeychainKeyStore: Sendable {
     status == errSecItemNotFound ? .notFound : .readFailed
   }
 }
+
+protocol WalletKeyStoring {
+  func save(key: [UInt8], account: String) throws
+  func load(account: String, reason: String) throws -> [UInt8]
+  func delete(account: String) throws
+}
+
+extension KeychainKeyStore: WalletKeyStoring {}
