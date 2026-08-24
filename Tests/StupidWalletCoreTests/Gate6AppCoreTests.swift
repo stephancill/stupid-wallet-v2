@@ -98,6 +98,10 @@ struct Gate6AppCoreTests {
       try await service.aggregateBalance(
         account: "0x1234567890abcdef1234567890abcdef12345678", chainIDs: ["1", "137"])
         == "3.000000")
+    #expect(NativeBalanceService.isGreater([1, 0], than: [255]))
+    #expect(NativeBalanceService.isGreater([0, 2], than: [1]))
+    #expect(NativeBalanceService.isGreater([1], than: [0, 1]) == false)
+    #expect(NativeBalanceService.isGreater([0, 1], than: [1]) == false)
   }
 }
 

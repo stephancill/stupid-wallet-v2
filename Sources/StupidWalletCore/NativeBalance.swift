@@ -97,6 +97,13 @@ public struct NativeBalanceService: Sendable {
     return Array(left.reversed())
   }
 
+  public static func isGreater(_ lhs: [UInt8], than rhs: [UInt8]) -> Bool {
+    let left = Array(lhs.drop(while: { $0 == 0 }))
+    let right = Array(rhs.drop(while: { $0 == 0 }))
+    if left.count != right.count { return left.count > right.count }
+    return right.lexicographicallyPrecedes(left)
+  }
+
   public static func formatEther(bytes: [UInt8]) -> String {
     var digits = [0]
     for byte in bytes {

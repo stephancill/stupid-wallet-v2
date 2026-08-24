@@ -159,16 +159,22 @@ origin, and nonce, then move through submitted/pending/confirmed/reverted/droppe
 states. Receipt polling uses the same `RPCResolver`; a missing receipt remains non-terminal
 while the node knows the transaction or during a propagation grace period, then the latest
 account nonce distinguishes dropped from replaced. New signature rows retain only a digest
-and metadata, not plaintext messages or signatures. The app exposes a minimal activity list,
-polls while its activity task is foreground-active, and supports manual refresh. A funded
+and metadata, not plaintext messages or signatures. New transaction and signature rows also
+retain the native Safari profile identifier so connected-app activity can be queried by exact
+normalized origin and profile; legacy hostname-only app details query by domain. The app
+exposes a minimal activity list, polls while its activity task is foreground-active, and
+supports manual refresh. A funded
 Base simulator self-transfer was recorded as submitted, mined,
 refreshed to confirmed with its block number, and rendered in the app; configured and
 independent RPCs agreed on receipt success and 21,000 gas used.
 
 The Gate 6 containing-app shell now follows the shipped app's SwiftUI screen hierarchy and
 presentation: the lowercase welcome and import screens; centered large native balance with
-an anchored details popover; top-trailing account blockie menu with Copy Address, Activity,
-Connected Apps, and Settings actions; Settings sheet; Connected Apps list/detail/disconnect;
+an anchored details popover; top-trailing Copy Address icon beside the account blockie menu,
+which begins with a non-interactive blockie and shortened-address row followed by Activity,
+Connected Apps, and Settings actions; Settings sheet; Connected Apps list/detail/disconnect
+with origin/profile-filtered activity; reciprocal navigation from an activity detail to its
+currently connected app detail;
 default Networks list and RPC detail/editor; authenticated
 Private Key reveal; and Activity list/detail. The implementation keeps the old native
 labels, spacing, forms, inset-grouped lists, typography, and SF Symbols while using the new
@@ -177,9 +183,10 @@ Add Network sheet, and a per-network Include in Total Balance setting. The home 
 the full-width sum of native wei balances from every included network; individual RPC
 failures do not discard successful balances, while a complete included-network outage is
 shown as unavailable. Expanding the aggregate balance lists every included network with a
-non-zero balance as an individual row, using the same fetch results as the total. Zero and
-unavailable balances are omitted; when no non-zero rows exist, the expansion affordance is
-hidden and disabled. Signature activity details remain redacted rather than restoring
+non-zero balance as an individual row, using the same fetch results as the total. Rows are
+ordered by descending full-width wei balance and render as left-aligned `Network • Balance` rows.
+Zero and unavailable balances are omitted; when no non-zero rows exist, the expansion
+affordance is hidden and disabled. Signature activity details remain redacted rather than restoring
 persisted plaintext messages or signatures.
 
 Settings also includes a separate destructive Forget Account section. Its modal confirmation

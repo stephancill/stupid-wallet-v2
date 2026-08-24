@@ -40,12 +40,62 @@ struct ActivityStoreTests {
     #expect(record?.blockNumber == "0x99")
   }
 
-  private func request(kind: RequestKind, method: String) -> WalletPendingRequest {
+  @Test("activity can be filtered by a connected app")
+  func filtersByConnectedApp() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ActivityStoreTests-\(UUID().uuidString)")
+    let store = ActivityStore(databaseURL: directory.appendingPathComponent("Activity.sqlite"))
+    try await store.recordTransaction(
+      request: request(
+        kind: .send, method: "eth_sendTransaction", origin: "https://dapp.example"),
+      hash: "0x" + String(repeating: "aa", count: 32), nonce: "0x0")
+    try await store.recordTransaction(
+      request: request(
+        kind: .send, method: "eth_sendTransaction", origin: "http://dapp.example:8080"),
+      hash: "0x" + String(repeating: "bb", count: 32), nonce: "0x1")
+    try await store.recordTransaction(
+      request: request(
+        kind: .send, method: "eth_sendTransaction", origin: "https://other.example"),
+      hash: "0x" + String(repeating: "cc", count: 32), nonce: "0x2")
+    try await store.recordTransaction(
+      request: request(
+        kind: .send, method: "eth_sendTransaction", origin: "https://dapp.example",
+        profileID: "profile-a"),
+      hash: "0x" + String(repeating: "dd", count: 32), nonce: "0x3")
+
+    let normalizedSite = ConnectedSite(
+      domain: "dapp.example", address: account, origin: "https://dapp.example")
+    let normalizedActivity = try await store.activities(for: normalizedSite)
+    #expect(normalizedActivity.map(\.origin) == ["https://dapp.example"])
+
+    let legacySite = ConnectedSite(domain: "dapp.example", address: account)
+    let legacyActivity = try await store.activities(for: legacySite)
+    #expect(
+      Set(legacyActivity.map(\.origin)) == [
+        "https://dapp.example", "http://dapp.example:8080",
+      ])
+
+    let profileSite = ConnectedSite(
+      domain: "dapp.example", address: account, origin: "https://dapp.example",
+      profileID: "profile-a")
+    let profileActivity = try await store.activities(for: profileSite)
+    #expect(profileActivity.count == 1)
+    #expect(profileActivity.first?.profileID == "profile-a")
+    #expect(profileActivity.first?.belongs(to: profileSite) == true)
+    #expect(profileActivity.first?.belongs(to: normalizedSite) == false)
+  }
+
+  private let account = "0x0000000000000000000000000000000000000001"
+
+  private func request(
+    kind: RequestKind, method: String, origin: String = "https://dapp.example",
+    profileID: String? = nil
+  ) -> WalletPendingRequest {
     let id = UUID()
     let params = JSONValue.array([])
     return WalletPendingRequest(
-      id: id, kind: kind, method: method, origin: "https://dapp.example", chainId: "8453",
-      account: "0x0000000000000000000000000000000000000001", params: params,
+      id: id, kind: kind, method: method, origin: origin, profileID: profileID, chainId: "8453",
+      account: account, params: params,
       payloadDigest: CanonicalRequest.digest(of: params, keyedBy: id))
   }
 }

@@ -33,6 +33,14 @@ public struct ActivityRecord: Sendable, Equatable, Identifiable {
   public let status: ActivityStatus
   public let blockNumber: String?
   public let error: String?
+  public let profileID: String?
+
+  public func belongs(to site: ConnectedSite) -> Bool {
+    if let origin = site.origin {
+      return origin == Origin.normalize(self.origin) && site.profileID == profileID
+    }
+    return site.domain == Origin.downHost(of: self.origin)
+  }
 }
 
 public enum ActivityStoreError: Error, Sendable, Equatable {
@@ -71,11 +79,12 @@ public actor ActivityStore {
       let sql = """
         INSERT INTO transactions
           (tx_hash, app_id, chain_id_hex, method, from_address, created_at, status,
-           request_id, nonce, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           request_id, nonce, updated_at, profile_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(tx_hash) DO UPDATE SET
           status = excluded.status, request_id = excluded.request_id,
-          nonce = excluded.nonce, updated_at = excluded.updated_at;
+          nonce = excluded.nonce, updated_at = excluded.updated_at,
+          profile_id = excluded.profile_id;
         """
       try execute(database, sql: sql) { statement in
         bind(hash.lowercased(), to: 1, in: statement)
@@ -88,6 +97,7 @@ public actor ActivityStore {
         bind(request.id.uuidString, to: 8, in: statement)
         bind(nonce, to: 9, in: statement)
         sqlite3_bind_int64(statement, 10, Int64(date.timeIntervalSince1970))
+        bindOptional(request.profileID, to: 11, in: statement)
       }
     }
   }
@@ -101,8 +111,8 @@ public actor ActivityStore {
       let sql = """
         INSERT OR IGNORE INTO signatures
           (signature_hash, app_id, chain_id_hex, method, from_address,
-           message_content, signature_hex, created_at, request_id)
-        VALUES (?, ?, ?, ?, ?, '', '', ?, ?);
+           message_content, signature_hex, created_at, request_id, profile_id)
+        VALUES (?, ?, ?, ?, ?, '', '', ?, ?, ?);
         """
       try execute(database, sql: sql) { statement in
         bind(digest, to: 1, in: statement)
@@ -112,6 +122,7 @@ public actor ActivityStore {
         bind(request.account, to: 5, in: statement)
         sqlite3_bind_int64(statement, 6, Int64(date.timeIntervalSince1970))
         bind(request.id.uuidString, to: 7, in: statement)
+        bindOptional(request.profileID, to: 8, in: statement)
       }
     }
   }
@@ -148,20 +159,54 @@ public actor ActivityStore {
   }
 
   public func activities(limit: Int = 100) throws -> [ActivityRecord] {
+    try activities(limit: limit, appFilter: nil, filterProfile: false, profileID: nil)
+  }
+
+  public func activities(for site: ConnectedSite, limit: Int = 100) throws -> [ActivityRecord] {
+    if let origin = site.origin {
+      return try activities(
+        limit: limit, appFilter: ("a.uri", origin), filterProfile: true,
+        profileID: site.profileID)
+    }
+    return try activities(
+      limit: limit, appFilter: ("a.domain", site.domain), filterProfile: false,
+      profileID: nil)
+  }
+
+  private func activities(
+    limit: Int,
+    appFilter: (column: String, value: String)?,
+    filterProfile: Bool,
+    profileID: String?
+  ) throws -> [ActivityRecord] {
     try withDatabase { database in
+      func filter(recordAlias: String) -> String {
+        var conditions: [String] = []
+        if let appFilter {
+          conditions.append("lower(\(appFilter.column)) = lower(?)")
+        }
+        if filterProfile {
+          conditions.append(
+            profileID == nil ? "\(recordAlias).profile_id IS NULL" : "\(recordAlias).profile_id = ?"
+          )
+        }
+        return conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND ")
+      }
       let sql = """
         SELECT 'transaction', CAST(t.id AS TEXT), t.request_id, t.tx_hash,
                t.chain_id_hex, COALESCE(t.method, 'eth_sendTransaction'),
                COALESCE(t.from_address, ''), COALESCE(a.uri, a.domain, ''), t.nonce,
                t.created_at, COALESCE(t.updated_at, t.created_at), t.status,
-               t.block_number, t.error
+               t.block_number, t.error, t.profile_id
         FROM transactions t LEFT JOIN apps a ON a.id = t.app_id
+        \(filter(recordAlias: "t"))
         UNION ALL
         SELECT 'signature', CAST(s.id AS TEXT), s.request_id, NULL,
                s.chain_id_hex, s.method, COALESCE(s.from_address, ''),
                COALESCE(a.uri, a.domain, ''), NULL, s.created_at, s.created_at,
-               'signed', NULL, NULL
+               'signed', NULL, NULL, s.profile_id
         FROM signatures s LEFT JOIN apps a ON a.id = s.app_id
+        \(filter(recordAlias: "s"))
         ORDER BY 10 DESC, 2 DESC LIMIT ?;
         """
       var statement: OpaquePointer?
@@ -169,7 +214,18 @@ public actor ActivityStore {
         throw sqliteError(database)
       }
       defer { sqlite3_finalize(statement) }
-      sqlite3_bind_int(statement, 1, Int32(max(0, limit)))
+      var bindingIndex: Int32 = 1
+      for _ in 0..<2 {
+        if let appFilter {
+          bind(appFilter.value, to: bindingIndex, in: statement)
+          bindingIndex += 1
+        }
+        if filterProfile, let profileID {
+          bind(profileID, to: bindingIndex, in: statement)
+          bindingIndex += 1
+        }
+      }
+      sqlite3_bind_int(statement, bindingIndex, Int32(max(0, limit)))
       var records: [ActivityRecord] = []
       while sqlite3_step(statement) == SQLITE_ROW {
         let kind = ActivityKind(rawValue: text(statement, 0) ?? "") ?? .transaction
@@ -187,7 +243,8 @@ public actor ActivityStore {
               timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 9))),
             updatedAt: Date(
               timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 10))),
-            status: status, blockNumber: text(statement, 12), error: text(statement, 13)))
+            status: status, blockNumber: text(statement, 12), error: text(statement, 13),
+            profileID: text(statement, 14)))
       }
       return records
     }
@@ -235,8 +292,10 @@ public actor ActivityStore {
     try addColumn(database, table: "transactions", name: "updated_at", type: "INTEGER")
     try addColumn(database, table: "transactions", name: "block_number", type: "TEXT")
     try addColumn(database, table: "transactions", name: "error", type: "TEXT")
+    try addColumn(database, table: "transactions", name: "profile_id", type: "TEXT")
     try addColumn(database, table: "signatures", name: "request_id", type: "TEXT")
-    try exec(database, "PRAGMA user_version=3;")
+    try addColumn(database, table: "signatures", name: "profile_id", type: "TEXT")
+    try exec(database, "PRAGMA user_version=4;")
   }
 
   private func addColumn(

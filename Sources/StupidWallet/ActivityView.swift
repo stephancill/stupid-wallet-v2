@@ -14,38 +14,7 @@ import SwiftUI
     var body: some View {
       List(items) { item in
         NavigationLink(destination: ActivityDetailView(item: item)) {
-          HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 4) {
-              Text(appLabel(item.origin))
-                .lineLimit(1)
-                .truncationMode(.tail)
-              HStack(spacing: 6) {
-                if item.kind == .transaction, [.submitted, .pending].contains(item.status) {
-                  ProgressView().controlSize(.small).scaleEffect(0.7)
-                  Text("Pending")
-                } else if item.kind == .transaction,
-                  [.reverted, .dropped, .replaced].contains(item.status)
-                {
-                  Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-                    .imageScale(.small)
-                  Text("Failed")
-                } else {
-                  Text(item.kind == .transaction ? "Transaction" : "Signature")
-                }
-                Text("•")
-                Text(NetworkInfo.name(for: normalizedChainID(item.chainID)))
-              }
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-              .truncationMode(.middle)
-            }
-            Spacer()
-            Text(RelativeTime.abbreviated(from: item.createdAt))
-              .foregroundStyle(.secondary)
-              .multilineTextAlignment(.trailing)
-          }
-          .padding(.vertical, 4)
+          ActivityRow(item: item)
         }
       }
       .overlay(alignment: .center) {
@@ -92,9 +61,24 @@ import SwiftUI
 
   struct ActivityDetailView: View {
     let item: ActivityRecord
+    @State private var connectedSite: ConnectedSite?
+
+    init(item: ActivityRecord, connectedSite: ConnectedSite? = nil) {
+      self.item = item
+      _connectedSite = State(initialValue: connectedSite)
+    }
 
     var body: some View {
       Form {
+        Section("App") {
+          if let connectedSite {
+            NavigationLink(destination: ConnectedAppDetailView(site: connectedSite)) {
+              detailRow("App", connectedSite.domain)
+            }
+          } else {
+            detailRow("App", appLabel(item.origin))
+          }
+        }
         if item.kind == .transaction {
           Section("Transaction") {
             if let hash = item.transactionHash {
@@ -125,6 +109,13 @@ import SwiftUI
       }
       .navigationTitle("Details")
       .navigationBarTitleDisplayMode(.inline)
+      .task {
+        if connectedSite == nil { await loadConnectedSite() }
+      }
+    }
+
+    private func loadConnectedSite() async {
+      connectedSite = await ConnectedSitesStore().all().first { item.belongs(to: $0) }
     }
 
     private func detailRow(_ label: String, _ value: String, monospaced: Bool = false) -> some View
@@ -148,6 +139,45 @@ import SwiftUI
         return String(number)
       }
       return UInt64(value).map(String.init) ?? value
+    }
+  }
+
+  struct ActivityRow: View {
+    let item: ActivityRecord
+
+    var body: some View {
+      HStack(alignment: .center) {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(appLabel(item.origin))
+            .lineLimit(1)
+            .truncationMode(.tail)
+          HStack(spacing: 6) {
+            if item.kind == .transaction, [.submitted, .pending].contains(item.status) {
+              ProgressView().controlSize(.small).scaleEffect(0.7)
+              Text("Pending")
+            } else if item.kind == .transaction,
+              [.reverted, .dropped, .replaced].contains(item.status)
+            {
+              Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .imageScale(.small)
+              Text("Failed")
+            } else {
+              Text(item.kind == .transaction ? "Transaction" : "Signature")
+            }
+            Text("•")
+            Text(NetworkInfo.name(for: normalizedChainID(item.chainID)))
+          }
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+        }
+        Spacer()
+        Text(RelativeTime.abbreviated(from: item.createdAt))
+          .foregroundStyle(.secondary)
+          .multilineTextAlignment(.trailing)
+      }
+      .padding(.vertical, 4)
     }
   }
 
@@ -222,7 +252,7 @@ import SwiftUI
     }
   }
 
-  private func makeWalletService() -> WalletService {
+  func makeWalletService() -> WalletService {
     let signing: any Signing
     if let address = WalletStore.activeAddress() {
       signing = KeychainSigner(account: address, store: KeychainKeyStore())

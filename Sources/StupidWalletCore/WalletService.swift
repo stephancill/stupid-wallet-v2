@@ -950,6 +950,12 @@ public actor WalletService {
     try await activityStore.activities(limit: limit)
   }
 
+  public func activities(for site: ConnectedSite, limit: Int = 100) async throws
+    -> [ActivityRecord]
+  {
+    try await activityStore.activities(for: site, limit: limit)
+  }
+
   /// Refreshes unresolved transactions through the same resolver used for preparation and
   /// broadcast. A missing receipt is not treated as failure while the node still knows the
   /// transaction or while propagation is within the grace period.

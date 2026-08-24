@@ -37,7 +37,14 @@ import SwiftUI
         }
         .toolbar {
           if vm.hasWallet {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+              Button {
+                UIPasteboard.general.string = vm.addressHex
+              } label: {
+                Image(systemName: "square.on.square")
+              }
+              .accessibilityLabel("Copy Address")
+
               AddressMenuButton(
                 address: vm.addressHex,
                 showActivity: {
@@ -109,14 +116,15 @@ import SwiftUI
               ) {
                 Group {
                   if !vm.networkBalances.isEmpty {
-                    VStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) {
                       ForEach(vm.networkBalances) { network in
-                        HStack(spacing: 16) {
+                        HStack(spacing: 6) {
                           Text(network.name)
-                          Spacer()
+                          Text("•").foregroundStyle(.secondary)
                           Text(network.balance.map { "♦ \($0)" } ?? "Unavailable")
                             .foregroundStyle(.secondary)
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 6)
                       }
                     }
@@ -168,7 +176,7 @@ import SwiftUI
       button.layer.cornerRadius = 14
       button.layer.masksToBounds = true
       button.accessibilityLabel = "Wallet address"
-      button.accessibilityHint = "Shows address actions"
+      button.accessibilityHint = "Shows account menu"
       return button
     }
 
@@ -180,14 +188,10 @@ import SwiftUI
       }
       button.setImage(icon, for: .normal)
 
-      let copyAction = UIAction(
-        title: "Copy Address",
-        image: UIImage(systemName: "doc.on.doc")
-      ) { _ in
-        UIPasteboard.general.string = address
-      }
-      copyAction.subtitle =
+      let displayAddress =
         address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
+      let accountAction = UIAction(title: displayAddress, image: icon) { _ in }
+      accountAction.attributes = .disabled
       let activityAction = UIAction(
         title: "Activity",
         image: UIImage(systemName: "clock")
@@ -207,7 +211,7 @@ import SwiftUI
         showSettings()
       }
       button.menu = UIMenu(
-        children: [copyAction, activityAction, connectedAppsAction, settingsAction])
+        children: [accountAction, activityAction, connectedAppsAction, settingsAction])
     }
   }
 #else

@@ -25,13 +25,12 @@ import SwiftUI
         } else {
           Section {
             ForEach(sites) { site in
-              NavigationLink(destination: ConnectedAppDetailView(site: site, address: address)) {
+              NavigationLink(destination: ConnectedAppDetailView(site: site)) {
                 HStack {
                   Text(site.domain)
                   Spacer()
                   Text(RelativeTime.abbreviated(from: site.connectedAt))
                     .foregroundStyle(.secondary)
-                    .font(.subheadline)
                 }
               }
             }
@@ -54,9 +53,11 @@ import SwiftUI
 
   struct ConnectedAppDetailView: View {
     let site: ConnectedSite
-    let address: String
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @State private var activity: [ActivityRecord] = []
+    @State private var isLoadingActivity = false
+    @State private var activityError: String?
 
     var body: some View {
       Form {
@@ -78,7 +79,26 @@ import SwiftUI
           Button {
             if let url = URL(string: "https://\(site.domain)") { openURL(url) }
           } label: {
-            Label("Open App", systemImage: "arrow.up.forward.square")
+            Text("Open App")
+          }
+        }
+        Section("Activity") {
+          if isLoadingActivity {
+            HStack {
+              Spacer()
+              ProgressView()
+              Spacer()
+            }
+          } else if let activityError {
+            Text(activityError).foregroundStyle(.secondary)
+          } else if activity.isEmpty {
+            Text("No activity yet").foregroundStyle(.secondary)
+          } else {
+            ForEach(activity) { item in
+              NavigationLink(destination: ActivityDetailView(item: item, connectedSite: site)) {
+                ActivityRow(item: item)
+              }
+            }
           }
         }
         Section {
@@ -93,6 +113,21 @@ import SwiftUI
       }
       .navigationTitle(site.domain)
       .navigationBarTitleDisplayMode(.inline)
+      .task { await loadActivity() }
+      .refreshable { await loadActivity() }
+    }
+
+    private func loadActivity() async {
+      isLoadingActivity = true
+      activityError = nil
+      let service = makeWalletService()
+      await service.refreshTransactionActivity()
+      do {
+        activity = try await service.activities(for: site)
+      } catch {
+        activityError = "Activity could not be loaded."
+      }
+      isLoadingActivity = false
     }
   }
 

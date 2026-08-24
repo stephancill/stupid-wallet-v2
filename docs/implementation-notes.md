@@ -50,6 +50,102 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-24 - Descending Balance Breakdown
+
+### Summary
+
+- Changed the home balance breakdown to order non-zero network balances from largest to
+  smallest using their full-width raw wei bytes rather than formatted strings or floating-point
+  conversion.
+- Replaced the wide spacer between each network and balance with a compact bullet separator,
+  rendering each row as `Network • Balance`, and explicitly kept the compact rows left-aligned
+  within the full popover width.
+- Equal balances use the network name as a deterministic secondary ordering key.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` and `git diff --check` passed.
+- `swift test`: 121 tests in 21 suites passed. Full-width comparison coverage includes values of
+  different byte lengths, leading zeroes, and numeric equality with different encodings.
+- `stupid-app build` succeeded, and
+  `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` development-signed the
+  app and nested Safari extension, installed them on the paired iPhone, and launched the app.
+
+### Follow-Up
+
+- The preferred simulator had no non-zero included-network balances during this run, so the
+  breakdown remained correctly disabled and the revised row presentation was not visually
+  exercised there.
+
+## 2026-08-24 - Connected-App Activity Navigation
+
+### Summary
+
+- Added an Activity section to each connected-app detail. It uses the existing activity row and
+  detail presentation but queries SQLite for that app rather than filtering the global capped
+  result in memory.
+- Modern grants filter by exact normalized origin and Safari profile. Legacy hostname-only grants
+  retain domain-level aggregation.
+- Added reciprocal navigation from activity details to the matching currently connected app.
+  Activity opened from an app detail carries that exact grant forward; globally opened activity
+  resolves it from the connected-sites store.
+- Changed Connected Apps list timestamps to the regular row text size and removed the leading
+  icon from the Open App action.
+- Extended the existing SQLite schema in place to user version 4 with nullable `profile_id`
+  columns for transactions and signatures. Existing rows remain readable without inventing a
+  profile assignment.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` and `git diff --check` passed.
+- `swift test`: 121 tests in 21 suites passed, including exact origin/profile filtering, legacy
+  domain aggregation, and activity-to-grant matching.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` development-signed the
+  app and nested Safari extension, installed them on the paired iPhone, and launched the app.
+- With a temporary localhost simulator grant, the app detail showed only its two existing
+  activity records. Opening a record exposed an App navigation row, and selecting it returned to
+  the same connected-app detail and filtered Activity section. The temporary grant was then
+  disconnected through the app, restoring the simulator's original empty Connected Apps state.
+
+### Follow-Up
+
+- Activity created before profile persistence has no trustworthy profile identity. It remains
+  available globally and through legacy domain filtering, but is not attributed to a non-default
+  profile-specific grant.
+
+## 2026-08-24 - Home Copy Address Icon
+
+### Summary
+
+- Moved Copy Address out of the account blockie menu into a dedicated
+  `square.on.square` toolbar icon immediately beside the blockie.
+- Kept the existing full-address pasteboard behavior and left Activity, Connected Apps,
+  and Settings in the account menu.
+- Added a non-interactive first menu row showing the account blockie and shortened address.
+- Updated the blockie accessibility hint to describe the remaining account menu.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift` completed.
+- `swift test`: 120 tests in 21 suites passed.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and extension.
+- Simulator accessibility inspection exposed adjacent Copy Address and Wallet address toolbar
+  buttons. The blockie menu began with a non-focusable shortened-address row followed by
+  Activity, Connected Apps, and Settings, with no duplicate copy action. Visual inspection
+  confirmed the informational row uses the account blockie, and tapping the copy icon placed a
+  valid 20-byte Ethereum address on the simulator clipboard.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-24 - Lowercase Home Screen Name
 
 ### Summary

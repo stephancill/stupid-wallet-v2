@@ -95,7 +95,13 @@ final class WalletViewModel: ObservableObject {
         guard wei?.contains(where: { $0 != 0 }) == true else { return nil }
         return NetworkBalanceItem(
           id: network.id, name: network.name,
-          balance: wei.map(NativeBalanceService.formatEther))
+          balance: wei.map(NativeBalanceService.formatEther), wei: wei ?? [])
+      }
+      .sorted {
+        if $0.wei == $1.wei {
+          return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        return NativeBalanceService.isGreater($0.wei, than: $1.wei)
       }
       let successful = results.compactMap(\.wei)
       let refreshedBalance: String
@@ -146,6 +152,7 @@ struct NetworkBalanceItem: Identifiable, Sendable {
   let id: String
   let name: String
   let balance: String?
+  let wei: [UInt8]
 }
 
 struct NetworkInfo: Identifiable, Sendable {
