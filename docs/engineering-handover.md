@@ -18,6 +18,12 @@ confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
 
+The macOS direction is the same iOS build running through Apple Silicon's iPhone/iPad-app
+compatibility environment, not a native macOS or Mac Catalyst target. Distribution uses
+the iOS TestFlight build. Local development uses `stupid-app run --mac`, which builds and
+development-signs the ordinary iOS app, creates macOS's compatibility wrapper, registers
+the bundled Safari Web Extension, and launches without an Xcode project or TestFlight.
+
 Gate 0 (project and documentation baseline) exit conditions are met: production app,
 extension, App Group, and keychain identities are restored in configuration and
 entitlements; `stupid-app doctor` reports zero failures; and the app builds and launches
@@ -355,11 +361,13 @@ Build a small, auditable iOS wallet distributed with a Safari Web Extension that
    without requiring the user to re-import it.
 9. Minimizes third-party code and keeps the remaining cryptographic dependency pinned,
    vendored, auditable, and replaceable.
-10. Ships the same provider/approval experience on macOS Safari from a macOS host app that
-    shares the same package, extension JS, `WalletCore`, and approval model as the iOS app.
+10. Allows the iOS TestFlight app to run on Apple Silicon Mac and expose the same bundled
+    Safari Web Extension to macOS Safari.
 
-The iOS app is the primary target. macOS is a parallel surface, not a second wallet: one
-wallet, one keychain-key identity, one approval flow, and one shared RPC resolver.
+There is one iOS target. On Apple Silicon Mac it runs in Apple's iPhone/iPad-app
+compatibility environment with its bundled iOS Safari extension. `ThisDeviceOnly`
+keychain material and App Group containers do not synchronize between an iPhone and a
+Mac; using the same account on both requires an explicit user-authorized import on the Mac.
 
 ## Locked Product Decisions
 
@@ -375,14 +383,11 @@ wallet, one keychain-key identity, one approval flow, and one shared RPC resolve
   a second access group or silently move key material outside the shared group.
 - The minimum deployment target remains iOS 17 unless a concrete API requirement changes
   it and this document records that decision.
-- A macOS host app is in scope and shares the iOS product scope: the same SwiftPM package,
-  the same `StupidWalletSafari` extension resources, and the same `WalletCore`. The macOS
-  minimum target is recorded when the host target is added.
-- The macOS native handler reuses the same envelope and `WalletService`; only the
-  extension entry protocol (`SFSafariExtensionHandler` on macOS) and the local-
-  authentication policy (Touch ID / system passcode) differ from iOS.
-- macOS may use app-to-extension messaging (`SFSafariApplication.dispatchMessage`,
-  unavailable on iOS) for status/hints; it is not an approval boundary.
+- Do not add a native macOS or Mac Catalyst target unless the iOS compatibility path
+  fails a concrete requirement that cannot be fixed in the existing iOS target.
+- The iOS app and extension retain their existing package products, bundle identifiers,
+  App Group, keychain groups, `NSExtensionRequestHandling` entry point, and web resources
+  when installed on Mac through TestFlight compatibility.
 - Signing confirmation uses the Safari toolbar popup followed by Face ID or device
   passcode authentication.
 - The webpage must never be the security boundary for signing approval.
@@ -496,17 +501,16 @@ The intended SwiftPM products and targets are:
 
 ```text
 StupidWallet              containing iOS SwiftUI app
-StupidWalletMac           containing macOS SwiftUI app (hosts the Mac extension)
 WalletCore                shared value types, storage, RPC, signing, and policy
 StupidWalletSafari        native Safari Web Extension handler
 CSecp256k1                vendored C cryptographic target
 StupidWalletTests         package unit tests where supported
 ```
 
-macOS note: `StupidWalletMac` hosts the same `StupidWalletSafari` appex resources and
-links the same `WalletCore`. The handler logic is shared; only the extension entry
-protocol differs (a `SFSafariExtensionHandler` on macOS). No JavaScript or HTML/CSS
-diverges between platforms.
+On Apple Silicon Mac, TestFlight distributes this same iOS app and bundled
+`StupidWalletSafari` extension through Apple's iPhone/iPad-app compatibility path. There
+is no separate Mac SwiftPM product or web-resource fork. Local development installs the
+same product through `stupid-app run --mac`.
 
 The intended resources are:
 
@@ -904,20 +908,23 @@ Each deferred feature requires its own scoped acceptance criteria and must prese
 earlier security gates. Do not combine SIWE, EIP-5792, EIP-7702, simulation, and clear
 signing into one unreviewable change.
 
-### Gate 8: macOS Safari Surface
+### Gate 8: iOS TestFlight On Mac
 
 Exit conditions:
 
-- `StupidWalletMac` (a macOS host app) builds and hosts the extension appex from the same
-  `SafariExtension/Resources` used by iOS.
-- The extension enables in macOS Safari with the toolbar popup review surface and Touch
-  ID/system-passcode auth via the same `WalletService`.
-- macOS uses the `SFSafariExtensionHandler` entry protocol; envelope and `WalletService`
-  are identical to iOS (no web-code layer divergence).
-- App-to-extension messaging (`SFSafariApplication.dispatchMessage`) delivers status/hints
-  and is verified to not be an approval boundary.
-- Both platforms read/write the same pending and activity state through the shared
-  container/App Group.
+- App Store Connect continues to make the iOS TestFlight build available on compatible
+  Apple Silicon Macs.
+- The iOS TestFlight build installs and launches on Mac without a separate Mac binary.
+- macOS Safari registers and enables the bundled `StupidWalletSafari` extension.
+- Provider injection, EIP-6963 discovery, native messaging, toolbar popup review, pending
+  completion, and RPC passthrough work in macOS Safari without platform-specific web code.
+- Signature approval releases the compatibility-environment key through Touch ID or the
+  available system authentication policy while Safari remains foregrounded.
+- The containing app and extension share their App Group and keychain state on that Mac.
+  Cross-device synchronization with an iPhone is not implied.
+- Local `stupid-app run --mac` installs and launches the development-signed compatibility
+  app without an Xcode project or TestFlight; the containing app launch and extension
+  registration are proven, while the complete Safari request/signing flow remains open.
 
 ## Test Strategy
 

@@ -50,6 +50,61 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-24 - Local Apple Silicon Mac Run
+
+### Summary
+
+- Added and exercised `stupid-app run --mac` against this unchanged iOS app and bundled
+  Safari Web Extension. No native macOS/Catalyst target or Xcode project was added.
+- The CLI retained the ordinary iOS build and production identities, development-signed
+  the app and extension for the Mac provisioning UDID, created macOS's compatibility
+  wrapper, registered it with LaunchServices, and launched it through UIKitSystem.
+- This supplements the TestFlight-on-Mac distribution direction with a local development
+  workflow; it does not change release packaging or imply cross-device keychain sync.
+
+### Verification
+
+- `stupid-app run --mac` built, signed, packaged, installed, and launched the containing
+  app as a live iOS process on Apple Silicon Mac.
+- LaunchServices classified the installed wrapper as platform iOS and registered the
+  nested Safari Web Extension under the production extension identity.
+
+### Follow-Up
+
+- Enable the extension in macOS Safari and complete provider injection, native messaging,
+  popup review, shared App Group/keychain, and authenticated-signing verification.
+
+## 2026-08-24 - iOS TestFlight-On-Mac Direction
+
+### Summary
+
+- Confirmed that the old production iOS TestFlight build installs on Apple Silicon Mac and
+  exposes its bundled Safari Web Extension to macOS Safari.
+- Selected that compatibility path for the rebuild. A separate native macOS or Mac
+  Catalyst target is not required and must not be added without a concrete failed
+  compatibility requirement.
+- Removed the exploratory native Mac target, metadata, configuration, local installation,
+  and associated `stupid-app` native-target changes.
+
+### Verification
+
+- The old production TestFlight build provides the existing-device proof for the selected
+  deployment model.
+- Source and worktree inspection confirmed the exploratory native target and CLI changes
+  were removed while unrelated implementation work remained intact.
+- `swift test` passed 121 tests in 21 suites; `stupid-app doctor` reported zero failures
+  and warnings; and `stupid-app build` produced the unchanged ARM64 iOS app and extension.
+- The restored CLI passed 259 tests in 47 suites after clearing stale SwiftPM objects, and
+  its release binary rebuilt successfully.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and
+  launched the iOS app and bundled extension after the native-target removal.
+
+### Follow-Up
+
+- Upload the rebuild through the existing iOS TestFlight pipeline and repeat installation,
+  Safari extension enablement, provider/native messaging, popup approval, shared storage,
+  and authenticated signing on Apple Silicon Mac before closing Gate 8.
+
 ## 2026-08-24 - MIPD Provider Re-Announcement
 
 ### Summary

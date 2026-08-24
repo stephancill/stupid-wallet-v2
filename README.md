@@ -106,6 +106,13 @@ stupid-app simulators
 stupid-app run --simulator --udid <simulator-udid>
 ```
 
+Install and launch locally on Apple Silicon Mac as an iPhone/iPad compatibility app:
+
+```bash
+stupid-app signing setup --kind development --udid <mac-provisioning-udid>
+stupid-app run --mac
+```
+
 After installation, enable Stupid Wallet under Safari's extension settings.
 
 ## Prototype Dapp
@@ -134,6 +141,7 @@ Page Menu to open the extension popup when a request is pending.
 ## Current Scope
 
 The secure wallet core is implemented and exercised on the simulator, with key migration and
-authentication boundaries also proven on a physical device. Deferred work includes transaction
-simulation, ABI/calldata decoding, richer clear-signing previews, ENS/avatar resolution, and
-macOS Safari support.
+authentication boundaries also proven on a physical device. The iOS compatibility app now runs
+locally on Apple Silicon Mac and registers its Safari extension; the complete Mac Safari request
+and signing flow still requires verification. Deferred work includes transaction simulation,
+ABI/calldata decoding, richer clear-signing previews, and ENS/avatar resolution.
