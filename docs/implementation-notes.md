@@ -50,6 +50,48 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-24 - Lowercase Home Screen Name
+
+### Summary
+
+- Changed the containing app's `CFBundleDisplayName` from `StupidWallet` to `stupid wallet`
+  so the iOS Home Screen follows the locked user-facing product name.
+- Internal Swift products, targets, modules, and bundle identifiers remain unchanged.
+
+### Verification
+
+- `plutil -lint Info.plist` passed.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app. The installed bundle reports `CFBundleDisplayName = stupid wallet`.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-24 - Refreshed Upward-Arrow Artwork
+
+### Summary
+
+- Replaced the canonical app icon with the newly supplied hand-drawn upward-arrow artwork.
+- Regenerated the Safari extension's 48px and 128px icons and the EIP-6963 provider data URI
+  from the same opaque 1024px source so every wallet surface retains one identity.
+- Bumped the WebExtension manifest to `0.1.19` to invalidate cached icon resources.
+
+### Verification
+
+- Image inspection confirmed opaque 1024x1024, 48x48, and 128x128 PNG outputs.
+- The EIP-6963 data URI decoded to the same bytes as the packaged 48px extension icon.
+- `bunx oxfmt`, `bunx oxlint`, and `node --check` passed for the changed extension files.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded
+  and retained `CFBundleIconName = AppIcon` in the assembled app.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  the app and manifest `0.1.19` extension.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-24 - Reinstall-Safe Private-Key Import
 
 ### Summary

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>
-    <string>StupidWallet</string>
+    <string>stupid wallet</string>
     <key>CFBundleIdentifier</key>
     <string>co.za.stephancill.stupid-wallet</string>
     <key>CFBundleShortVersionString</key>
