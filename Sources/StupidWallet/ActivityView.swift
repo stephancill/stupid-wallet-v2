@@ -49,13 +49,19 @@ import SwiftUI
       isLoading = true
       errorMessage = nil
       let service = makeWalletService()
-      await service.refreshTransactionActivity()
       do {
         items = try await service.activities()
       } catch {
         errorMessage = "Activity could not be loaded."
       }
       isLoading = false
+
+      guard !Task.isCancelled else { return }
+      await service.refreshTransactionActivity()
+      guard !Task.isCancelled else { return }
+      if let refreshedItems = try? await service.activities() {
+        items = refreshedItems
+      }
     }
   }
 

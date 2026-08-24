@@ -92,6 +92,26 @@ public enum CanonicalRequest {
     return Hex.encode(Keccak.keccak256(input))
   }
 
+  /// A stable digest of a request intent (normalized method, origin, chain, profile, and
+  /// canonical params) that does not depend on any specific pending-record ID. Combined
+  /// with the provider-session request key, it lets `prepare` converge transport retries
+  /// without collapsing separate requests that happen to carry identical params.
+  public static func intentDigest(
+    method: String, origin: String, chainId: String, profileID: String?, params: JSONValue
+  ) -> String {
+    var input = Array("intent\u{1e}".utf8)
+    input.append(contentsOf: method.lowercased().utf8)
+    input.append(0x1f)
+    input.append(contentsOf: origin.utf8)
+    input.append(0x1f)
+    input.append(contentsOf: chainId.utf8)
+    input.append(0x1f)
+    input.append(contentsOf: (profileID ?? "").utf8)
+    input.append(0x1f)
+    input.append(contentsOf: canonicalization(params))
+    return Hex.encode(Keccak.keccak256(input))
+  }
+
   /// JSON encoding with object keys sorted in canonical order, so byte-level equality is
   /// a reliable tamper check. `.sortedKeys` on a heterogeneous object is stable.
   public static func canonicalData(_ value: JSONValue) throws -> Data {

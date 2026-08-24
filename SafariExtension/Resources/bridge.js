@@ -23,9 +23,15 @@
     if (event.source !== window) return;
     const data = event.data;
     if (!data || data.__channel !== SRC_CHANNEL) return;
+    if (typeof data.requestKey !== "string" || data.requestKey.length > 128) return;
 
     browser.runtime
-      .sendMessage({ type: "ethereum.request", method: data.method, params: data.params })
+      .sendMessage({
+        type: "ethereum.request",
+        requestKey: data.requestKey,
+        method: data.method,
+        params: data.params,
+      })
       .then(
         (result) => {
           if (!result || result.__envelope !== true) {
@@ -40,7 +46,30 @@
             respond(data.id, false, errorShape(result.error));
           }
         },
-        (error) => respond(data.id, false, errorMessage(error)),
+        async (error) => {
+          // The service worker may have been suspended between the page message and its
+          // response (e.g. the Safari window was switched away). Retries preserve the
+          // provider-session request key, so native preparation can distinguish a transport
+          // retry from a separate, deliberately identical request.
+          for (let attempt = 0; attempt < 2; attempt++) {
+            await sleep(600 * (attempt + 1));
+            const retried = await browser.runtime
+              .sendMessage({
+                type: "ethereum.request",
+                requestKey: data.requestKey,
+                method: data.method,
+                params: data.params,
+              })
+              .catch(() => null);
+            if (retried && retried.__envelope === true) {
+              if (retried.ok && retried.pendingId) pollPending(data.id, retried.pendingId);
+              else if (retried.ok) respond(data.id, true, retried.result);
+              else respond(data.id, false, errorShape(retried.error));
+              return;
+            }
+          }
+          respond(data.id, false, errorMessage(error));
+        },
       );
   });
 
@@ -54,7 +83,9 @@
 
   async function pollPending(id, requestId) {
     for (let attempt = 0; attempt < 600; attempt++) {
-      await sleep(1000);
+      // Back off so a waiting request does not saturate the native plugin with a `get`
+      // every second (which delays the popup's own `list` call behind the queue).
+      await sleep(Math.min(1000 + attempt * 250, 4000));
       let reply;
       try {
         reply = await browser.runtime.sendMessage({

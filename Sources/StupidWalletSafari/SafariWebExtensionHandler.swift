@@ -166,7 +166,8 @@ private enum Server {
           params: envelope.params ?? .array([]),
           origin: envelope.origin ?? "unknown",
           chainId: activeChainID,
-          profileID: profileID
+          profileID: profileID,
+          requestKey: envelope.requestKey
         )
         return success(["requestId": .string(id.uuidString)])
       } catch WalletError.methodNotApproved {
@@ -286,6 +287,7 @@ private struct Envelope {
   let method: String?
   let origin: String?
   let chainId: String?
+  let requestKey: String?
   let params: JSONValue?
   let payload: JSONValue?
 
@@ -296,7 +298,8 @@ private struct Envelope {
       case .object(let object) = json
     else {
       return Envelope(
-        action: "unknown", method: nil, origin: nil, chainId: nil, params: nil, payload: nil)
+        action: "unknown", method: nil, origin: nil, chainId: nil, requestKey: nil, params: nil,
+        payload: nil)
     }
 
     return Envelope(
@@ -304,6 +307,7 @@ private struct Envelope {
       method: object["method"]?.stringValue,
       origin: object["origin"]?.stringValue,
       chainId: object["chainId"]?.stringValue,
+      requestKey: object["requestKey"]?.stringValue,
       params: object["params"],
       payload: object["payload"]
     )

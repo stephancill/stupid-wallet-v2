@@ -1,8 +1,9 @@
 // Stupid Wallet service worker (background script).
-// Owns method classification, prepares native approval requests, and routes
-// completion back to the requesting tab once the popup resolves the request.
+// Owns method classification, prepares native approval requests, and mirrors
+// page-side pending requests into Safari's toolbar badge.
 (() => {
-  const pending = new Map(); // requestId -> { sendResponse }
+  const NATIVE_APP_ID = "co.za.stephancill.stupid-wallet";
+  const pending = new Set();
 
   // Method kinds that require the native approval surface. Network switching is handled
   // immediately below after native authorization; adding a chain still requires review.
@@ -41,15 +42,16 @@
     return "unknown";
   }
 
-  function native({ action, method, params, origin, chainId, payload } = {}) {
+  function native({ action, method, params, origin, chainId, requestKey, payload } = {}) {
     const message = { action };
     if (method !== undefined) message.method = method;
     if (params !== undefined) message.params = params;
     if (origin !== undefined) message.origin = origin;
     if (chainId !== undefined) message.chainId = chainId;
+    if (requestKey !== undefined) message.requestKey = requestKey;
     if (payload !== undefined) message.payload = payload;
     return new Promise((resolve) => {
-      browser.runtime.sendNativeMessage(undefined, message, (response) => {
+      browser.runtime.sendNativeMessage(NATIVE_APP_ID, message, (response) => {
         if (browser.runtime.lastError) {
           resolve({ ok: false, error: String(browser.runtime.lastError.message) });
         } else {
@@ -65,6 +67,10 @@
     } catch {
       /* ignore */
     }
+  }
+
+  function updateBadge() {
+    setBadge(pending.size === 0 ? "" : String(pending.size));
   }
 
   async function activeChain() {
@@ -108,8 +114,6 @@
           sendResponse(chain || { error: "Active chain unavailable" });
           return;
         }
-        case "popup.getPending":
-          return getPending(sendResponse);
         case "popup.list":
           // Read the durable native store (survives worker suspension).
           const nativeList = await native({ action: "list" });
@@ -135,26 +139,15 @@
             action: "reject",
             payload: { requestId: message.requestId },
           });
+          if (rejected.ok) {
+            pending.delete(message.requestId);
+            updateBadge();
+          }
           sendResponse({ ok: !!rejected.ok });
           return;
-        case "popup.resolve": {
-          const entry = pending.get(message.requestId);
-          if (!entry) {
-            sendResponse({ ok: false, error: "no matching pending request" });
-            return;
-          }
-          entry.sendResponse(message.result);
+        case "popup.didDecide":
           pending.delete(message.requestId);
-          setBadge(String(pending.size));
-          sendResponse({ ok: true });
-          return;
-        }
-        case "popup.reject-all":
-          for (const entry of pending.values()) {
-            entry.sendResponse({ error: { code: 4001, message: "User dismissed" } });
-          }
-          pending.clear();
-          setBadge("");
+          updateBadge();
           sendResponse({ ok: true });
           return;
         default:
@@ -279,6 +272,10 @@
       }
       const prepared = await native({
         action: "prepare",
+        requestKey:
+          typeof message.requestKey === "string" && message.requestKey.length <= 128
+            ? message.requestKey
+            : undefined,
         method,
         params: message.params,
         origin: pageOrigin,
@@ -295,8 +292,8 @@
         return;
       }
       const requestId = prepared.data.requestId;
-      pending.set(requestId, { sendResponse });
-      setBadge(String(pending.size));
+      pending.add(requestId);
+      updateBadge();
       // Hand the requestId to the bridge immediately; the bridge then polls the
       // native store for the result, so completion survives worker suspension.
       envelope(sendResponse, { ok: true, pendingId: requestId });
@@ -335,33 +332,19 @@
     envelope(sendResponse, { ok: false, error: e });
   }
 
-  function getPending(sendResponse) {
-    const ids = Array.from(pending.keys());
-    Promise.all(
-      ids.map((requestId) =>
-        native({ action: "summary", payload: { requestId } }).then((summary) => ({
-          requestId,
-          ok: summary.ok,
-          data: summary.data || null,
-          error: summary.error || null,
-        })),
-      ),
-    ).then((list) => sendResponse({ pending: list }));
-  }
-
   // Polled by the bridge: mirrors the persisted native status. This is a stateless
   // read on each poll, so a suspending service worker never loses the answer.
   async function status(message, sendResponse) {
     const res = await native({ action: "get", payload: { requestId: message.id } });
     if (!res.ok || !res.data) {
       pending.delete(message.id);
-      setBadge(String(pending.size));
+      updateBadge();
       sendResponse({ __missing: true });
       return;
     }
     if (res.data.status === "consumed" || res.data.status === "rejected") {
       pending.delete(message.id);
-      setBadge(String(pending.size));
+      updateBadge();
     }
     if (res.data.status === "consumed") {
       const summary = await native({ action: "summary", payload: { requestId: message.id } });
@@ -381,7 +364,7 @@
     }
     if (res.data.status === "failed") {
       pending.delete(message.id);
-      setBadge(String(pending.size));
+      updateBadge();
       const error = res.data.error || {};
       sendResponse({
         __error: error.message || "Transaction submission failed",
@@ -392,7 +375,7 @@
     }
     if (res.data.status === "expired") {
       pending.delete(message.id);
-      setBadge(String(pending.size));
+      updateBadge();
       sendResponse({ __error: "Request expired", code: 4001 });
       return;
     }

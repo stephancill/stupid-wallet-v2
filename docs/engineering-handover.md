@@ -20,9 +20,20 @@ confirmation stack (a prototype, not yet gate-proven):
 
 The macOS direction is the same iOS build running through Apple Silicon's iPhone/iPad-app
 compatibility environment, not a native macOS or Mac Catalyst target. Distribution uses
-the iOS TestFlight build. Local development uses `stupid-app run --mac`, which builds and
-development-signs the ordinary iOS app, creates macOS's compatibility wrapper, registers
-the bundled Safari Web Extension, and launches without an Xcode project or TestFlight.
+the iOS TestFlight build. The current `stupid-app run --mac` rejects extension-bearing projects
+because its LaunchServices-only installer cannot create the plugin registration needed for native
+messaging. By owner decision, local Mac native-messaging testing routes through **Xcode's "My Mac
+(Designed for iPad)"** install via the tracked XcodeGen project at `Mac/` (`Mac/project.yml` →
+`Mac/StupidWalletMac.xcodeproj`) that compiles the existing `Sources/`; it is the build/install
+authority for the Mac-testing path only, and `stupid-app` remains the authority elsewhere.
+That entitled install now works end to end on the Mac: the extension plugin spawns, native
+messaging delivers, connect is consumed, and generated signatures recover to the registered
+account. Popup propagation and immediate badge clearing after rejection are also proven. Full
+transaction broadcast on the Mac is the remaining network-verified item. The resolved stale-image,
+duplicate Safari-row, and request-propagation investigation is in
+`docs/macos-safari-request-propagation-handover.md`; the installation boundary and remaining
+acceptance workflow are in
+`docs/macos-safari-extension-install-handover.md`.
 
 Gate 0 (project and documentation baseline) exit conditions are met: production app,
 extension, App Group, and keychain identities are restored in configuration and
@@ -170,7 +181,9 @@ transaction rows retain the canonical calldata alongside their existing metadata
 signature rows also retain the native Safari profile identifier so connected-app activity can be queried by exact
 normalized origin and profile; legacy hostname-only app details query by domain. The app
 exposes a minimal activity list, polls while its activity task is foreground-active, and
-supports manual refresh. A funded
+supports manual refresh. Global activity and connected-app details render their persisted activity
+before receipt polling, then update the visible rows with refreshed transaction statuses so slow
+RPCs do not block either initial screen. A funded
 Base simulator self-transfer was recorded as submitted, mined,
 refreshed to confirmed with its block number, and rendered in the app; configured and
 independent RPCs agreed on receipt success and 21,000 gas used.
@@ -279,8 +292,9 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. Manifest `0.1.20` invalidates the earlier one-shot discovery script,
-  which could be missed when an MIPD consumer initialized after the wallet.
+  provider metadata. The current manifest is `0.1.24`; the EIP-6963 reannounce behavior introduced
+  in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
+  consumer initialized after the wallet.
 - One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
   icons, EIP-6963 provider discovery, and the in-page request hint. The canonical 1024-point
   app asset is `Resources/AppIcon.png`; generated browser sizes remain in the extension
@@ -522,8 +536,8 @@ StupidWalletTests         package unit tests where supported
 
 On Apple Silicon Mac, TestFlight distributes this same iOS app and bundled
 `StupidWalletSafari` extension through Apple's iPhone/iPad-app compatibility path. There
-is no separate Mac SwiftPM product or web-resource fork. Local development installs the
-same product through `stupid-app run --mac`.
+is no separate Mac SwiftPM product or web-resource fork. Extension-capable local installation
+requires Xcode or TestFlight because `stupid-app run --mac` rejects extension-bearing apps.
 
 The intended resources are:
 
@@ -584,13 +598,13 @@ serializes and persists the switch, and returns `null`; the worker then broadcas
 2. Native code validates and canonicalizes the request, computes a payload digest, and
    persists a one-time pending record in the App Group with an expiry. For sends, missing
    nonce/gas fields remain unresolved so queued requests do not snapshot the same values.
-3. Browser storage retains only routing metadata needed to reconnect the pending native
-   request to the requesting tab. Sensitive payloads and approval authority do not live
-   in browser storage.
+3. Native returns the canonical pending ID. The isolated bridge retains it only for the lifetime
+   of the page request and polls native status through the worker. The App Group pending store is
+   authoritative; browser storage does not hold approval authority or sensitive payloads.
 4. Safari updates the extension badge. An optional minimal in-page notice may tell the
    user to open the wallet extension, but it cannot approve or alter the request.
-5. The user opens the toolbar popup. The popup requests the canonical, display-safe
-   summary from native code by request ID.
+5. The user opens the toolbar popup. On macOS it requests the canonical, display-safe list directly
+   from native code, with the worker route retained as an iOS-compatible transport fallback.
 6. On approval, the popup sends only the request ID and decision. Native code reloads
    the canonical record and verifies its origin, chain, payload digest, expiry, and
    unconsumed state.
@@ -599,9 +613,9 @@ serializes and persists the switch, and returns `null`; the worker then broadcas
    It then creates a fresh `LAContext`, requests device-owner authentication, and performs
    signing only after authentication succeeds.
 8. Native code atomically consumes the pending request and returns the result.
-9. The background worker routes completion to the originating tab. If the tab navigated,
-   closed, changed origin, or no longer recognizes the request ID, the result is dropped
-   and never delivered to a different page.
+9. The originating isolated bridge observes the consumed or rejected record through native status
+   polling and resolves the matching page request. Navigation or tab closure destroys that page
+   session, so a result is never delivered to a different page.
 
 Pending requests must expire, survive service-worker suspension, reject replay, and have
 a deterministic policy for concurrency. The initial policy is one active approval
@@ -935,9 +949,23 @@ Exit conditions:
   available system authentication policy while Safari remains foregrounded.
 - The containing app and extension share their App Group and keychain state on that Mac.
   Cross-device synchronization with an iPhone is not implied.
-- Local `stupid-app run --mac` installs and launches the development-signed compatibility
-  app without an Xcode project or TestFlight; the containing app launch and extension
-  registration are proven, while the complete Safari request/signing flow remains open.
+- Local `stupid-app run --mac` intentionally rejects this extension-bearing project because
+  its LaunchServices-only installer cannot create the required MobileInstallation/PlugInKit
+  records. The tracked `Mac/` XcodeGen project is the local development exception; TestFlight is
+  still required to prove the distribution path.
+
+Current Mac propagation status (2026-08-24): request preparation and prompt popup listing are
+proven with Safari Technology Preview. Safari Settings had retained two
+enabled production-identity rows at different manifest versions even though PlugInKit showed one
+current registration; the stale row selected old web resources. Keep only the current row enabled.
+The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
+the background worker cannot delay the review surface, while retaining the background route as a
+transport fallback for Safari environments where direct native messaging is unavailable. Manifest
+`0.1.24` contains the direct-popup synchronization introduced in `0.1.23`: after a successful
+decision it notifies the worker before the popup closes,
+and an empty worker request set clears the badge with an empty string rather than displaying `0`.
+Live rejection proved the one-item badge disappears immediately. The test requests were rejected
+without signing. Mac transaction broadcast plus a network-verified receipt remains unproven.
 
 ## Test Strategy
 

@@ -373,7 +373,8 @@ public actor WalletService {
     params: JSONValue,
     origin: String,
     chainId _: String = "1",
-    profileID: String? = nil
+    profileID: String? = nil,
+    requestKey: String? = nil
   ) async throws -> UUID {
     let chainId = try await activeChainID()
     let kind = RequestKind.kind(for: method)
@@ -395,17 +396,23 @@ public actor WalletService {
     if kind == .chain, Self.requestedChainID(canonicalParams) == nil {
       throw WalletError.invalidParams
     }
+    let normalizedOrigin = Origin.normalize(origin)
+    let intentDigest = CanonicalRequest.intentDigest(
+      method: method, origin: normalizedOrigin, chainId: chainId,
+      profileID: profileID, params: canonicalParams)
     let id = UUID()
     let record = WalletPendingRequest(
       id: id,
       kind: kind,
       method: method,
-      origin: Origin.normalize(origin),
+      origin: normalizedOrigin,
       profileID: profileID,
       chainId: chainId,
       account: signing.account,
       params: canonicalParams,
-      payloadDigest: CanonicalRequest.digest(of: canonicalParams, keyedBy: id)
+      payloadDigest: CanonicalRequest.digest(of: canonicalParams, keyedBy: id),
+      intentDigest: intentDigest,
+      requestKey: requestKey
     )
     if kind == .send {
       do {
@@ -415,8 +422,7 @@ public actor WalletService {
         throw WalletError.invalidParams
       }
     }
-    try await store.insert(record)
-    return id
+    return (try await store.insertIfAbsent(record)) ?? record.id
   }
 
   /// Display-safe canonical summary for one pending request.

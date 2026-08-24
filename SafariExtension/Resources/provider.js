@@ -9,6 +9,7 @@
   const SRC_CHANNEL = "__stupid-wallet:request";
   const DST_CHANNEL = "__stupid-wallet:response";
   const EVENT_CHANNEL = "__stupid-wallet:event";
+  const providerSessionID = crypto.randomUUID();
   const WALLET_ICON =
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAJcEhZcwAACxMAAAsTAQCanBgAAAAHdElNRQfqCBgJBSZ+fezCAAAB/klEQVRYw+2XoevqUBzFz3VDjIrJNDCJyWbxXxDLEKyC2W7QbhbMRv8EDQaDRVCLYhO0KWxgUee288KF8fjBg7frfMpjJ959uftwvud+7yZI4puU+DRADBQDxUAx0KcBYqAPAJGM8EJ8Fcj3fSGEEMLzvM8DeZ6XSCQsy7JtW9O0SJjUgVzX1TRttVrl8/lCobBer6NhopJc1yVpWVY6nQ622u/3wSNlCYU8khRCACiVSsfj0TAMkrZtZzKZzWYj+ygL/pFDnueRbDQaAHa7nWmalUplsVgAGAwG0iRZo6DQQI7jkOz3+wBGoxFJwzCq1SrJZrMJoNPpyErf998O9Hw+Sc5mMwDtdpvk9XrVdb3X68mCbrcLwDRNZaYQQLILh8MBQLlclovn8xnAcDgMzBuPxwBqtRqVAq6HShuAVquVSqWm06lctCwLQC6XAyCEcF23Xq9ns9nL5QIgkQg/Vv6eXfq/3W5PpxPJx+NBcrlcApjP54Efsq1q/QrnkBCCZLFYBOB5nq7rchGA7/tBma7rcjxqmqZw6kMAydfLd/8Yyj+mjhqKChD+EAt+z20vfVIJ75uAHMcBkEwmvwVI/c56E1DkehVIxvmLQi1PuJxJ0UhhmP6u2+02mUzu9/uL+wRS+UB7qyIIdVT/G1L/o0MxUAz0XYqBYqAY6N36BZGLD912Q5amAAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI2LTA4LTI0VDA5OjA1OjM4KzAwOjAwqx11nwAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNi0wOC0yNFQwOTowNTozOCswMDowMNpAzSMAAAAodEVYdGRhdGU6dGltZXN0YW1wADIwMjYtMDgtMjRUMDk6MDU6MzgrMDA6MDCNVez8AAAAAElFTkSuQmCC";
   let nextId = 0;
@@ -26,7 +27,13 @@
     return new Promise((resolve, reject) => {
       const id = ++nextId;
       pending.set(id, { resolve, reject, method, params });
-      post({ __channel: SRC_CHANNEL, id, method, params });
+      post({
+        __channel: SRC_CHANNEL,
+        id,
+        requestKey: `${providerSessionID}:${id}`,
+        method,
+        params,
+      });
     });
   }
 
@@ -83,7 +90,7 @@
   // EIP-6963 discovery.
   const providerDetail = Object.freeze({
     info: Object.freeze({
-      uuid: crypto.randomUUID(),
+      uuid: providerSessionID,
       name: "stupid wallet",
       icon: WALLET_ICON,
       rdns: "co.za.stephancill.stupid-wallet",

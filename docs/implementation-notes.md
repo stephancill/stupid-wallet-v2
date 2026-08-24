@@ -50,6 +50,449 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-24 - Safari Request Identity And Diff Cleanup
+
+### Summary
+
+- Corrected the request-retry model introduced during the Mac propagation investigation. Native
+  preparation no longer treats canonical intent equality alone as retry identity: the provider now
+  assigns each call a stable page-session `requestKey`, retries reuse it, and native deduplication
+  requires both that key and the canonical `intentDigest`.
+- Added regression coverage proving a transport retry converges while two deliberate identical
+  requests remain distinct, including concurrent app/extension store access.
+- Made failure to acquire the cross-process prepare lock an explicit error instead of silently
+  degrading to an in-process check.
+- Removed obsolete background-worker completion callbacks and popup routes. The worker now owns
+  preparation and best-effort badge state; the originating bridge completes requests by polling the
+  durable native record.
+- Kept the direct-native Mac popup path and iOS-compatible background fallback. A successful popup
+  decision synchronizes the worker set, and zero pending requests render as an empty badge string.
+- Bumped the WebExtension manifest to `0.1.24` and the local Mac app/extension build to `5`, then
+  regenerated the tracked Xcode project.
+- Updated the maintained handover, focused Mac handovers, and debugging skill to remove superseded
+  assumptions about the Xcode project, unresolved propagation, retry identity, and completion
+  routing.
+
+### Why
+
+- Two intentional transactions can have identical canonical parameters. Collapsing them solely by
+  intent would lose a user action; retry identity must originate with the provider call and remain
+  stable only across transport retries of that call.
+- Completion already survives service-worker suspension through the native pending store and bridge
+  polling, so retaining worker callbacks created a second stale model with no authoritative role.
+
+### Verification
+
+- `swift test -q` passed all 128 tests in 21 suites.
+- `node --check` passed for all four JavaScript files.
+- `node --test Tests/JavaScript/*.test.mjs` passed all 6 tests.
+- `xcodegen generate` regenerated `Mac/StupidWalletMac.xcodeproj` successfully.
+- `stupid-app doctor` completed with zero failures and zero warnings.
+- `stupid-app build` succeeded and packaged the iOS app and Safari extension. The first sandboxed
+  attempt could not write Swift's user cache; the required rerun with normal cache access passed.
+- `git diff --check` passed.
+- Live Safari rejection on the preceding `0.1.23` diagnostic install proved the badge's one-to-zero
+  transition and returned the expected user-rejection error without signing. `0.1.24` retains that
+  path and adds retry-identity cleanup; it has not been reinstalled for a second live run.
+
+### Follow-Up
+
+- Verify Mac `eth_sendTransaction` broadcast with a network-confirmed receipt.
+- Repeat the complete flow from a TestFlight distribution install for Gate 8.
+
+## 2026-08-24 - Mac Safari Stale Native Plugin Image
+
+### Summary
+
+- Reproduced Relay waiting on a wallet approval while the Safari toolbar popup showed no pending
+  requests.
+- Disproved the leading Safari-profile-asymmetry hypothesis on this host: once the current native
+  build actually ran, the popup logged `list profile=nil`.
+- Found that Safari had been launching an old monolithic extension inode even though `.XCInstall`
+  contained current instrumented code. Fresh records from the stale process lacked the newly added
+  intent identity, and the expected diagnostic log was absent.
+- Updated the gitignored Mac XcodeGen project to disable Xcode's debug-dylib split and bumped its
+  diagnostic build number. Quitting Safari before Xcode Run was required to release the stale
+  plugin image. Reopening Safari then launched the current monolithic extension and produced the
+  expected popup diagnostic.
+
+### Verification
+
+- `xcodegen generate` succeeded.
+- `xcodebuild -project Mac/StupidWalletMac.xcodeproj -scheme StupidWallet -configuration Debug
+  -destination 'platform=macOS,arch=arm64' build | xcpretty` succeeded.
+- `stupid-app doctor` completed with zero failures and warnings.
+- `pgrep` plus `lsof` distinguished the stale 3,110,335-byte plugin image from the current
+  258,256-byte image after the clean Safari lifecycle.
+- Semantic toolbar activation produced `list profile=nil` in the temporary App Group diagnostic.
+  The list was empty because the prior records had expired during installation diagnosis.
+
+### Follow-Up
+
+- Trigger one fresh Relay approval with the current native image, open the popup semantically, and
+  capture adjacent `prepare`, `get`, and `list` diagnostics before changing request policy.
+- Remove temporary native file diagnostics after the fresh-request boundary is resolved.
+
+## 2026-08-24 - Request-Propagation Handover Created
+
+- Added `docs/macos-safari-request-propagation-handover.md` as the focused handover for the
+  ongoing Mac Safari defect where the popup shows no pending requests despite valid pending
+  records. It records: fixed causes (duplicate extension registration, disable-on-reinstall,
+  idempotent `prepare`, bridge backoff/retry), the current Safari-profile-asymmetry hypothesis,
+  the temporary `handle-diag.log` instrumentation and how to read it, the resume path, and the
+  outstanding verification (prompt popup listing, no duplicates after window switching, and
+  network-verified `eth_sendTransaction` on the Mac).
+- The engineering handover points to this document for the Mac popup defect.
+
+## 2026-08-24 - Idempotent Prepare And Request-Delivery Resilience
+
+### Summary
+
+- Reported that switching away from the dapp window duplicated pending requests (relay.link
+  `eth_sendTransaction` records appeared every few seconds). The dapp's SDK logged
+  "Execution aborted" and re-issued the transaction when its request channel was interrupted;
+  each re-issue created a fresh pending record.
+- Made native `prepare` **idempotent**: a request re-sent while an identical intent is still
+  pending now resolves to that existing record instead of enqueueing a duplicate. A new stable
+  `intentDigest` (normalized method + origin + chain + profile + canonical params, independent
+  of the record ID) is persisted on each record; `prepare` scans pending records for a match
+  and returns the existing ID. Completion still reaches the original requester via durable
+  status polls.
+- Made the JS bridge resilient to worker suspension/contention: `ethereum.request` now retries
+  (twice, with backoff) on a transport rejection before surfacing an error, so a dapp does not
+  abort and re-issue a duplicate. `busy` status polling already backs off (1s → 4s) to stop the
+  page's `get` polls saturating the native plugin and delaying the popup's `list`.
+- Updated tests that had modelled simultaneous identical pending requests as distinct queue
+  entries: distinct intents still queue; identical simultaneous intents dedupe. The
+  quick-successive-nonce test now prepares the second identical send only after the first is
+  consumed (the realistic "nonce too low" flow).
+- Fix-up within the same work: the first idempotent `prepare` used a non-atomic read-then-insert,
+  which still duplicated under truly concurrent re-sends (two identical `eth_sendTransaction`
+  with the same `intentDigest` were observed). The check-and-insert now runs atomically inside
+  the `PendingRequestStore` actor via `insertIfAbsent`, returning the existing ID when an
+  identical intent is already pending. A concurrent-prepare regression test was added.
+
+### Why
+
+- The duplication was a dapp-retry artifact: an interrupted request channel causes the dapp to
+  re-issue the exact request. Idempotent `prepare` converges those re-issues to one canonical
+  pending card while preserving the one-active-approval queue for genuinely different requests.
+
+### Verification
+
+- New tests: "re-sent identical request converges to one pending record" and "concurrent
+  identical prepares converge to one pending record" (the latter covers the atomic
+  check-and-insert). `swift test`: 126 tests in 21 suites pass.
+- `xcodebuild ... -destination 'platform=macOS,arch=arm64'` rebuild succeeds; the extension
+  resources carry the updated bridge/popup scripts.
+
+### Follow-Up
+
+- Reinstall on the Mac (Xcode Run) and confirm switching away no longer duplicates requests, and
+  that the popup lists the single pending card promptly.
+- Watch for pending records without `intentDigest` (written before this change); requests
+  matching those are not deduplicated until they are consumed.
+
+## 2026-08-24 - Duplicate Safari Extension Registration Fix
+
+### Summary
+
+- On newest dapps (Uniswap, OpenSea), `eth_requestAccounts` prepared a canonical pending record
+  and the in-page notice appeared, but the Safari toolbar popup showed "No pending requests".
+- Root cause: **two `stupid wallet` extensions were registered in Safari** for the same display
+  name. A stale registration from the old `ios-wallet` reference install
+  (`co.za.stephancill.stupid-wallet.dev.extension`) remained alongside the production
+  `co.za.stephancill.stupid-wallet.extension` installed to `My Mac (Designed for iPad)` by the
+  XcodeGen project. The page and the popup could resolve to different instances, so the popup
+  never listed the page's pending requests. Instrumentation (temporary popup + handler logging)
+  showed the popup's `popup.list` never reached native code at all.
+- Fix: unregistered the stale `ios-wallet` appex with `pluginkit -r <path>`; verified exactly one
+  production registration in `pluginkit -m -v`; restarted Safari Technology Preview to drop the
+  cached duplicate; and re-enabled the production extension.
+- A second gotcha: an Xcode **Run** re-install re-registers the plugin and can reset the extension
+  to **disabled** in Safari, which also makes the popup appear empty. After any reinstall, check
+  `~/Library/Containers/com.apple.SafariTechnologyPreview/.../WebExtensions/Extensions.plist` and
+  re-enable the single extension in Safari settings.
+- Reverted all temporary diagnostics after confirming the flow; the clean working tree carries no
+  instrumentation.
+
+### Why
+
+- Native messaging and signing were already proven; the empty popup was a registration/
+  enablement issue, not a request-path defect. Recording the exact external symptoms and the
+  duplicate-registration remediation avoids re-diagnosing the same multi-install mess.
+
+### Verification
+
+- `pluginkit -m -v` lists exactly one `co.za.stephancill.stupid-wallet.extension`
+  (the `.XCInstall` path).
+- Safari Technology Preview `WebExtensions/Extensions.plist` shows
+  `co.za.stephancill.stupid-wallet.extension … Enabled=True`.
+- Connect + sign confirmed working again after re-enabling the single extension.
+
+### Follow-Up
+
+- Consider having the project clean stale extension registrations before a new install, and
+  documenting that Xcode re-runs may require re-enabling the extension in Safari.
+
+## 2026-08-24 - Mac Safari Native Messaging And Signing Proven Via Entitled Install
+
+### Summary
+
+- Owner decision confirmed: local Mac testing routes through Xcode's "My Mac (Designed
+  for iPad/iPhone)" install using the gitignored XcodeGen project at `Mac/`. Re-running the
+  scheme in Xcode performed the **entitled install**, which now spawns the
+  `StupidWalletSafari.appex` plugin as its own process, so Safari's `sendNativeMessage` reaches
+  the native handler (previously `Launchd job spawn failed`).
+- Verified end to end on the Mac: EIP-6963 discovery, `eth_requestAccounts` connect consumed,
+  `personal_sign` prepared → approved in the Safari popup → native device-owner authentication →
+  signature returned, and the returned signature **independently recovered to the registered
+  account** via `cast wallet verify` ("Validation succeeded").
+- A re-imported wallet on the Mac is required: new-format keys are `ThisDeviceOnly` and do not
+  synchronize from the iPhone; the old-format same-device migration has no material on the Mac.
+
+### Why
+
+- The previous entries recorded the launchd-plugin-spawn boundary. The entitled install closes
+  it: macOS can launch the appex plugin for native messaging, so the full request/approval/signing
+  path now works on Apple Silicon Safari instead of requiring TestFlight.
+
+### Verification
+
+- `personal_sign` pending record moved to `consumed` with a 65-byte signature; recovering the
+  signer returned the registered account.
+- Keychain note for future debugging: `.userPresence` keychain items are ACL-protected and are
+  **not visible to the `security` CLI** (reports item-not-found) even when signing succeeds; do
+  not treat that probe as a missing key.
+- Also fixed in the generated project: XcodeGen was overwriting `entitlements.path` files with
+  empty plists, so the signed app lacked the App Group and keychain groups (the app did not see
+  the pre-existing wallet, and wallet creation failed to "share with the Safari extension"). The
+  project now keeps gitignored entitlements under `Mac/` and sets `CODE_SIGN_ENTITLEMENTS` per
+  target; the signed app and appex carry `com.apple.security.application-groups` and
+  `keychain-access-groups`. The API-created development identity (`P6ZUM5V6TP`) used by the
+  Mac-native-messaging profiles was imported into the login keychain from the `stupid-app`
+  credential store so xcodebuild can sign.
+
+### Follow-Up
+
+- Transaction broadcast (`eth_sendTransaction`) on the Mac still needs network-verified proof.
+- `stupid-app run --mac` remains web-content-only; the full Mac flow uses the Xcode project.
+
+## 2026-08-24 - Gitignored Xcode Project For Mac Testing
+
+### Summary
+
+- Owner decision: route local Mac testing/install through `xcodebuild` so Apple's entitled
+  installer performs the placement and creates the launchd/RBS plugin registration that enables
+  Safari native messaging (see the native-messaging launch boundary entry below). This is a
+  Mac-testing-only exception; `stupid-app` remains the build/sign/release authority elsewhere.
+- Added a **gitignored** Xcode project under `Mac/` (not tracked): `Mac/project.yml`
+  (XcodeGen spec) generating `Mac/StupidWalletMac.xcodeproj`. It uses the existing source and
+  package directly:
+  - App target `StupidWalletApp` compiles `Sources/StupidWallet` (the existing `@main` SwiftUI
+    app).
+  - Extension target `StupidWalletSafariExt` compiles `Sources/StupidWalletSafari`
+    (`NSExtensionRequestHandling` handler), embeds the `SafariExtension/Resources` at the appex
+    root via a copy script, and carries the `NSExtension` (`com.apple.Safari.web-extension`)
+    info.
+  - `StupidWalletCore` is built as a project-local framework compiling `Sources/StupidWalletCore`
+    plus the `Sources/CSecp256k1` C sources, with project-local module glue
+    (`Mac/CSecp256k1Module`, gitignored) that mirrors the package's cSettings
+    (`ENABLE_MODULE_RECOVERY`/`ENABLE_MODULE_ECDH`).
+- No new product source was added to the repository, and no existing source file was modified.
+  The project targets are named `StupidWalletApp`/`StupidWalletSafariExt` to avoid colliding with
+  the package's library products (`StupidWallet`, `StupidWalletSafari`).
+
+### Why
+
+- The iOS-compat extension's web content runs under `stupid-app run --mac`, but native messaging
+  requires the appex to be spawnable as a launchd/RBS plugin, which only the entitled installer
+  creates. Routing the Mac run through Xcode's "My Mac (Designed for iPad/iPhone)" destination
+  uses that installer. The project must use the existing package source with no Mac-specific
+  product code, so it references `Sources/` via XcodeGen and the shared package.
+- Early XcodeGen experiments rewrote tracked plists when `info.path`/`entitlements.path` pointed
+  at repo files; the final spec copies entitlements and generates Info plists inside `Mac/`
+  (gitignored) and the tracked files were restored unchanged.
+
+### Verification
+
+- `xcodegen generate` produces `Mac/StupidWalletMac.xcodeproj`; `git status` shows `Mac/`
+  ignored and no tracked file modified by the project.
+- `xcodebuild -project Mac/StupidWalletMac.xcodeproj -scheme StupidWallet -destination
+  'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build` succeeds.
+- The same build succeeds for `-destination 'platform=macOS,arch=arm64'` (My Mac, Designed for
+  iPad/iPhone), producing `StupidWallet.app` with `PlugIns/StupidWalletSafari.appex` containing
+  the handler executable, `Info.plist` with `NSExtension` (point
+  `com.apple.Safari.web-extension`, principal class `StupidWalletSafari.SafariWebExtensionHandler`),
+  and the Safari resources (`manifest.json`, scripts, popup, icons) at the appex root.
+- Bundle identifiers verified: app `co.za.stephancill.stupid-wallet`, extension
+  `co.za.stephancill.stupid-wallet.extension`.
+
+### Follow-Up
+
+- `xcodebuild build` with `-destination 'platform=macOS,arch=arm64'` signs and produces the
+  Designed-for-iPad app, but the entitled install to the Mac happens on Xcode's **Run** action
+  (GUI), not on an `xcodebuild` build. Open `Mac/StupidWalletMac.xcodeproj`, select
+  "My Mac (Designed for iPad/iPhone)", and Run once; that installs via the entitled installer and
+  creates the launchd/RBS plugin registration. Then re-verify Safari native messaging end to end:
+  `eth_requestAccounts` creates a canonical pending request, popup approval, fresh device-owner
+  authentication, and recovered-signer verification.
+- Signing for xcodebuild uses the API-created development identity (`P6ZUM5V6TP`) that the
+  Mac-native-messaging profiles were created with; that identity was imported into the login
+  keychain from the `stupid-app` credential store (reversible with `security delete-certificate`).
+- `stupid-app run --mac` continues to support iOS-compat web content only.
+
+## 2026-08-24 - macOS Native Messaging Plugin Launch Boundary
+
+### Summary
+
+- Investigated the connect failure on macOS Safari Technology Preview at a test dapp
+  (`networked.art/auth/connect`): the dapp listed `stupid wallet` via EIP-6963 and showed
+  `Waiting for stupid wallet confirmation...`, but no canonical pending request was created.
+- Root cause found by surfacing the raw `sendNativeMessage` error end to end: Safari routes the
+  message to the extension host app but **cannot spawn the iOS-compat appex plugin**:
+  `Invalid call to runtime.sendNativeMessage(). RBSLaunchRequest error trying to launch plugin
+  …: Launch failed … Launchd job spawn failed`.
+- Conclusion: on Apple Silicon Mac, `run --mac`'s LaunchServices + `pluginkit` registration lets
+  Safari load the extension's **web content** (background page, content scripts, EIP-6963
+  announce) but does **not** create the launchd/RBS plugin registration required to spawn the
+  `StupidWalletSafari.appex` process for native messaging. The entitled installer
+  (Xcode/TestFlight `.XCInstall`) creates that registration; the `sendNativeMessage` application
+  ID is not the cause.
+- The old `../ios-wallet` used the identical mechanism — `sendNativeMessage("co.za.stephancill.stupid-wallet")`
+  to a `SafariWebExtensionHandler` (`NSExtensionRequestHandling`) with the plain bundle ID — and
+  signed on desktop because it was installed via Xcode, which creates the launchd plugin
+  registration. The new app uses the same plain bundle ID, confirming the ID is correct.
+- Reverted all temporary diagnostic instrumentation (JS logging, Swift `os_log`/marker files,
+  manifest version bumps) and the experimental Team-ID-prefixed application ID; restored the
+  original plain bundle ID and manifest version.
+
+### Why
+
+- Needed to distinguish a signing/persistence bug from an installation/platform boundary. The
+  definitive error separated "native messaging delivers but the app handler cannot start" from
+  "the handler runs but rejects the request".
+- Recording that macOS native messaging for an iPhone/iPad-compat Safari extension requires the
+  launchd plugin registration that only Apple's entitled installer creates, so future work does
+  not chase the application ID.
+
+### Verification
+
+- EIP-6963 discovery and provider injection work in Tech Preview without manual event injection.
+- Reproduced: click `stupid wallet` → dapp hangs (`Waiting for stupid wallet confirmation...`) or
+  reports `Active chain unavailable`. The surfaced raw error named `RBSLaunchRequest … Launch
+  failed … Launchd job spawn failed` while trying to launch `co.za.stephancill.stupid-wallet.extension`.
+- Neither the plain bundle ID nor the Team-ID-prefixed application ID changed delivery; the
+  handler's `beginRequest` did not execute (no marker file, no response reaching it).
+- Both plain and composite application IDs produce the same launchd-spawn failure, confirming the
+  application ID is not the fix.
+
+### Follow-Up
+
+- To prove signing/native messaging on an Apple Silicon Mac, use the TestFlight build (or an
+  Xcode-installed build) whose install creates the launchd plugin registration, per the acceptance
+  workflow in `docs/macos-safari-extension-install-handover.md`.
+- `stupid-app run --mac` supports the extension's web content on this host but cannot deliver
+  native messaging; keep the iOS simulator/device path for the full connect/approval/signing flow.
+
+## 2026-08-24 - macOS Safari Installation Problem Handover
+
+### Summary
+
+- Added `docs/macos-safari-extension-install-handover.md` as a focused handover for the local
+  macOS Safari extension failure.
+- Consolidated the observed failure signatures, InstallCoordination evidence, rejected signing
+  hypotheses, retained CLI behavior, completed verification, TestFlight verification sequence,
+  and closure criteria.
+
+### Why
+
+- The main engineering handover describes the whole wallet and the chronological notes preserve
+  the investigation, but the unresolved cross-repository installation problem needed one
+  operational document that a future engineer can follow without reconstructing the diagnosis.
+
+### Verification
+
+- Cross-checked the handover against the current wallet and CLI handovers, implementation notes,
+  source locations, test count, release build result, doctor result, and fail-fast error.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Execute the documented TestFlight-on-Mac acceptance sequence; do not treat an Xcode-controlled
+  diagnostic build as proof of the `stupid-app` artifact.
+
+## 2026-08-24 - macOS Extension Installation Boundary
+
+### Summary
+
+- Traced the macOS Safari launch failure past signing and provisioning to the installation layer.
+- Confirmed that Xcode creates app and PlugInKit placeholders through its entitled
+  `IDEInstallService`, while direct wrapper copy plus LaunchServices registration does not create
+  the nested extension's MobileInstallation record.
+- Changed the CLI to reject extension-bearing `run --mac` projects before build; this wallet must
+  use Xcode or TestFlight for local macOS Safari verification.
+- Removed the rejected profile/signature experiments from the CLI so ordinary iOS development and
+  distribution signing keep their previously qualified profile and signature formats.
+
+### Why
+
+- The extension executable itself runs and its development profile authorizes the Mac, but Safari's
+  managed launch still reports no matching profile after a LaunchServices-only install.
+- macOS explicitly rejects non-Apple clients of InstallCoordination for missing the private allowed
+  entitlement. Using Xcode's test-host path would require Xcode to modify and sign the app, violating
+  the project's single source of build truth and one-signing-pass rules.
+
+### Verification
+
+- Unified logs captured Xcode's complete `.XCInstall` transaction and the direct CLI entitlement
+  rejection.
+- `xcodebuild test` invoked the entitled install helper on the Designed for iPad/iPhone destination;
+  `xcodebuild install` did not perform device-style installation.
+- The CLI's 262-test suite passed, its release build succeeded, and `doctor` completed with zero
+  failures and warnings. Running the release binary with `run --mac` in this project returned the
+  extension-specific failure before profile lookup, build, signing, or installation.
+
+### Follow-Up
+
+- Install a current TestFlight build or use Xcode for the remaining macOS Safari provider, native
+  messaging, popup, shared-storage, and authenticated-signing checks.
+
+## 2026-08-24 - Immediate Persisted Activity
+
+### Summary
+
+- Changed global Activity and connected-app details to read and render their persisted activity
+  before refreshing transaction receipts.
+- Receipt polling still runs when either screen opens or is manually refreshed, and the visible
+  rows are replaced afterward with any updated transaction statuses.
+
+### Why
+
+- The previous load order awaited serial RPC polling for every unresolved transaction before reading
+  SQLite, leaving Activity behind a spinner even though its persisted rows were local. The initial
+  connected-app-only fix did not address the same ordering in the global Activity screen; testing
+  with a copied production-shaped database made that remaining delay clear.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ConnectedAppsView.swift` and
+  `git diff --check` passed.
+- `swift test`: 124 tests in 21 suites passed, including connected-app activity filtering.
+- The repository debugging skill passed `quick_validate.py`.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid
+  <preferred-simulator>` rebuilt, installed, and launched the app and extension.
+- A consistent SQLite backup of the Mac compatibility app's activity database was restored into
+  the stopped simulator app's App Group for realistic testing. Source and destination row counts
+  matched, the simulator database passed `PRAGMA integrity_check`, and the app relaunched.
+- With that production-shaped database containing multiple unresolved transactions, simulator
+  accessibility inspection found persisted Activity rows within 0.6 seconds of selecting Activity;
+  receipt polling continued without holding the list behind the loading indicator.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-24 - Local Apple Silicon Mac Run
 
 ### Summary
@@ -611,6 +1054,90 @@ Use this entry template:
 ### Follow-Up
 
 - None.
+
+## 2026-08-24 - macOS Safari Popup Propagation Resolved
+
+### Summary
+
+- Reproduced the Mac-only state where a canonical pending send existed while the Safari toolbar
+  popup displayed no requests.
+- Found two enabled `stupid wallet` rows in Safari Settings with the same production extension
+  identity but different manifest versions. Disabled only the stale row, kept the current row
+  enabled, and restored the current toolbar item through Safari's toolbar customization UI.
+- Changed popup `list`, `approve`, and `reject` operations to contact native directly on macOS so
+  page status polling cannot block the review surface. The established background-worker route is
+  retained as a transport fallback for Safari environments where direct native messaging fails.
+- Bumped the WebExtension manifest to `0.1.22` and the Mac diagnostic app/extension build number to
+  `3`. Kept `ENABLE_DEBUG_DYLIB: NO` for the compatibility-extension Xcode build.
+- Added JavaScript regression coverage for both the direct native list and its background fallback.
+- Removed the temporary App Group `handle-diag.log` instrumentation after it proved the boundary.
+
+### Why
+
+- PlugInKit showed one current registration and the running native plugin was current, but Safari
+  could still select stale page/popup resources from its duplicate enabled version row. The popup
+  also shared the busy MV3 worker used by request-status polling, making its security-critical
+  review path unnecessarily dependent on worker responsiveness.
+
+### Verification
+
+- Xcode 26.1.1 Run installed app and extension build `3`; the installed manifest was `0.1.22`, and
+  Safari launched the current monolithic extension executable.
+- With only the current Safari Settings row enabled, the toolbar popup immediately rendered the
+  canonical send card. Native diagnostics recorded `list profile=nil` and a non-empty pending
+  result for the same current build. The current pending record contained `intentDigest`.
+- Both diagnostic requests were rejected through the popup. No transaction was signed or
+  broadcast.
+- `node --check SafariExtension/Resources/popup.js` passed; `node --test
+  Tests/JavaScript/*.test.mjs` passed 4 tests; `swift test` passed 127 tests in 21 suites.
+- `stupid-app doctor` completed with 0 failures and 0 warnings. `stupid-app build` succeeded and
+  packaged manifest `0.1.22`. The Xcode 26.1.1 `StupidWallet` Debug build for the Mac compatibility
+  destination succeeded; it retained the existing orientation/launch-screen warnings.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Prove a Mac `eth_sendTransaction` approval with system authentication and a network-verified
+  receipt. This propagation investigation intentionally stopped before signing.
+- Continue the physical-device Safari signing acceptance gate; the background fallback preserves
+  the previously proven iOS popup route.
+
+## 2026-08-24 - Safari Rejection Badge Synchronization
+
+### Summary
+
+- Fixed the toolbar badge remaining after a successful popup rejection.
+- Added a `popup.didDecide` worker message. A successful direct popup decision now synchronizes the
+  decided request ID back to the worker before Safari destroys the popup document.
+- Centralized worker badge updates so a zero-size request map clears Safari's badge with an empty
+  string instead of setting the visible text `0`.
+- Applied the same normalized badge update to preparation, polling cleanup, rejection, resolution,
+  expiry, failure, and reject-all paths.
+- Bumped the WebExtension manifest to `0.1.23` and the Mac Xcode diagnostic app/extension build to
+  `4` to prevent Safari from reusing the faulty resources.
+
+### Why
+
+- macOS popup decisions now reach native directly to avoid worker contention. That intentionally
+  bypassed the worker's non-authoritative routing map, but the toolbar badge was still derived from
+  that map. The decision completed durably while the stale ID remained counted until later polling.
+- Safari treats `"0"` as badge content; clearing requires `""`.
+
+### Verification
+
+- `node --check` passed for `background.js` and `popup.js`; the JavaScript suite passed 5 tests,
+  including a deterministic one-request to empty-badge regression.
+- Xcode 26.1.1 Run installed manifest `0.1.23`, containing-app build `4`. Safari Settings was
+  verified with only the current manifest-version row enabled.
+- In Safari Technology Preview, a local prototype connect request changed the toolbar item to
+  `1 item`. Rejecting that exact request immediately removed the badge and returned the expected
+  EIP-1193 4001 rejection to the page. No request was approved or signed.
+
+### Follow-Up
+
+- The badge remains worker-local routing status rather than an authoritative total of every native
+  pending record. If product behavior requires recovery of badge counts after worker suspension,
+  derive it from the native list in a separate reviewed change.
 
 ## 2026-08-23 - Popup Request Renderer Parity
 

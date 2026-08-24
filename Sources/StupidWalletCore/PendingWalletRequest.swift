@@ -23,6 +23,12 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
   /// Immutable dapp intent bound by `payloadDigest` and shown for approval.
   public let params: JSONValue
   public let payloadDigest: String
+  /// Stable identity of the canonical intent used with `requestKey` for idempotent
+  /// `prepare`. Absent on records written before this field existed.
+  public let intentDigest: String?
+  /// Stable per-provider-session request identity. Transport retries reuse this key;
+  /// separate requests use different keys even when their canonical intent is identical.
+  public let requestKey: String?
   /// Wallet-resolved nonce/gas values used for signing, populated only after approval.
   public var resolvedParams: JSONValue?
   public let createdAt: Date
@@ -43,6 +49,8 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     account: String,
     params: JSONValue,
     payloadDigest: String,
+    intentDigest: String? = nil,
+    requestKey: String? = nil,
     resolvedParams: JSONValue? = nil,
     createdAt: Date = Date(),
     expiresAt: Date = Date().addingTimeInterval(600),
@@ -59,6 +67,8 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     self.account = account
     self.params = params
     self.payloadDigest = payloadDigest
+    self.intentDigest = intentDigest
+    self.requestKey = requestKey
     self.resolvedParams = resolvedParams
     self.createdAt = createdAt
     self.expiresAt = expiresAt
@@ -98,6 +108,50 @@ public actor PendingRequestStore {
   public func insert(_ request: WalletPendingRequest) throws {
     let data = try JSONEncoder().encode(request)
     try data.write(to: fileURL(for: request.id), options: [.atomic])
+  }
+
+  /// Atomically inserts a pending request unless the same provider request and intent are
+  /// already pending, returning the existing request's ID in the latter case. The operation is
+  /// serialized both across the in-process actor and **across processes** (app ↔ extension)
+  /// by an OS advisory lock, so duplicate re-sent requests cannot race into two records.
+  public func insertIfAbsent(_ request: WalletPendingRequest) throws -> UUID? {
+    guard request.requestKey != nil else {
+      try insert(request)
+      return nil
+    }
+    let lock = try acquirePrepareLock()
+    defer { releasePrepareLock(lock) }
+    if let existing = try pending().first(where: {
+      $0.requestKey == request.requestKey
+        && $0.intentDigest == request.intentDigest
+        && $0.status == .pending
+    }) {
+      return existing.id
+    }
+    try insert(request)
+    return nil
+  }
+
+  /// Cross-process advisory lock guarding the idempotent prepare check-and-insert. The app
+  /// and Safari extension run in different processes with separate store actors, so the
+  /// actor alone cannot prevent two concurrent identical prepares from both inserting.
+  private nonisolated func acquirePrepareLock() throws -> Int32 {
+    let url = directory.appendingPathComponent(".prepare.lock", isDirectory: false)
+    let descriptor = open(url.path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else {
+      throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+    }
+    guard flock(descriptor, LOCK_EX) == 0 else {
+      let code = errno
+      _ = close(descriptor)
+      throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+    }
+    return descriptor
+  }
+
+  private nonisolated func releasePrepareLock(_ descriptor: Int32) {
+    _ = flock(descriptor, LOCK_UN)
+    _ = close(descriptor)
   }
 
   /// Cross-instance/process one-time claim. Each Safari native message creates a fresh

@@ -110,6 +110,87 @@ struct ConnectedSitesTests {
     #expect(await svc.isConnected(origin: "https://dapp.example"))
   }
 
+  @Test("re-sent identical request converges to one pending record")
+  func idempotentPrepare() async throws {
+    let suite = "grants-\(UUID().uuidString)"
+    let svc = svc(suite)
+    let params: JSONValue = .array([.string("0x1234"), .string("0x6869")])
+
+    let first = try await svc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:1")
+    // The dapp retried after a messaging interruption; native prepare must not
+    // enqueue a duplicate.
+    let retry = try await svc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:1")
+    #expect(retry == first)
+
+    let listed = try await svc.list()
+    #expect(listed.count == 1)
+
+    // A consumed record is not reused: the next identical request is a fresh pending one.
+    _ = try await svc.approve(request: first)
+    let later = try await svc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:1")
+    #expect(later != first)
+  }
+
+  @Test("separate identical requests remain distinct")
+  func identicalButSeparateRequests() async throws {
+    let svc = svc("grants-\(UUID().uuidString)")
+    let params: JSONValue = .array([.string("0x1234"), .string("0x6869")])
+    let first = try await svc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:1")
+    let second = try await svc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:2")
+    #expect(first != second)
+    #expect(try await svc.list().count == 2)
+  }
+
+  @Test("concurrent identical prepares converge to one pending record")
+  func concurrentIdempotentPrepare() async throws {
+    let suite = "grants-\(UUID().uuidString)"
+    let svc = svc(suite)
+    let params: JSONValue = .array([.string("0x1234"), .string("0x6869")])
+    async let first: UUID = try svc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:1")
+    async let second: UUID = try svc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:1")
+    let (a, b) = try await (first, second)
+    #expect(a == b)
+    #expect(try await svc.list().count == 1)
+  }
+
+  @Test("identical prepares across store instances converge (app vs extension)")
+  func crossInstanceIdempotentPrepare() async throws {
+    // Two independent store actors on the same directory model the app and the Safari
+    // extension racing on identical re-sent requests; the OS prepare lock must serialize.
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("XPrepare-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let appStore = PendingRequestStore(directory: dir)
+    let extensionStore = PendingRequestStore(directory: dir)
+    let appSvc = WalletService(store: appStore, signing: StubSigner(), grantsSuite: dir.path)
+    let extensionSvc = WalletService(
+      store: extensionStore, signing: StubSigner(), grantsSuite: dir.path)
+    let params: JSONValue = .array([.string("0x1234"), .string("0x6869")])
+    async let appID: UUID = try appSvc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:1")
+    async let extensionID: UUID = try extensionSvc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-session:1")
+    let (a, b) = try await (appID, extensionID)
+    #expect(a == b)
+    #expect(try await appStore.pending().count == 1)
+  }
+
   @Test("pending approval is bound to the native Safari profile")
   func approvalProfileBinding() async throws {
     let suite = "grants-\(UUID().uuidString)"

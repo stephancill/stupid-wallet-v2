@@ -22,6 +22,13 @@ generic error text and do not bypass the canonical approval protocol.
    duration, stop it rather than waiting indefinitely. Continue with bounded `simctl`,
    App Group inspection, and RPC checks; a log-stream helper hang is not evidence that the
    app hung.
+7. On Apple Silicon Mac, a copied compatibility wrapper plus LaunchServices registration can
+   launch the containing iOS app without creating the MobileInstallation/PlugInKit records Safari
+   needs for its nested extension. Xcode's `IDEInstallService` uses private InstallCoordination and
+   `InstallLocalProvisioned` entitlements; a non-Apple CLI is rejected before installation. Treat a
+   Safari `0xe8008015`/`No matching profile found` after an otherwise valid direct wrapper install as
+   an installation-boundary failure, not another prompt to mutate signatures or profiles. Verify
+   extension-bearing builds through Xcode or TestFlight.
 
 ## Stack Map
 
@@ -84,6 +91,13 @@ record cannot be reconstructed from activity storage alone. Signature schema mig
 restore an empty `signature_hex` from the retained consumed request's 65-byte result; validate the
 length before treating that result as a signature.
 
+Activity lists are local SQLite data and should render before receipt polling. If global Activity or
+a connected-app Activity section shows a blocking spinner for approximately one or more RPC
+timeouts, inspect the view's load order: awaiting `refreshTransactionActivity()` first serially polls
+every unresolved transaction and can delay the query even though persisted rows are already
+available. A realistic database with many unresolved rows exposes this more clearly than a small
+fixture.
+
 Find the booted simulator and App Group pending files without changing them:
 
 ```bash
@@ -97,6 +111,62 @@ jq '{id,kind,method,status,chainId,error,result}' '<pending-file>'
 Do not print or retain full params unless they are necessary for local diagnosis. Never put
 wallet addresses, sensitive payloads, transaction hashes tied to a user, or secrets in
 public implementation notes.
+
+### 1b. Apple Silicon Mac Notes
+
+- The current `stupid-app run --mac` rejects extension-bearing projects because its public
+  installer cannot create the launch records native messaging needs. Mac native-messaging testing
+  routes through the tracked XcodeGen project at `Mac/` (build with `xcodebuild
+  -project Mac/StupidWalletMac.xcodeproj -scheme StupidWallet -destination
+  'platform=macOS,arch=arm64'`, install by running in Xcode on "My Mac (Designed for iPad/iPhone)").
+- A keychain probe from a terminal is **not** evidence a `.userPresence` wallet key is missing:
+  those items are ACL-protected and invisible to `security find-generic-password` /
+  `dump-keychain`, which report item-not-found even when signing succeeds. Judge signing by a
+  consumed pending record and by `cast wallet verify` on the returned signature, not by the CLI.
+- If the signed Xcode build lacks App Group/keychain behavior, check `codesign -d --entitlements
+  :-` first. Keep the tracked `Mac/` entitlements explicit and verify `CODE_SIGN_ENTITLEMENTS`
+  after regeneration rather than changing production identifiers.
+- Wallet keys are `ThisDeviceOnly` and do not sync between the iPhone and the Mac; the Mac needs
+  its own user-authorized import.
+- **Duplicate requests when switching windows/tabs:** transport loss may retry a request. Retry
+  identity is the stable page-session `requestKey` plus the canonical `intentDigest`; native
+  `prepare` converges only when both match. Never deduplicate by intent alone because two deliberate
+  identical transactions must remain separate. A record without `requestKey` is not deduplicated.
+  Confirm retries by comparing `requestKey`, `intentDigest`, and record IDs in App Group
+  `PendingRequests/` without exposing full params.
+- **Empty popup despite pending records:** check for duplicate `stupid wallet` extensions in
+  Safari and for disable-on-reinstall. `pluginkit -m -v` / Safari's `WebExtensions/Extensions.plist`
+  (`~/Library/Containers/com.apple.SafariTechnologyPreview/…`) reveal a second registration (e.g.,
+  a stale `…dev.extension` from the `ios-wallet` reference, or a `run --mac` `.MacInstall`
+  instance). Unregister stale paths with `pluginkit -r <appex>` and relaunch Safari. An Xcode
+  Run re-install re-registers the plugin and can reset the extension to **disabled**; re-enable
+  it in Safari settings before drawing conclusions, otherwise `popup.list` can fail before native
+  code (no `BEGIN`/`list` log).
+- Safari Settings can retain two enabled `stupid wallet` rows with the **same production bundle
+  identity** but different manifest versions even when `pluginkit -m -v` lists only one current
+  registration. Inspect the displayed version for every row, disable only the stale version, and
+  keep the current row enabled. If that removes the shared toolbar item, restore the current item
+  through View → Customize Toolbar. A stale web-extension row can keep page/popup JavaScript old
+  while the native plugin executable is current.
+- On macOS, the popup's canonical `list`/`approve`/`reject` operations should reach native directly
+  so page-status polling cannot starve the review surface. Preserve a background-worker fallback
+  for Safari environments where direct popup-to-native transport reports an error. If a pending
+  record exists but no native `list` arrives when the popup opens, inspect which manifest-version
+  row supplied the popup before weakening store or Safari-profile validation.
+- **Badge remains after direct popup rejection:** direct popup-to-native decisions bypass the
+  background worker's in-memory request map. After native success, notify the worker of the decided
+  request before closing the popup so it deletes the ID and updates its badge. Render zero pending
+  requests with `browser.action.setBadgeText({ text: "" })`; the string `"0"` is still badge text,
+  not a request to clear it. Regression-test both the one-to-zero transition and the empty string.
+- Xcode Debug's split executable (`ENABLE_DEBUG_DYLIB`) can leave Safari launching a stale
+  monolithic plugin image while `.XCInstall` contains a current stub + debug dylib. Symptoms are
+  current source strings in `.XCInstall`, but fresh records retain an old schema and current native
+  diagnostics never appear. Set `ENABLE_DEBUG_DYLIB: NO` in the tracked Mac XcodeGen project,
+  increment the diagnostic build number if needed, quit Safari Technology Preview before Xcode
+  Run, then inspect the running plugin with `pgrep -alf StupidWalletSafari` and `lsof -p <pid>`.
+  Do not infer the executing version from `.XCInstall` alone.
+- Open the Mac Safari toolbar popup through its accessibility label with Computer Use rather than
+  assuming a toolbar button index or guessing Retina-scaled coordinates.
 
 ### 3. Inspect JavaScript Envelopes
 

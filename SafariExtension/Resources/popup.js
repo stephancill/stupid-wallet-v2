@@ -1,6 +1,7 @@
 // Safari-owned review surface. Every displayed value comes from the native canonical
 // summary; approval submits only the persisted request ID.
 (() => {
+  const NATIVE_APP_ID = "co.za.stephancill.stupid-wallet";
   const tray = document.getElementById("tray");
 
   const PRESENTATION = {
@@ -26,7 +27,28 @@
     },
   };
 
-  function call(message) {
+  function directNative(action, requestId) {
+    const message = { action };
+    if (requestId !== undefined) message.payload = { requestId };
+    return new Promise((resolve) => {
+      browser.runtime.sendNativeMessage(NATIVE_APP_ID, message, (response) => {
+        if (browser.runtime.lastError) {
+          resolve(null);
+        } else {
+          resolve(response || null);
+        }
+      });
+    });
+  }
+
+  async function native(action, requestId) {
+    const direct = await directNative(action, requestId);
+    if (direct !== null) return direct;
+
+    // Direct popup-to-native messaging is reliable on macOS Safari. Retain the worker
+    // fallback for Safari environments where only background-to-native is available.
+    const message = { type: `popup.${action}` };
+    if (requestId !== undefined) message.requestId = requestId;
     return browser.runtime.sendMessage(message).catch(() => null);
   }
 
@@ -241,10 +263,7 @@
     for (const button of buttons) button.disabled = true;
     const primary = actions.querySelector(".approve");
     if (approve && primary) primary.textContent = "Confirming...";
-    const reply = await call({
-      type: approve ? "popup.approve" : "popup.reject",
-      requestId,
-    });
+    const reply = await native(approve ? "approve" : "reject", requestId);
     if (!reply || reply.ok === false || reply.error) {
       const existing = tray.querySelector(".toast");
       if (existing) existing.remove();
@@ -258,6 +277,11 @@
       }
       return;
     }
+    // Direct popup-to-native decisions bypass the worker, which owns the toolbar badge's
+    // in-memory count. Synchronize it before Safari destroys the popup document.
+    await browser.runtime
+      .sendMessage({ type: "popup.didDecide", requestId })
+      .catch(() => null);
     window.close();
   }
 
@@ -269,12 +293,15 @@
   }
 
   async function refresh() {
-    let reply = await call({ type: "popup.list" });
-    if (reply === null) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      reply = await call({ type: "popup.list" });
-    }
-    render(Array.isArray(reply) ? reply : []);
+    // The review surface talks to native directly. Page status polling may keep the
+    // background worker busy, but it must never delay listing or deciding a request.
+    const reply = await native("list");
+    const pending = Array.isArray(reply)
+      ? reply
+      : reply && reply.ok && reply.data
+        ? reply.data.pending
+        : [];
+    render(Array.isArray(pending) ? pending : []);
   }
 
   refresh();

@@ -38,3 +38,26 @@ test("provider re-announces for a late EIP-6963 consumer", () => {
   assert.equal(Object.isFrozen(announcements[0].info), true);
   assert.equal(announcements[0].provider.isStupidWallet, true);
 });
+
+test("provider assigns separate stable keys to separate requests", () => {
+  const posted = [];
+  const window = new EventTarget();
+  window.postMessage = (message) => posted.push(message);
+
+  vm.runInNewContext(providerSource, {
+    crypto,
+    CustomEvent,
+    Error,
+    Map,
+    Set,
+    window,
+  });
+
+  void window.ethereum.request({ method: "personal_sign", params: ["0x01"] });
+  void window.ethereum.request({ method: "personal_sign", params: ["0x01"] });
+
+  assert.equal(posted.length, 2);
+  assert.notEqual(posted[0].requestKey, posted[1].requestKey);
+  assert.match(posted[0].requestKey, /^[0-9a-f-]{36}:1$/);
+  assert.match(posted[1].requestKey, /^[0-9a-f-]{36}:2$/);
+});
