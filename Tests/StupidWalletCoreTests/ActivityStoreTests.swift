@@ -1,16 +1,24 @@
 import Foundation
+import SQLite3
 import Testing
 
 @testable import StupidWalletCore
 
 struct ActivityStoreTests {
-  @Test("legacy-compatible SQLite activity stores transaction and redacted signature rows")
+  @Test("legacy-compatible SQLite activity stores transaction data and signed messages")
   func storesUnifiedActivity() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "ActivityStoreTests-\(UUID().uuidString)")
     let store = ActivityStore(databaseURL: directory.appendingPathComponent("Activity.sqlite"))
-    let transaction = request(kind: .send, method: "eth_sendTransaction")
-    let signature = request(kind: .message, method: "personal_sign")
+    let transactionData = "0xabcdef"
+    let signedMessage = "hello activity"
+    let messageHex = "0x" + Hex.encode(Array(signedMessage.utf8))
+    let transaction = request(
+      kind: .send, method: "eth_sendTransaction",
+      params: .array([.object(["data": .string(transactionData)])]))
+    let signature = request(
+      kind: .message, method: "personal_sign",
+      params: .array([.string(messageHex), .string(account)]))
 
     try await store.recordTransaction(
       request: transaction, hash: "0x" + String(repeating: "ab", count: 32), nonce: "0x2")
@@ -21,6 +29,89 @@ struct ActivityStoreTests {
     #expect(records.contains { $0.kind == .transaction && $0.status == .submitted })
     #expect(records.contains { $0.kind == .signature && $0.status == .signed })
     #expect(records.first { $0.kind == .transaction }?.nonce == "0x2")
+    #expect(records.first { $0.kind == .transaction }?.transactionData == transactionData)
+    #expect(records.first { $0.kind == .signature }?.signedMessage == messageHex)
+    #expect(records.first { $0.kind == .signature }?.signature == "0x010203")
+  }
+
+  @Test("typed-data activity stores the exact signed JSON")
+  func storesTypedDataMessage() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ActivityStoreTests-\(UUID().uuidString)")
+    let store = ActivityStore(databaseURL: directory.appendingPathComponent("Activity.sqlite"))
+    let typedData = #"{"primaryType":"Mail","message":{"contents":"Hello"}}"#
+    let signature = request(
+      kind: .typedData, method: "eth_signTypedData_v4",
+      params: .array([.string(account), .string(typedData)]))
+
+    try await store.recordSignature(request: signature, signature: [4, 5, 6])
+
+    let record = try #require(await store.activities().first)
+    #expect(record.signedMessage == typedData)
+  }
+
+  @Test("a repeated deterministic signature enriches an older redacted row")
+  func enrichesRedactedSignature() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ActivityStoreTests-\(UUID().uuidString)")
+    let store = ActivityStore(databaseURL: directory.appendingPathComponent("Activity.sqlite"))
+    let signature = [UInt8](repeating: 7, count: 65)
+    try await store.recordSignature(
+      request: request(kind: .message, method: "personal_sign"), signature: signature)
+    let messageHex = "0x" + Hex.encode(Array("signed again".utf8))
+    try await store.recordSignature(
+      request: request(
+        kind: .message, method: "personal_sign",
+        params: .array([.string(messageHex), .string(account)])),
+      signature: signature)
+
+    let records = try await store.activities()
+    #expect(records.count == 1)
+    #expect(records.first?.signedMessage == messageHex)
+    #expect(records.first?.signature == "0x" + String(repeating: "07", count: 65))
+  }
+
+  @Test("schema migration backfills retained canonical request content")
+  func backfillsRetainedRequests() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ActivityStoreTests-\(UUID().uuidString)")
+    let databaseURL = directory.appendingPathComponent("Activity.sqlite")
+    let pendingDirectory = directory.appendingPathComponent("PendingRequests")
+    let store = ActivityStore(
+      databaseURL: databaseURL, pendingRequestDirectory: pendingDirectory)
+    let transactionData = "0x1234"
+    let transaction = request(
+      kind: .send, method: "eth_sendTransaction",
+      params: .array([.object(["data": .string(transactionData)])]))
+    let messageHex = "0x" + Hex.encode(Array("retained message".utf8))
+    var signature = request(
+      kind: .message, method: "personal_sign",
+      params: .array([.string(messageHex), .string(account)]))
+    let signatureHex = "0x" + String(repeating: "11", count: 65)
+    signature.result = .string(signatureHex)
+    try await store.recordTransaction(
+      request: transaction, hash: "0x" + String(repeating: "ef", count: 32), nonce: "0x4")
+    try await store.recordSignature(request: signature, signature: [8, 9, 10])
+
+    var database: OpaquePointer?
+    #expect(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
+    let migrationSetup = """
+      UPDATE transactions SET transaction_data = NULL;
+      UPDATE signatures SET message_content = '', signature_hex = '';
+      PRAGMA user_version=6;
+      """
+    #expect(sqlite3_exec(database, migrationSetup, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close(database)
+    let pendingStore = PendingRequestStore(directory: pendingDirectory)
+    try await pendingStore.insert(transaction)
+    try await pendingStore.insert(signature)
+
+    let migrated = ActivityStore(
+      databaseURL: databaseURL, pendingRequestDirectory: pendingDirectory)
+    let records = try await migrated.activities()
+    #expect(records.first { $0.kind == .transaction }?.transactionData == transactionData)
+    #expect(records.first { $0.kind == .signature }?.signedMessage == messageHex)
+    #expect(records.first { $0.kind == .signature }?.signature == signatureHex)
   }
 
   @Test("transaction lifecycle updates are durable")
@@ -89,10 +180,9 @@ struct ActivityStoreTests {
 
   private func request(
     kind: RequestKind, method: String, origin: String = "https://dapp.example",
-    profileID: String? = nil
+    profileID: String? = nil, params: JSONValue = .array([])
   ) -> WalletPendingRequest {
     let id = UUID()
-    let params = JSONValue.array([])
     return WalletPendingRequest(
       id: id, kind: kind, method: method, origin: origin, profileID: profileID, chainId: "8453",
       account: account, params: params,

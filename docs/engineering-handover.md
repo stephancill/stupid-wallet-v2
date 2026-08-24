@@ -164,9 +164,10 @@ is retained. New transaction rows bind the canonical request ID, hash, chain, ac
 origin, and nonce, then move through submitted/pending/confirmed/reverted/dropped/replaced
 states. Receipt polling uses the same `RPCResolver`; a missing receipt remains non-terminal
 while the node knows the transaction or during a propagation grace period, then the latest
-account nonce distinguishes dropped from replaced. New signature rows retain only a digest
-and metadata, not plaintext messages or signatures. New transaction and signature rows also
-retain the native Safari profile identifier so connected-app activity can be queried by exact
+account nonce distinguishes dropped from replaced. New signature rows retain a digest, the exact
+signed message or typed-data JSON, the complete resulting signature, and request metadata. New
+transaction rows retain the canonical calldata alongside their existing metadata. Transaction and
+signature rows also retain the native Safari profile identifier so connected-app activity can be queried by exact
 normalized origin and profile; legacy hostname-only app details query by domain. The app
 exposes a minimal activity list, polls while its activity task is foreground-active, and
 supports manual refresh. A funded
@@ -192,8 +193,20 @@ shown as unavailable. Expanding the aggregate balance lists every included netwo
 non-zero balance as an individual row, using the same fetch results as the total. Rows are
 ordered by descending full-width wei balance and render as left-aligned `Network • Balance` rows.
 Zero and unavailable balances are omitted; when no non-zero rows exist, the expansion
-affordance is hidden and disabled. Signature activity details remain redacted rather than restoring
-persisted plaintext messages or signatures.
+affordance is hidden and disabled. Activity details show persisted transaction calldata and signed
+message content as multiline text. Legacy signature content remains readable, while
+schema migration backfills rebuild-era transaction calldata and signed messages from retained
+canonical pending requests joined by request ID. Rows too old to have that request linkage remain
+unchanged. EIP-712 activity follows the old app's readable hierarchy: known Domain fields in fixed
+order and alphabetized root Message fields, with nested objects and arrays pretty-printed. Invalid
+typed-data JSON falls back to exact raw content. Long-pressing anywhere on a structured EIP-712
+message opens the compact Copy edit menu and copies the complete original JSON rather than one
+display field. Signature details also display the complete signature in a middle-truncated row;
+long-pressing it opens the same compact Copy edit menu. Method, status, signature, account, network,
+and timestamp share one Signature section rather than splitting verification metadata into a
+second section. Schema migration restores rebuild-era signatures from retained consumed request
+results when available. Activity list and detail content uses regular system typography throughout;
+hashes, addresses, signatures, and typed-data hex values are not monospaced.
 
 Settings also includes a separate destructive Forget Account section. Its modal confirmation
 alert warns that the private key will be removed and requires an explicit destructive choice.

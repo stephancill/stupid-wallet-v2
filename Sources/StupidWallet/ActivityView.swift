@@ -84,7 +84,7 @@ import SwiftUI
             if let hash = item.transactionHash {
               HStack {
                 Text("Hash")
-                CopyableHashText(hash: hash)
+                CopyableText(value: hash)
                   .frame(maxWidth: .infinity)
               }
             }
@@ -95,15 +95,26 @@ import SwiftUI
               detailRow("Block", decimalBlockNumber(blockNumber))
             }
           }
+          if let transactionData = item.transactionData {
+            activityContentSection(title: "Data", content: transactionData)
+          }
         } else {
           Section("Signature") {
             detailRow("Method", item.method)
             detailRow("Status", item.status.rawValue.capitalized)
-          }
-          Section("Verification") {
-            detailRow("From", item.account, monospaced: true)
+            if let signature = item.signature, !signature.isEmpty {
+              HStack {
+                Text("Signature")
+                CopyableText(value: signature)
+                  .frame(maxWidth: .infinity)
+              }
+            }
+            detailRow("From", item.account)
             detailRow("Network", NetworkInfo.name(for: normalizedChainID(item.chainID)))
             detailRow("Timestamp", item.createdAt.formatted(date: .abbreviated, time: .shortened))
+          }
+          if let signedMessage = item.signedMessage, !signedMessage.isEmpty {
+            signedMessageSection(content: signedMessage, method: item.method)
           }
         }
       }
@@ -118,13 +129,12 @@ import SwiftUI
       connectedSite = await ConnectedSitesStore().all().first { item.belongs(to: $0) }
     }
 
-    private func detailRow(_ label: String, _ value: String, monospaced: Bool = false) -> some View
-    {
+    private func detailRow(_ label: String, _ value: String) -> some View {
       HStack {
         Text(label)
         Spacer()
         Text(value)
-          .font(monospaced ? .system(.body, design: .monospaced) : .body)
+          .font(.body)
           .foregroundStyle(.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -139,6 +149,184 @@ import SwiftUI
         return String(number)
       }
       return UInt64(value).map(String.init) ?? value
+    }
+
+    private func activityContentSection(title: String, content: String) -> some View {
+      Section(title) {
+        Text(content)
+          .font(.body)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+
+    @ViewBuilder
+    private func signedMessageSection(content: String, method: String) -> some View {
+      if method.lowercased() == "eth_signtypeddata_v4",
+        let typedData = typedDataDisplay(content)
+      {
+        Section("Message") {
+          VStack(alignment: .leading, spacing: 16) {
+            if !typedData.domain.isEmpty {
+              typedDataGroup(title: "Domain", fields: typedData.domain)
+            }
+            if !typedData.message.isEmpty {
+              typedDataGroup(title: "Message", fields: typedData.message)
+            }
+          }
+          .overlay {
+            CopyableContentOverlay(content: content)
+          }
+        }
+      } else {
+        activityContentSection(
+          title: "Message", content: displaySignedMessage(content, method: method))
+      }
+    }
+
+    private func typedDataGroup(title: String, fields: [TypedDataDisplayField]) -> some View {
+      VStack(alignment: .leading, spacing: 12) {
+        Text(title)
+          .font(.subheadline)
+          .fontWeight(.medium)
+        ForEach(fields) { field in
+          VStack(alignment: .leading, spacing: 4) {
+            Text(field.label.uppercased())
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+            Text(field.value)
+              .font(.callout)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+        }
+      }
+      .padding(.vertical, 4)
+    }
+
+    private func typedDataDisplay(_ content: String) -> TypedDataDisplay? {
+      guard let data = content.data(using: .utf8),
+        let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+        case .object(let root) = value
+      else { return nil }
+
+      let domainOrder = [
+        ("name", "Name"),
+        ("version", "Version"),
+        ("chainId", "Chain"),
+        ("verifyingContract", "Verifying Contract"),
+      ]
+      let domain: [TypedDataDisplayField]
+      if case .object(let values)? = root["domain"] {
+        domain = domainOrder.compactMap { key, label in
+          values[key].map {
+            TypedDataDisplayField(label: label, value: formattedJSONValue($0))
+          }
+        }
+      } else {
+        domain = []
+      }
+      let message: [TypedDataDisplayField]
+      if case .object(let values)? = root["message"] {
+        message = values.keys.sorted().compactMap { key in
+          values[key].map {
+            TypedDataDisplayField(label: key, value: formattedJSONValue($0))
+          }
+        }
+      } else {
+        message = []
+      }
+      guard !domain.isEmpty || !message.isEmpty else { return nil }
+      return TypedDataDisplay(domain: domain, message: message)
+    }
+
+    private func formattedJSONValue(_ value: JSONValue) -> String {
+      if let string = value.stringValue { return string }
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+      return (try? String(decoding: encoder.encode(value), as: UTF8.self)) ?? ""
+    }
+
+    private func displaySignedMessage(_ value: String, method: String) -> String {
+      guard method.lowercased() == "personal_sign", let bytes = Hex.data(value),
+        let decoded = String(bytes: bytes, encoding: .utf8)
+      else { return value }
+      return decoded
+    }
+  }
+
+  private struct TypedDataDisplay {
+    let domain: [TypedDataDisplayField]
+    let message: [TypedDataDisplayField]
+  }
+
+  private struct TypedDataDisplayField: Identifiable {
+    let label: String
+    let value: String
+    var id: String { label }
+  }
+
+  private struct CopyableContentOverlay: UIViewRepresentable {
+    let content: String
+
+    func makeCoordinator() -> Coordinator {
+      Coordinator(content: content)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+      let view = UIView()
+      view.backgroundColor = .clear
+      let interaction = UIEditMenuInteraction(delegate: context.coordinator)
+      view.addInteraction(interaction)
+      let recognizer = UILongPressGestureRecognizer(
+        target: context.coordinator,
+        action: #selector(Coordinator.showCopyMenu(_:)))
+      recognizer.cancelsTouchesInView = false
+      view.addGestureRecognizer(recognizer)
+      context.coordinator.view = view
+      context.coordinator.interaction = interaction
+      return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+      context.coordinator.content = content
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, @preconcurrency UIEditMenuInteractionDelegate {
+      var content: String
+      weak var view: UIView?
+      var interaction: UIEditMenuInteraction?
+
+      init(content: String) {
+        self.content = content
+      }
+
+      @objc func showCopyMenu(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began, let view, let interaction else { return }
+        interaction.presentEditMenu(
+          with: UIEditMenuConfiguration(
+            identifier: nil,
+            sourcePoint: recognizer.location(in: view)))
+      }
+
+      func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        suggestedActions: [UIMenuElement]
+      ) -> UIMenu? {
+        UIMenu(children: [
+          UIAction(title: "Copy") { [content] _ in
+            UIPasteboard.general.string = content
+          }
+        ])
+      }
+
+      func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        targetRectFor configuration: UIEditMenuConfiguration
+      ) -> CGRect {
+        view?.bounds ?? .null
+      }
     }
   }
 
@@ -181,11 +369,11 @@ import SwiftUI
     }
   }
 
-  private struct CopyableHashText: UIViewRepresentable {
-    let hash: String
+  private struct CopyableText: UIViewRepresentable {
+    let value: String
 
     func makeCoordinator() -> Coordinator {
-      Coordinator(transactionHash: hash)
+      Coordinator(value: value)
     }
 
     func makeUIView(context: Context) -> UILabel {
@@ -209,18 +397,18 @@ import SwiftUI
     }
 
     func updateUIView(_ label: UILabel, context: Context) {
-      label.text = hash
-      context.coordinator.transactionHash = hash
+      label.text = value
+      context.coordinator.value = value
     }
 
     @MainActor
     final class Coordinator: NSObject, @preconcurrency UIEditMenuInteractionDelegate {
-      var transactionHash: String
+      var value: String
       weak var label: UILabel?
       var interaction: UIEditMenuInteraction?
 
-      init(transactionHash: String) {
-        self.transactionHash = transactionHash
+      init(value: String) {
+        self.value = value
       }
 
       @objc func showCopyMenu(_ recognizer: UILongPressGestureRecognizer) {
@@ -237,8 +425,8 @@ import SwiftUI
         suggestedActions: [UIMenuElement]
       ) -> UIMenu? {
         UIMenu(children: [
-          UIAction(title: "Copy") { [transactionHash] _ in
-            UIPasteboard.general.string = transactionHash
+          UIAction(title: "Copy") { [value] _ in
+            UIPasteboard.general.string = value
           }
         ])
       }

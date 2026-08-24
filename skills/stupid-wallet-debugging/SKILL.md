@@ -75,6 +75,15 @@ Use these observations:
 - `rejected` or `expired`: do not reuse it; reproduce a fresh request normally.
 - `consumed`: inspect `result`, then verify the signature or transaction independently.
 
+Activity details intentionally omit Data and Message sections when their SQLite values are null or
+empty. For rebuild-era rows, first compare `PRAGMA user_version` and count empty
+`transaction_data`/`message_content` rows that have a `request_id`; schema migration can safely
+backfill those values from retained `PendingRequests/<request-id>.json` records. Inspect counts and
+request metadata before reading sensitive payloads. Rows without a request ID or retained canonical
+record cannot be reconstructed from activity storage alone. Signature schema migration can likewise
+restore an empty `signature_hex` from the retained consumed request's 65-byte result; validate the
+length before treating that result as a signature.
+
 Find the booted simulator and App Group pending files without changing them:
 
 ```bash

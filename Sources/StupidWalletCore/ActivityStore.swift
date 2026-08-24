@@ -34,6 +34,9 @@ public struct ActivityRecord: Sendable, Equatable, Identifiable {
   public let blockNumber: String?
   public let error: String?
   public let profileID: String?
+  public let transactionData: String?
+  public let signedMessage: String?
+  public let signature: String?
 
   public func belongs(to site: ConnectedSite) -> Bool {
     if let origin = site.origin {
@@ -52,22 +55,32 @@ public enum ActivityStoreError: Error, Sendable, Equatable {
 /// `Activity.sqlite` tables so upgrades retain existing history.
 public actor ActivityStore {
   private let databaseURL: URL
+  private let pendingRequestDirectory: URL
 
   public init(
     databaseURL: URL? = nil,
+    pendingRequestDirectory: URL? = nil,
     appGroupID: String = PendingRequestStore.defaultAppGroup
   ) {
     if let databaseURL {
       self.databaseURL = databaseURL
+      self.pendingRequestDirectory =
+        pendingRequestDirectory
+        ?? databaseURL.deletingLastPathComponent().appendingPathComponent("PendingRequests")
     } else if let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: appGroupID)
     {
       self.databaseURL = container.appendingPathComponent("Activity.sqlite")
+      self.pendingRequestDirectory =
+        pendingRequestDirectory ?? container.appendingPathComponent("PendingRequests")
     } else {
       let base = FileManager.default.urls(
         for: .applicationSupportDirectory, in: .userDomainMask
       ).first!
-      self.databaseURL = base.appendingPathComponent("StupidWallet/Activity.sqlite")
+      let directory = base.appendingPathComponent("StupidWallet")
+      self.databaseURL = directory.appendingPathComponent("Activity.sqlite")
+      self.pendingRequestDirectory =
+        pendingRequestDirectory ?? directory.appendingPathComponent("PendingRequests")
     }
   }
 
@@ -79,12 +92,13 @@ public actor ActivityStore {
       let sql = """
         INSERT INTO transactions
           (tx_hash, app_id, chain_id_hex, method, from_address, created_at, status,
-           request_id, nonce, updated_at, profile_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           request_id, nonce, updated_at, profile_id, transaction_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(tx_hash) DO UPDATE SET
           status = excluded.status, request_id = excluded.request_id,
           nonce = excluded.nonce, updated_at = excluded.updated_at,
-          profile_id = excluded.profile_id;
+          profile_id = excluded.profile_id,
+          transaction_data = excluded.transaction_data;
         """
       try execute(database, sql: sql) { statement in
         bind(hash.lowercased(), to: 1, in: statement)
@@ -98,6 +112,7 @@ public actor ActivityStore {
         bind(nonce, to: 9, in: statement)
         sqlite3_bind_int64(statement, 10, Int64(date.timeIntervalSince1970))
         bindOptional(request.profileID, to: 11, in: statement)
+        bindOptional(Self.transactionData(request.params), to: 12, in: statement)
       }
     }
   }
@@ -106,13 +121,19 @@ public actor ActivityStore {
     request: WalletPendingRequest, signature: [UInt8], at date: Date = Date()
   ) throws {
     let digest = "0x" + Hex.encode(Keccak.keccak256(signature))
+    let signatureHex = "0x" + Hex.encode(signature)
     try withDatabase { database in
       let appID = try upsertApp(database, origin: request.origin)
       let sql = """
-        INSERT OR IGNORE INTO signatures
+        INSERT INTO signatures
           (signature_hash, app_id, chain_id_hex, method, from_address,
-           message_content, signature_hex, created_at, request_id, profile_id)
-        VALUES (?, ?, ?, ?, ?, '', '', ?, ?, ?);
+            message_content, signature_hex, created_at, request_id, profile_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(signature_hash) DO UPDATE SET
+          message_content = excluded.message_content,
+          signature_hex = excluded.signature_hex,
+          request_id = excluded.request_id,
+          profile_id = excluded.profile_id;
         """
       try execute(database, sql: sql) { statement in
         bind(digest, to: 1, in: statement)
@@ -120,9 +141,11 @@ public actor ActivityStore {
         bind(Self.chainHex(request.chainId), to: 3, in: statement)
         bind(request.method, to: 4, in: statement)
         bind(request.account, to: 5, in: statement)
-        sqlite3_bind_int64(statement, 6, Int64(date.timeIntervalSince1970))
-        bind(request.id.uuidString, to: 7, in: statement)
-        bindOptional(request.profileID, to: 8, in: statement)
+        bind(Self.signedMessage(request), to: 6, in: statement)
+        bind(signatureHex, to: 7, in: statement)
+        sqlite3_bind_int64(statement, 8, Int64(date.timeIntervalSince1970))
+        bind(request.id.uuidString, to: 9, in: statement)
+        bindOptional(request.profileID, to: 10, in: statement)
       }
     }
   }
@@ -197,14 +220,14 @@ public actor ActivityStore {
                t.chain_id_hex, COALESCE(t.method, 'eth_sendTransaction'),
                COALESCE(t.from_address, ''), COALESCE(a.uri, a.domain, ''), t.nonce,
                t.created_at, COALESCE(t.updated_at, t.created_at), t.status,
-               t.block_number, t.error, t.profile_id
+               t.block_number, t.error, t.profile_id, t.transaction_data, NULL, NULL
         FROM transactions t LEFT JOIN apps a ON a.id = t.app_id
         \(filter(recordAlias: "t"))
         UNION ALL
         SELECT 'signature', CAST(s.id AS TEXT), s.request_id, NULL,
                s.chain_id_hex, s.method, COALESCE(s.from_address, ''),
-               COALESCE(a.uri, a.domain, ''), NULL, s.created_at, s.created_at,
-               'signed', NULL, NULL, s.profile_id
+                COALESCE(a.uri, a.domain, ''), NULL, s.created_at, s.created_at,
+                 'signed', NULL, NULL, s.profile_id, NULL, s.message_content, s.signature_hex
         FROM signatures s LEFT JOIN apps a ON a.id = s.app_id
         \(filter(recordAlias: "s"))
         ORDER BY 10 DESC, 2 DESC LIMIT ?;
@@ -244,7 +267,8 @@ public actor ActivityStore {
             updatedAt: Date(
               timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 10))),
             status: status, blockNumber: text(statement, 12), error: text(statement, 13),
-            profileID: text(statement, 14)))
+            profileID: text(statement, 14), transactionData: text(statement, 15),
+            signedMessage: text(statement, 16), signature: text(statement, 17)))
       }
       return records
     }
@@ -269,6 +293,7 @@ public actor ActivityStore {
   }
 
   private func createSchema(_ database: OpaquePointer) throws {
+    let previousVersion = try schemaVersion(database)
     try exec(
       database,
       """
@@ -293,9 +318,69 @@ public actor ActivityStore {
     try addColumn(database, table: "transactions", name: "block_number", type: "TEXT")
     try addColumn(database, table: "transactions", name: "error", type: "TEXT")
     try addColumn(database, table: "transactions", name: "profile_id", type: "TEXT")
+    try addColumn(database, table: "transactions", name: "transaction_data", type: "TEXT")
     try addColumn(database, table: "signatures", name: "request_id", type: "TEXT")
     try addColumn(database, table: "signatures", name: "profile_id", type: "TEXT")
-    try exec(database, "PRAGMA user_version=4;")
+    if previousVersion < 7 { try backfillActivityContent(database) }
+    try exec(database, "PRAGMA user_version=7;")
+  }
+
+  private func schemaVersion(_ database: OpaquePointer) throws -> Int {
+    var statement: OpaquePointer?
+    guard sqlite3_prepare_v2(database, "PRAGMA user_version;", -1, &statement, nil) == SQLITE_OK
+    else { throw sqliteError(database) }
+    defer { sqlite3_finalize(statement) }
+    guard sqlite3_step(statement) == SQLITE_ROW else { throw sqliteError(database) }
+    return Int(sqlite3_column_int(statement, 0))
+  }
+
+  private func backfillActivityContent(_ database: OpaquePointer) throws {
+    let files =
+      (try? FileManager.default.contentsOfDirectory(
+        at: pendingRequestDirectory, includingPropertiesForKeys: nil)) ?? []
+    for file in files where file.pathExtension == "json" {
+      guard let data = try? Data(contentsOf: file),
+        let request = try? JSONDecoder().decode(WalletPendingRequest.self, from: data)
+      else { continue }
+
+      if let transactionData = Self.transactionData(request.params) {
+        try execute(
+          database,
+          sql: """
+            UPDATE transactions SET transaction_data = ?
+            WHERE request_id = ? AND (transaction_data IS NULL OR transaction_data = '');
+            """
+        ) { statement in
+          bind(transactionData, to: 1, in: statement)
+          bind(request.id.uuidString, to: 2, in: statement)
+        }
+      }
+      let message = Self.signedMessage(request)
+      if !message.isEmpty {
+        try execute(
+          database,
+          sql: """
+            UPDATE signatures SET message_content = ?
+            WHERE request_id = ? AND message_content = '';
+            """
+        ) { statement in
+          bind(message, to: 1, in: statement)
+          bind(request.id.uuidString, to: 2, in: statement)
+        }
+      }
+      if let signature = request.result?.stringValue, Hex.data(signature)?.count == 65 {
+        try execute(
+          database,
+          sql: """
+            UPDATE signatures SET signature_hex = ?
+            WHERE request_id = ? AND signature_hex = '';
+            """
+        ) { statement in
+          bind(signature, to: 1, in: statement)
+          bind(request.id.uuidString, to: 2, in: statement)
+        }
+      }
+    }
   }
 
   private func addColumn(
@@ -387,5 +472,29 @@ public actor ActivityStore {
       return String(value)
     }
     return chainID
+  }
+
+  private static func transactionData(_ params: JSONValue) -> String? {
+    guard case .array(let values) = params, case .object(let transaction)? = values.first else {
+      return nil
+    }
+    return transaction["data"]?.stringValue ?? transaction["input"]?.stringValue
+  }
+
+  private static func signedMessage(_ request: WalletPendingRequest) -> String {
+    switch request.kind {
+    case .message:
+      guard case .array(let values) = request.params else { return "" }
+      return values.first?.stringValue ?? ""
+    case .typedData:
+      if case .array(let values) = request.params, values.count >= 2 {
+        return values[1].stringValue ?? ""
+      }
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      return (try? String(decoding: encoder.encode(request.params), as: UTF8.self)) ?? ""
+    default:
+      return ""
+    }
   }
 }

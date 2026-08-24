@@ -68,42 +68,106 @@ Use this entry template:
   app as a live iOS process on Apple Silicon Mac.
 - LaunchServices classified the installed wrapper as platform iOS and registered the
   nested Safari Web Extension under the production extension identity.
+- `swift test` passed 124 tests in 21 suites; `stupid-app doctor` completed with zero
+  failures and warnings; and `git diff --check` passed.
 
 ### Follow-Up
 
 - Enable the extension in macOS Safari and complete provider injection, native messaging,
   popup review, shared App Group/keychain, and authenticated-signing verification.
 
-## 2026-08-24 - iOS TestFlight-On-Mac Direction
+## 2026-08-24 - Regular Activity Typography
 
 ### Summary
 
-- Confirmed that the old production iOS TestFlight build installs on Apple Silicon Mac and
-  exposes its bundled Safari Web Extension to macOS Safari.
-- Selected that compatibility path for the rebuild. A separate native macOS or Mac
-  Catalyst target is not required and must not be added without a concrete failed
-  compatibility requirement.
-- Removed the exploratory native Mac target, metadata, configuration, local installation,
-  and associated `stupid-app` native-target changes.
+- Removed every monospaced font override from Activity details, including account addresses and
+  EIP-712 domain hex values.
+- Transaction hashes and signatures continue to use regular UIKit label typography with middle
+  truncation and their existing compact long-press Copy interaction.
 
 ### Verification
 
-- The old production TestFlight build provides the existing-device proof for the selected
-  deployment model.
-- Source and worktree inspection confirmed the exploratory native target and CLI changes
-  were removed while unrelated implementation work remained intact.
-- `swift test` passed 121 tests in 21 suites; `stupid-app doctor` reported zero failures
-  and warnings; and `stupid-app build` produced the unchanged ARM64 iOS app and extension.
-- The restored CLI passed 259 tests in 47 suites after clearing stale SwiftPM objects, and
-  its release binary rebuilt successfully.
-- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and
-  launched the iOS app and bundled extension after the native-target removal.
+- `swift format --in-place Sources/StupidWallet/ActivityView.swift` completed, and source inspection
+  found no remaining monospaced typography in that file.
+- `swift test`: 124 tests in 21 suites passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension with the regular activity typography.
+- `stupid-app build` succeeded. After refreshing uniquely named development profiles,
+  `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` signed, installed, and
+  launched the app and nested extension on the paired iPhone.
 
 ### Follow-Up
 
-- Upload the rebuild through the existing iOS TestFlight pipeline and repeat installation,
-  Safari extension enablement, provider/native messaging, popup approval, shared storage,
-  and authenticated signing on Apple Silicon Mac before closing Gate 8.
+- This change is intentionally scoped to Activity screens; typography in import, network, and
+  private-key settings screens is unchanged.
+
+## 2026-08-24 - Complete Signatures In Activity
+
+### Summary
+
+- Extended signature activity persistence to retain the complete resulting signature alongside the
+  signed content and existing digest metadata.
+- Added a middle-truncated Signature row to signature details. A held touch opens the same compact
+  Copy edit menu used by transaction hashes and copies the complete signature.
+- Folded From, Network, and Timestamp into the Signature section with Method, Status, and Signature,
+  removing the separate Verification section.
+- Advanced the in-place activity schema to version 7. Existing rebuild-era signature rows with an
+  empty `signature_hex` are backfilled from a retained consumed pending-request result when it is a
+  valid 65-byte signature; old-app rows that already contain signatures remain unchanged.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` completed.
+- `swift test`: 124 tests in 21 suites passed, including direct signature persistence,
+  deterministic-row enrichment, and retained-result migration.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension. Schema inspection confirmed version 7 with zero linked empty signatures. OCR
+  showed Method, Status, the middle-truncated signature, From, Network, and Timestamp in one
+  Signature section with no Verification section; a real held touch on the signature opened Copy.
+- `stupid-app build` succeeded. Fresh uniquely named development profiles avoided the existing App
+  Store Connect duplicate-name conflict, and `stupid-app run --network --udid <paired-device>
+  --sudo /usr/bin/sudo` signed, installed, and launched the final app and nested extension on the
+  paired iPhone.
+
+### Follow-Up
+
+- Rows without either an existing signature or a retained canonical request result cannot be
+  reconstructed.
+
+## 2026-08-24 - Structured Typed-Data Activity
+
+### Summary
+
+- Replaced the raw EIP-712 JSON blob in signature activity details with the old app's structured
+  Domain and Message hierarchy.
+- Domain name, version, chain, and verifying contract use a fixed familiar order. Root message keys
+  are alphabetized, scalar values remain readable, and nested objects or arrays use sorted,
+  pretty-printed JSON.
+- Implemented parsing through the shared typed `JSONValue` representation instead of copying the
+  old app's lossy `[String: Any]` casts. Malformed or unsupported typed-data content falls back to
+  the exact persisted JSON.
+- Attached one compact long-press Copy edit menu to the entire structured EIP-712 content area.
+  Copy uses the original persisted JSON string, not an individual formatted field; no permanent
+  copy row or field-level selection UI is shown.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ActivityView.swift` and `git diff --check` passed.
+- `swift test`: 124 tests in 21 suites passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension. OCR of an existing EIP-712 activity showed the structured Domain labels and
+  values followed by readable Message fields, including pretty-printed nested content.
+- A real 1.5-second held touch inside that structured content opened the compact Copy edit menu.
+  Selecting Copy placed the complete 592-byte test JSON on the simulator clipboard.
+- `stupid-app build` succeeded. After refreshing uniquely named development profiles to avoid the
+  existing App Store Connect duplicate-name conflict, `stupid-app run --network --udid
+  <paired-device> --sudo /usr/bin/sudo` signed, installed, and launched the app and nested extension
+  on the paired iPhone.
+
+### Follow-Up
+
+- The structured view intentionally mirrors the old app's root-field presentation rather than
+  recursively expanding every nested EIP-712 type into separate UI rows.
 
 ## 2026-08-24 - MIPD Provider Re-Announcement
 
@@ -139,6 +203,77 @@ Use this entry template:
 ### Follow-Up
 
 - None.
+
+## 2026-08-24 - Current Build Installed On iPhone
+
+### Summary
+
+- Refreshed development provisioning for the containing app and Safari extension, then built,
+  signed, installed, and launched the current activity-detail build on the paired iPhone.
+- Used a distinct profile-name prefix because App Store Connect rejected the default name while
+  duplicate historical profiles existed.
+
+### Verification
+
+- `stupid-app signing setup --kind development --udid <paired-device> --profile-name
+  <unique-prefix>` created app and extension profiles provisioning the selected iPhone.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` signed the app and nested
+  extension, packaged the IPA, installed it over the saved network pairing, and launched the app.
+- The first network attempt encountered a transient Pair-Verify rejection; an immediate retry
+  completed without changing the pairing record.
+
+### Follow-Up
+
+- App Store Connect still contains duplicate historical profiles using the default development
+  profile name. They can be cleaned up separately; the uniquely named current profiles are valid.
+
+## 2026-08-24 - Activity Signed Content Details
+
+### Summary
+
+- Extended the existing shared activity schema in place to version 6 with nullable transaction
+  calldata. Newly recorded transactions persist the canonical `data` value that was approved and
+  signed.
+- Restored signed-message persistence for `personal_sign` and `eth_signTypedData_v4` activity.
+  Personal messages retain their exact hex bytes, typed-data requests retain their exact JSON, and
+  resulting signatures remain redacted.
+- Added selectable multiline Data and Message sections to transaction and signature details.
+  UTF-8 personal messages render as readable text; non-UTF-8 messages remain in exact hex form.
+- Added a one-time upgrade backfill for rebuild-era activity rows that initially rendered without
+  the new sections. It joins each empty row to its retained canonical pending request by request ID
+  and restores the exact transaction calldata or signed content. Rows without retained linkage stay
+  readable and unchanged.
+- Re-signing content whose deterministic signature collides with an older redacted row now enriches
+  that row with the signed message instead of silently keeping it empty.
+
+### Why
+
+- Activity details need to identify the transaction payload and the exact content the account
+  signed, not only method and status metadata.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` and `git diff --check` passed.
+- `swift test`: 124 tests in 21 suites passed, including personal-message bytes, typed-data JSON,
+  transaction calldata, deterministic-signature enrichment, retained-request backfill, and unified
+  activity reads.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension. Before opening Activity, the existing version-5 database had one linked
+  transaction and one linked signature with empty content. Opening Activity migrated to version 6
+  and reduced both missing-content counts to zero without inspecting the payloads.
+- Simulator OCR confirmed the existing signature detail now contains a Message section and the
+  existing transaction detail contains a Data section.
+- `stupid-app build` succeeded, and `stupid-app run --network --udid <paired-device> --sudo
+  /usr/bin/sudo` development-signed, installed, and launched the schema-v6 build and nested Safari
+  extension on the paired iPhone. App Store Connect again had duplicate historical names, so setup
+  used a fresh distinct profile prefix before the successful install.
+
+### Follow-Up
+
+- Signed message content and calldata are sensitive App Group data. A later activity-retention or
+  deletion control should remove them together with their activity rows.
+- Activity rows without a retained canonical request ID cannot be backfilled.
 
 ## 2026-08-24 - Descending Balance Breakdown
 
@@ -207,6 +342,37 @@ Use this entry template:
 - Activity created before profile persistence has no trustworthy profile identity. It remains
   available globally and through legacy domain filtering, but is not attributed to a non-default
   profile-specific grant.
+
+## 2026-08-24 - iOS TestFlight-On-Mac Direction
+
+### Summary
+
+- Confirmed that the old production iOS TestFlight build installs on Apple Silicon Mac and
+  exposes its bundled Safari Web Extension to macOS Safari.
+- Selected that compatibility path for the rebuild. A separate native macOS or Mac
+  Catalyst target is not required and must not be added without a concrete failed
+  compatibility requirement.
+- Removed the exploratory native Mac target, metadata, configuration, local installation,
+  and associated `stupid-app` native-target changes.
+
+### Verification
+
+- The old production TestFlight build provides the existing-device proof for the selected
+  deployment model.
+- Source and worktree inspection confirmed the exploratory native target and CLI changes
+  were removed while unrelated implementation work remained intact.
+- `swift test` passed 121 tests in 21 suites; `stupid-app doctor` reported zero failures
+  and warnings; and `stupid-app build` produced the unchanged ARM64 iOS app and extension.
+- The restored CLI passed 259 tests in 47 suites after clearing stale SwiftPM objects, and
+  its release binary rebuilt successfully.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and
+  launched the iOS app and bundled extension after the native-target removal.
+
+### Follow-Up
+
+- Upload the rebuild through the existing iOS TestFlight pipeline and repeat installation,
+  Safari extension enablement, provider/native messaging, popup approval, shared storage,
+  and authenticated signing on Apple Silicon Mac before closing Gate 8.
 
 ## 2026-08-24 - Home Copy Address Icon
 
