@@ -257,6 +257,11 @@ origin/profile rather than falling back to the hostname entry.
 - A Safari Web Extension resource set (`manifest.json`, MAIN-world `provider.js`,
   isolated-world `bridge.js`, MV3 `background.js`, and `popup.html`/`css`/`js`) packaged at
   the appex root through `stupid-app.yml` `extensions:`/`resources:`.
+- EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
+  announces during initialization and re-announces whenever a dapp dispatches
+  `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
+  provider metadata. Manifest `0.1.20` invalidates the earlier one-shot discovery script,
+  which could be missed when an MIPD consumer initialized after the wallet.
 - One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
   icons, EIP-6963 provider discovery, and the in-page request hint. The canonical 1024-point
   app asset is `Resources/AppIcon.png`; generated browser sizes remain in the extension

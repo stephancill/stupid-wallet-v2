@@ -50,6 +50,41 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-24 - MIPD Provider Re-Announcement
+
+### Summary
+
+- Investigated why the wallet did not appear on a public Wagmi sign-in page. The deployed page
+  enables multi-injected-provider discovery, listens for `eip6963:announceProvider`, and
+  dispatches `eip6963:requestProvider`; manually announcing the existing wallet provider made
+  its button appear immediately.
+- Fixed the wallet's EIP-6963 implementation to re-announce in response to every provider
+  request instead of announcing only once during injection. This removes the initialization
+  race that caused late MIPD consumers to miss the wallet.
+- Replaced the fixed non-v4 provider identifier with a page-session UUIDv4 and froze the
+  announced provider metadata as specified by EIP-6963.
+- Added a dependency-free Node regression for discovery when the consumer starts after the
+  wallet, and bumped the WebExtension manifest to `0.1.20` to invalidate Safari's cached script.
+
+### Verification
+
+- Live bundle and event inspection confirmed the public page uses Wagmi 3.4.6 with
+  `multiInjectedProviderDiscovery` enabled and performs the EIP-6963 request/announce handshake.
+- Loading the exact updated `provider.js` before that page initialized produced a visible
+  `stupid wallet` connector through the real MIPD flow.
+- `oxfmt`, `oxlint`, `node --check`, and `node --test Tests/JavaScript/provider.test.mjs` passed.
+- The updated repository debugging skill passed `quick_validate.py`.
+- `swift test` passed 124 tests in 21 suites. `stupid-app doctor` completed with zero failures
+  and warnings, and `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and manifest `0.1.20` extension.
+- Opening the public sign-in page in simulator Safari after installation showed
+  `stupid wallet` in its connector list between MetaMask and Base Account.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-24 - Descending Balance Breakdown
 
 ### Summary

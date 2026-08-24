@@ -92,6 +92,14 @@ public implementation notes.
 ### 3. Inspect JavaScript Envelopes
 
 - `bridge.js` expects `{ __envelope: true, ok, result|pendingId|error }`.
+- For a wallet missing from an MIPD/Wagmi connector list, inspect the page bundle and window
+  events before blaming connector filtering. A conforming EIP-6963 wallet must both announce
+  during initialization and listen for `eip6963:requestProvider` so it can re-announce after a
+  late consumer registers its listener. A one-shot announcement creates a load-order race.
+- To separate page filtering from wallet discovery, dispatch an
+  `eip6963:announceProvider` event with the wallet's existing metadata after the page has
+  initialized. If its connector appears, inspect request/re-announcement timing and provider
+  metadata rather than changing the dapp's connector configuration.
 - Preserve structured errors as `{ code, message, data? }` through every layer.
 - In the popup, never render an object with `String(error)`; read `error.message` and retain
   the code/data for diagnosis.

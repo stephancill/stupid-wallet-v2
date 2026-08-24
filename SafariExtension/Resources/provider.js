@@ -81,19 +81,26 @@
   }
 
   // EIP-6963 discovery.
-  window.dispatchEvent(
-    new CustomEvent("eip6963:announceProvider", {
-      detail: {
-        info: {
-          uuid: "b0a2c3d4-e5f6-7a89-0b1c-2d3e4f506172",
-          name: "stupid wallet",
-          icon: WALLET_ICON,
-          rdns: "co.za.stephancill.stupid-wallet",
-        },
-        provider: ethereum,
-      },
+  const providerDetail = Object.freeze({
+    info: Object.freeze({
+      uuid: crypto.randomUUID(),
+      name: "stupid wallet",
+      icon: WALLET_ICON,
+      rdns: "co.za.stephancill.stupid-wallet",
     }),
-  );
+    provider: ethereum,
+  });
+
+  function announceProvider() {
+    window.dispatchEvent(
+      new CustomEvent("eip6963:announceProvider", {
+        detail: providerDetail,
+      }),
+    );
+  }
+
+  window.addEventListener("eip6963:requestProvider", announceProvider);
+  announceProvider();
 
   function EIP1193Error(message, code, data) {
     const err = new Error(message || "stupid wallet error");
