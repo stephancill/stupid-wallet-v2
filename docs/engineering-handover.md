@@ -509,13 +509,31 @@ The first usable milestone includes:
 - SQLite-backed transaction and signature activity.
 - Receipt polling for submitted transactions.
 
-### Deferred Parity
+### Gate 7 Parity
 
-Implement only after the Secure Wallet Core gates pass:
+Implemented after the Secure Wallet Core gates passed:
 
-- SIWE capability handling in `wallet_connect`.
-- EIP-5792 `wallet_sendCalls`, `wallet_getCallsStatus`, and capability reporting.
-- EIP-7702 authorization management.
+- SIWE capability handling in `wallet_connect`, with exact EIP-4361 message persistence,
+  strict origin/domain/URI/date validation, HTTPS except loopback HTTP, and rejection of
+  unsupported `wallet_connect` capabilities.
+- EIP-5792 `wallet_sendCalls`, `wallet_getCallsStatus`, and capability reporting for
+  atomic batches on Ethereum, Base, and Arbitrum. Shipped v1 request compatibility and
+  canonical v2 requests share one native validation and approval path.
+- Wallet-owned EIP-7702 authorization management. Dapps cannot request arbitrary
+  authorization signatures or replace foreign/malformed account code through
+  `wallet_sendCalls`.
+- Delegation is restricted to the reviewed eth-infinitism `Simple7702Account` at
+  `0xe6Cae83BdE06E4c305530e199D7217f42808555B`. The runtime hash is pinned to
+  `0xcc7b633aef4b2543cb8f37522adf1a401f910f0f6b2430c1eecc11f401ccfcf3` and must match
+  before capability reporting, estimation, or authorization on chains 1, 8453, and 42161.
+- First-delegation estimation uses the hash-verified runtime through an RPC state override.
+  A signed authorization is never disclosed for estimation; the two protected signatures
+  are created only after RPC preparation succeeds.
+
+### Later Parity
+
+Still deferred:
+
 - ENS names and avatars.
 - Transaction simulation and richer value previews.
 - ABI and contract metadata resolution.
@@ -934,9 +952,29 @@ Exit conditions:
 
 ### Gate 7: Deferred Feature Parity
 
-Each deferred feature requires its own scoped acceptance criteria and must preserve all
-earlier security gates. Do not combine SIWE, EIP-5792, EIP-7702, simulation, and clear
-signing into one unreviewable change.
+SIWE, EIP-5792 atomic calls, and wallet-owned EIP-7702 authorization management are
+implemented behind the earlier canonical-request, native-approval, origin/profile,
+keychain-authentication, and RPC-resolution boundaries. Simulation, ENS, ABI metadata,
+and clear signing remain separate later work.
+
+Current acceptance status (2026-08-25): deterministic vectors, native policy, Safari
+routing, popup summaries, SIWE signing, capability reporting, runtime hash checks, safe
+foreign-code refusal, state-override estimation, and rejection without broadcast are
+proven. The prototype fixture cycles Ethereum, Base, and Arbitrum and wraps JSON results
+for complete simulator OCR. A funded Base end-to-end run also proved first-time type-4
+delegation and atomic execution, the canonical delegation designator, a subsequent type-2
+atomic execution, successful receipts, and `wallet_getCallsStatus` status `200` with receipt
+data. Raw RPC responses were retained outside the repository for local audit.
+
+Remaining exit conditions:
+
+- Coordinate Settings authorization operations and Safari sends under one account/chain
+  nonce allocation boundary.
+- Make successful call-bundle status lookup survive an activity-database write failure.
+- Extend the proven Base first-time type-4, already-delegated type-2, status, and receipt
+  flows to Ethereum and Arbitrum when cross-network release evidence is required.
+- Prove physical-device authentication and Safari-foreground behavior for both protected
+  signatures used by first-time delegation.
 
 ### Gate 8: iOS TestFlight On Mac
 

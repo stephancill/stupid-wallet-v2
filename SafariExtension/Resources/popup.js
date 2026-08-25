@@ -9,6 +9,10 @@
       description: "This site wants to connect to your wallet.",
       primary: "Connect",
     },
+    siwe: {
+      description: "Review the sign-in details before signing.",
+      primary: "Sign In",
+    },
     message: {
       description: "Review the message before signing.",
       primary: "Sign",
@@ -20,6 +24,10 @@
     send: {
       description: "Review the transaction before sending.",
       primary: "Send",
+    },
+    batch: {
+      description: "Review the calls that will execute atomically.",
+      primary: "Send Calls",
     },
     chain: {
       description: "Review the network details before adding it.",
@@ -279,9 +287,7 @@
     }
     // Direct popup-to-native decisions bypass the worker, which owns the toolbar badge's
     // in-memory count. Synchronize it before Safari destroys the popup document.
-    await browser.runtime
-      .sendMessage({ type: "popup.didDecide", requestId })
-      .catch(() => null);
+    await browser.runtime.sendMessage({ type: "popup.didDecide", requestId }).catch(() => null);
     window.close();
   }
 

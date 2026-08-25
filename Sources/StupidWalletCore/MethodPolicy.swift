@@ -6,6 +6,7 @@ public enum MethodClass: Sendable, Equatable {
   case chain  // eth_chainId / net_version / wallet_switchEthereumChain / wallet_addEthereumChain
   case sign  // personal_sign / eth_signTypedData_v4 / eth_signTypedData_v3
   case send  // eth_sendTransaction
+  case calls  // EIP-5792 wallet_sendCalls / wallet-owned reads
   case denied  // explicitly unsafe signing methods
   case passthrough  // everything else goes to the RPC endpoint
 }
@@ -19,13 +20,17 @@ public enum MethodPolicy {
   private static let chainMethods: Set<String> = [
     "eth_chainid", "net_version", "wallet_switchethereumchain", "wallet_addethereumchain",
   ]
-  private static let sendMethods: Set<String> = ["eth_sendtransaction", "wallet_sendcalls"]
+  private static let sendMethods: Set<String> = ["eth_sendtransaction"]
+  private static let callsMethods: Set<String> = [
+    "wallet_sendcalls", "wallet_getcallsstatus", "wallet_getcapabilities",
+  ]
 
   public static func classify(_ method: String) -> MethodClass {
     let method = method.lowercased()
     if deniedMethods.contains(method) { return .denied }
     if signMethods.contains(method) { return .sign }
     if sendMethods.contains(method) { return .send }
+    if callsMethods.contains(method) { return .calls }
     if chainMethods.contains(method) { return .chain }
     if method == "eth_requestaccounts" || method == "wallet_connect" { return .connect }
     return .passthrough
@@ -36,6 +41,7 @@ public enum MethodPolicy {
   public static func requiresApproval(_ method: String) -> Bool {
     switch classify(method) {
     case .connect, .sign, .send: return true
+    case .calls: return method.lowercased() == "wallet_sendcalls"
     case .chain: return method.lowercased() == "wallet_addethereumchain"
     case .denied, .passthrough: return false
     }

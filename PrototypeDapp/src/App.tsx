@@ -43,12 +43,26 @@ export default function App() {
   const { signTypedDataAsync } = useSignTypedData();
   const { sendTransactionAsync } = useSendTransaction();
   const { switchChainAsync } = useSwitchChain();
-  const switchTargetChainId = chainId === 137 ? 1 : 137;
-  const switchTargetName = chainId === 137 ? "Ethereum" : "Polygon";
+  const switchTargets = [1, 8453, 42161] as const;
+  const switchTargetChainId =
+    switchTargets[(switchTargets.indexOf(chainId as 1 | 8453 | 42161) + 1) % 3];
+  const switchTargetName =
+    switchTargetChainId === 1 ? "Ethereum" : switchTargetChainId === 8453 ? "Base" : "Arbitrum";
 
   const [result, setResult] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [callBundleId, setCallBundleId] = useState("");
+
+  const provider = () => {
+    const value = (window as Window & { ethereum?: EIP1193Provider }).ethereum;
+    if (!value) throw new Error("stupid wallet provider not found");
+    return value;
+  };
+  const rawRequest = (args: { method: string; params?: unknown[] }) =>
+    (
+      provider() as { request(args: { method: string; params?: unknown[] }): Promise<unknown> }
+    ).request(args);
 
   const run = useCallback(async (label: string, action: () => Promise<unknown>) => {
     setBusy(true);
@@ -95,9 +109,7 @@ export default function App() {
             disabled={busy}
             onClick={() =>
               run("wallet_disconnect", async () => {
-                const provider = (window as Window & { ethereum?: EIP1193Provider }).ethereum;
-                if (!provider) throw new Error("stupid wallet provider not found");
-                await provider.request({ method: "wallet_disconnect" });
+                await provider().request({ method: "wallet_disconnect" });
                 await disconnectAsync();
                 return true;
               })
@@ -139,6 +151,31 @@ export default function App() {
         >
           eth_signTypedData_v4
         </button>
+        <button
+          disabled={!isConnected || busy}
+          onClick={() =>
+            run("wallet_connect SIWE", () =>
+              rawRequest({
+                method: "wallet_connect",
+                params: [
+                  {
+                    version: "1",
+                    capabilities: {
+                      signInWithEthereum: {
+                        nonce: crypto.randomUUID().replace(/-/g, "").slice(0, 16),
+                        chainId: `0x${chainId.toString(16)}`,
+                        statement: "Sign in to the stupid wallet test app.",
+                        issuedAt: new Date().toISOString(),
+                      },
+                    },
+                  },
+                ],
+              }),
+            )
+          }
+        >
+          wallet_connect SIWE
+        </button>
       </section>
 
       <section style={{ border: "1px solid #ccc", padding: 16, margin: "16px 0" }}>
@@ -157,6 +194,50 @@ export default function App() {
         >
           eth_sendTransaction
         </button>
+        <button
+          disabled={!isConnected || busy}
+          onClick={() =>
+            run("wallet_getCapabilities", () =>
+              rawRequest({
+                method: "wallet_getCapabilities",
+                params: [address!, [`0x${chainId.toString(16)}`]],
+              }),
+            )
+          }
+        >
+          wallet_getCapabilities
+        </button>
+        <button
+          disabled={!isConnected || busy}
+          onClick={() =>
+            run("wallet_sendCalls", async () => {
+              const value = await rawRequest({
+                method: "wallet_sendCalls",
+                params: [
+                  {
+                    version: "1.0",
+                    from: address!,
+                    calls: [{ to: address!, value: "0x0", data: "0x" }],
+                  },
+                ],
+              });
+              if (typeof value === "string") setCallBundleId(value);
+              return value;
+            })
+          }
+        >
+          wallet_sendCalls
+        </button>
+        <button
+          disabled={!isConnected || busy || !callBundleId}
+          onClick={() =>
+            run("wallet_getCallsStatus", () =>
+              rawRequest({ method: "wallet_getCallsStatus", params: [callBundleId] }),
+            )
+          }
+        >
+          wallet_getCallsStatus
+        </button>
       </section>
 
       <section style={{ border: "1px solid #ccc", padding: 16, margin: "16px 0" }}>
@@ -173,7 +254,18 @@ export default function App() {
         </button>
       </section>
 
-      {result && <pre style={{ background: "#dfd", padding: 8 }}>{result}</pre>}
+      {result && (
+        <pre
+          style={{
+            background: "#dfd",
+            overflowWrap: "anywhere",
+            padding: 8,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {result}
+        </pre>
+      )}
       {error && <pre style={{ background: "#fdd", padding: 8 }}>{error}</pre>}
       {busy && <p>Waiting for wallet response…</p>}
     </main>

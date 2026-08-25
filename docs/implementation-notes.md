@@ -3157,3 +3157,110 @@ Use this entry template:
   Face-matched signature resolves.
 - Pending routing stays in-memory in the service worker plus the native store; durable
   cross-suspension routing remains for Gate 5.
+
+## 2026-08-25 - Gate 7 SIWE, Atomic Calls, And Wallet Authorizations
+
+### Summary
+
+- Added canonical SIWE support for `wallet_connect`, including ERC-7846 version 1 and the
+  shipped legacy `chainIds` request shape. Native code persists and signs the exact EIP-4361
+  message and returns the matching account, signature, and message response.
+- Added EIP-5792 `wallet_sendCalls`, `wallet_getCallsStatus`, and
+  `wallet_getCapabilities`, with strict native validation, atomic `executeBatch` encoding,
+  durable call-bundle ownership/status, structured errors, and Safari popup review.
+- Added EIP-7702 authorization and type-4 transaction encoding with vectors independently
+  cross-checked against viem 2.55.19. Added wallet-owned enable, replace, revoke, receipt,
+  and status operations plus the Settings authorization surface.
+- Extended the local protocol fixture with SIWE, capability, batch, status, and
+  Ethereum/Base/Arbitrum controls. Result JSON now wraps at arbitrary characters so complete
+  responses can be read through simulator OCR.
+
+### Security Decisions
+
+- Dapps have no arbitrary authorization-signing method. Automatic batching delegates only
+  an account with empty code; foreign delegations and malformed code fail and direct the user
+  to the wallet-owned Authorizations surface.
+- The only allowed implementation is the reviewed eth-infinitism `Simple7702Account` at
+  `0xe6Cae83BdE06E4c305530e199D7217f42808555B`. Its runtime hash is pinned to
+  `0xcc7b633aef4b2543cb8f37522adf1a401f910f0f6b2430c1eecc11f401ccfcf3` for chains 1,
+  8453, and 42161. Nonempty code alone is not accepted.
+- First-delegation gas estimation applies the verified runtime to the account through an RPC
+  state override and adds authorization overhead locally. It does not disclose a signed,
+  reusable authorization to the RPC before the outer transaction is ready to broadcast.
+- SIWE requires HTTPS except for `localhost`, `127.0.0.1`, and `::1`; unsupported
+  `wallet_connect` capabilities fail instead of silently becoming plain connection grants.
+- App-provided call-bundle IDs are checked under the cross-process prepare lock while an
+  identical provider retry still converges on the original pending request.
+
+### Verification
+
+- `swift test` passed 166 tests across 28 suites after the security review fixes.
+- `node --check SafariExtension/Resources/background.js`,
+  `node --check SafariExtension/Resources/popup.js`, and
+  `node --test Tests/JavaScript/*.test.mjs` passed; 9 JavaScript tests ran.
+- Prototype `oxfmt`, `oxlint`, TypeScript compilation, and Vite production build passed.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` and
+  simulator install/launch succeeded on the preferred simulator before the final security
+  tightening and are repeated as the final verification step.
+- Simulator Safari proved provider connection, SIWE review and signature completion,
+  capability reporting on Ethereum, Base, and Arbitrum, and atomic batch review/rejection.
+  The rejection path made no transaction.
+- Read-only RPC checks confirmed nonzero simulator-account balances on all three networks.
+  Independent `cast code ... | cast keccak` checks returned the pinned runtime hash on all
+  three chains. Ethereum also accepted an `eth_estimateGas` request using the verified runtime
+  as a state override.
+
+### Remaining Work
+
+- Coordinate Settings authorization operations and Safari transaction approvals under one
+  account/chain nonce lock.
+- Preserve queryable call-bundle status if SQLite activity persistence fails after a
+  successful broadcast.
+- With explicit spend approval, prove first-delegation type-4 and already-delegated type-2
+  batches against live networks and independently verify their receipts.
+- Prove the two-authentication first-delegation flow on a physical device while Safari
+  remains foregrounded.
+
+## 2026-08-25 - Live Base Just-In-Time Authorization And Batch Proof
+
+### Summary
+
+- Executed the local Safari protocol fixture against Base with explicit approval to spend the
+  simulator wallet's funded balance.
+- The account began with empty code and pending nonce zero. The first `wallet_sendCalls`
+  approval displayed the atomic call and possible authorization, completed the protected
+  authorization and outer-transaction signatures, and returned a transaction hash.
+- The durable canonical record resolved to transaction type `0x4`, outer nonce zero, the
+  expected self-targeted `executeBatch((address,uint256,bytes)[])` calldata, and a single
+  authorization for the pinned `Simple7702Account` at authorization nonce one.
+- After confirmation, account code was exactly the canonical EIP-7702 designator for the
+  reviewed implementation and the account nonce was two. A second identical batch resolved
+  to type `0x2` at nonce two, confirmed successfully, preserved the designator, and advanced
+  the nonce to three.
+- `wallet_getCallsStatus` returned status `200`, Base chain ID `0x2105`, and the corresponding
+  successful receipt for both call-bundle hashes.
+
+### Independent Verification
+
+- `cast tx <hash> --rpc-url https://evm.stupidtech.net/v1/8453 --json` independently showed
+  type `0x4` with the expected authorization tuple for the first transaction and type `0x2`
+  without an authorization list for the second.
+- `cast receipt <hash> --rpc-url https://evm.stupidtech.net/v1/8453 --json` returned status
+  `0x1` for both transactions. The first used less gas than its conservative limit and the
+  second used less gas than its separately estimated limit.
+- Direct `eth_getCode`, `eth_getTransactionCount`, and `eth_getBalance` responses were saved
+  outside the repository before and after each transaction. Total balance reduction across
+  both zero-value calls was approximately `0.00000038061 ETH`, entirely transaction fees.
+- No wallet address, transaction hash, signature, or account-linked raw response is recorded
+  in this public engineering log.
+
+### Remaining Work
+
+- Coordinate Settings authorization operations and Safari transaction approvals under one
+  account/chain nonce lock.
+- Preserve queryable call-bundle status if SQLite activity persistence fails after a
+  successful broadcast.
+- Repeat the live type-4/type-2 proof on Ethereum and Arbitrum only when cross-network release
+  evidence is required; Base now proves the end-to-end implementation path.
+- Prove physical-device authentication and Safari foreground behavior for the two protected
+  signatures used by first-time delegation.

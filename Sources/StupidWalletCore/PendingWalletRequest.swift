@@ -1,6 +1,10 @@
 import Darwin
 import Foundation
 
+public enum PendingRequestStoreError: Error, Equatable, Sendable {
+  case duplicateCallBundleID
+}
+
 /// Canonical, one-time pending signing request. Crucially the popup never supplies
 /// signing params; native code reloads this persisted record, recomputes the digest, and
 /// verifies it matches the record before signing.
@@ -114,8 +118,10 @@ public actor PendingRequestStore {
   /// already pending, returning the existing request's ID in the latter case. The operation is
   /// serialized both across the in-process actor and **across processes** (app ↔ extension)
   /// by an OS advisory lock, so duplicate re-sent requests cannot race into two records.
-  public func insertIfAbsent(_ request: WalletPendingRequest) throws -> UUID? {
-    guard request.requestKey != nil else {
+  public func insertIfAbsent(
+    _ request: WalletPendingRequest, rejectingCallBundleID callBundleID: String? = nil
+  ) throws -> UUID? {
+    guard request.requestKey != nil || callBundleID != nil else {
       try insert(request)
       return nil
     }
@@ -127,6 +133,19 @@ public actor PendingRequestStore {
         && $0.status == .pending
     }) {
       return existing.id
+    }
+    if let callBundleID,
+      try pending().contains(where: { pending in
+        guard pending.kind == .batch, case .object(let params) = pending.params else {
+          return false
+        }
+        return params["id"]?.stringValue == callBundleID
+          && pending.origin == request.origin
+          && pending.profileID == request.profileID
+          && pending.account.caseInsensitiveCompare(request.account) == .orderedSame
+      })
+    {
+      throw PendingRequestStoreError.duplicateCallBundleID
     }
     try insert(request)
     return nil

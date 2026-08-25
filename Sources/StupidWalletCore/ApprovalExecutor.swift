@@ -16,6 +16,8 @@ public enum RequestExecutor {
     switch request.kind {
     case .message:
       return MessageHash.eip191(message: try selfMessage(request.params))
+    case .siwe:
+      return MessageHash.eip191(message: Data(try SIWE.message(from: request.params).utf8))
     case .typedData:
       return try EIP712.prefixedHash(of: typedDataParams(request.params))
     case .send:
@@ -24,7 +26,7 @@ public enum RequestExecutor {
       return MessageHash.eip191(message: Data("Stupid Wallet: connect \(request.account)".utf8))
     case .chain:
       return MessageHash.eip191(message: Data("Stupid Wallet: chain \(request.chainId)".utf8))
-    case .denied, .passthrough:
+    case .batch, .denied, .passthrough:
       throw ApprovalError.notSignable(request.method)
     }
   }
@@ -36,6 +38,25 @@ public enum RequestExecutor {
     switch request.kind {
     case .message, .typedData:
       return .string("0x" + Hex.encode(signature))
+    case .siwe:
+      guard case .object(let params) = request.params,
+        let message = params["message"]?.stringValue
+      else { throw ApprovalError.badParams }
+      var response: [String: JSONValue] = [
+        "accounts": .array([
+          .object([
+            "address": .string(request.account),
+            "capabilities": .object([
+              "signInWithEthereum": .object([
+                "message": .string(message),
+                "signature": .string("0x" + Hex.encode(signature)),
+              ])
+            ]),
+          ])
+        ])
+      ]
+      if let chainIDs = params["responseChainIds"] { response["chainIds"] = chainIDs }
+      return .object(response)
     case .connect:
       // eth_requestAccounts / wallet_connect resolve to the account list.
       return .array([.string(request.account)])
@@ -43,7 +64,7 @@ public enum RequestExecutor {
       return .null
     case .send:
       return .string("0x" + Hex.encode(try signedTransaction(signature: signature, for: request)))
-    case .denied, .passthrough:
+    case .batch, .denied, .passthrough:
       throw ApprovalError.notSignable(request.method)
     }
   }

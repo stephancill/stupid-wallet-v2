@@ -5,12 +5,16 @@ import Foundation
 public enum RequestKind: String, Sendable, Codable {
   /// eth_requestAccounts / wallet_connect — which account is being shared.
   case connect
+  /// wallet_connect with signInWithEthereum — an origin-bound EIP-4361 signature.
+  case siwe
   /// personal_sign — a human-readable message.
   case message
   /// eth_signTypedData_v4 — an EIP-712 payload.
   case typedData
   /// eth_sendTransaction — a transaction to send.
   case send
+  /// wallet_sendCalls — an atomic EIP-5792 call batch.
+  case batch
   /// A network-state change. Add-chain requests use the approval queue; new switch requests
   /// are authorized and applied immediately, while old persisted switch records remain readable.
   case chain
@@ -26,6 +30,8 @@ public enum RequestKind: String, Sendable, Codable {
     case .chain: return .chain
     case .denied: return .denied
     case .send: return .send
+    case .calls:
+      return method.lowercased() == "wallet_sendcalls" ? .batch : .passthrough
     case .sign:
       switch method.lowercased() {
       case "eth_signtypeddata_v4": return .typedData

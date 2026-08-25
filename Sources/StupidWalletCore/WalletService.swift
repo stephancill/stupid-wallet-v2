@@ -22,9 +22,11 @@ public enum ApprovalSummary {
   public static func title(for request: WalletPendingRequest) -> String {
     switch request.kind {
     case .connect: return "Connect site"
+    case .siwe: return "Sign in with Ethereum"
     case .message: return "Sign message"
     case .typedData: return "Sign typed data"
     case .send: return "Send transaction"
+    case .batch: return "Send calls"
     case .chain:
       return request.method.lowercased() == "wallet_switchethereumchain"
         ? "Switch network" : "Add network"
@@ -39,6 +41,22 @@ public enum ApprovalSummary {
     case .connect:
       rows.append(("Account", request.account))
       rows.append(("Origin", request.origin))
+    case .siwe:
+      rows.append(("Account", request.account))
+      guard case .object(let params) = request.params else { break }
+      for (key, label) in [
+        ("domain", "Domain"), ("scheme", "Scheme"), ("uri", "URI"),
+        ("version", "Version"), ("chainId", "Chain"), ("nonce", "Nonce"),
+        ("issuedAt", "Issued At"),
+        ("expirationTime", "Expiration Time"), ("notBefore", "Not Before"),
+        ("requestId", "Request ID"), ("statement", "Statement"),
+      ] {
+        if let value = params[key]?.stringValue { rows.append((label, value)) }
+      }
+      if case .array(let resources)? = params["resources"] {
+        rows.append(("Resources", resources.compactMap(\.stringValue).joined(separator: "\n")))
+      }
+      if let message = params["message"]?.stringValue { rows.append(("Message", message)) }
     case .message:
       rows.append(("From", request.origin))
       rows.append(("Account", request.account))
@@ -77,6 +95,24 @@ public enum ApprovalSummary {
         }
         if let data = tx["data"]?.stringValue, !data.isEmpty, data != "0x" {
           rows.append(("Data", Self.dataDigest(data)))
+        }
+      }
+    case .batch:
+      rows.append(("Execution", "Atomic"))
+      rows.append(("Authorization", "May enable the reviewed atomic execution account"))
+      rows.append(("Account", request.account))
+      rows.append(("Chain", request.chainId))
+      rows.append(("Origin", request.origin))
+      if case .object(let params) = request.params, case .array(let calls)? = params["calls"] {
+        rows.append(("Calls", String(calls.count)))
+        for (index, value) in calls.enumerated() {
+          guard case .object(let call) = value else { continue }
+          let target = call["to"]?.stringValue ?? "Unavailable"
+          let amount = call["value"]?.stringValue ?? "0x0"
+          let digest = call["data"]?.stringValue.map(Self.dataDigest) ?? "0x"
+          rows.append(("Call \(index + 1) Target", target))
+          rows.append(("Call \(index + 1) Value", amount))
+          rows.append(("Call \(index + 1) Data", digest))
         }
       }
     case .chain:
@@ -225,6 +261,7 @@ public actor WalletService {
   public nonisolated let activityStore: ActivityStore
   nonisolated let resolver: RPCResolver
   nonisolated let rpcClient: RPCClient
+  nonisolated let simple7702AccountRuntimeHash: String
 
   public init(
     store: PendingRequestStore? = nil,
@@ -234,7 +271,8 @@ public actor WalletService {
     networkStore: NetworkStore = NetworkStore(),
     activityStore: ActivityStore = ActivityStore(),
     resolver: RPCResolver = RPCResolver(),
-    rpcClient: RPCClient = RPCClient()
+    rpcClient: RPCClient = RPCClient(),
+    simple7702AccountRuntimeHash: String = EIP5792.simple7702AccountRuntimeHash
   ) {
     self.signing = signing
     self.store = store ?? PendingRequestStore()
@@ -244,6 +282,7 @@ public actor WalletService {
     self.activityStore = activityStore
     self.resolver = resolver
     self.rpcClient = rpcClient
+    self.simple7702AccountRuntimeHash = simple7702AccountRuntimeHash
   }
 
   /// Hermetic-test initializer that also isolates the connection-grant store.
@@ -266,6 +305,7 @@ public actor WalletService {
       databaseURL: chainDirectory.appendingPathComponent("Activity.sqlite"))
     self.resolver = RPCResolver()
     self.rpcClient = RPCClient()
+    self.simple7702AccountRuntimeHash = EIP5792.simple7702AccountRuntimeHash
   }
 
   // MARK: Connection grants
@@ -377,7 +417,7 @@ public actor WalletService {
     requestKey: String? = nil
   ) async throws -> UUID {
     let chainId = try await activeChainID()
-    let kind = RequestKind.kind(for: method)
+    var kind = RequestKind.kind(for: method)
     guard MethodPolicy.requiresApproval(method) else { throw WalletError.methodNotApproved }
     guard signing.hasKey() else { throw WalletError.notReady }
     if kind == .chain,
@@ -388,7 +428,37 @@ public actor WalletService {
     }
 
     let canonicalParams: JSONValue
-    if kind == .send {
+    var recordChainID = chainId
+    if method.lowercased() == "wallet_connect", Self.hasSIWECapability(params) {
+      let prepared = try SIWE.prepare(params: params, account: signing.account, origin: origin)
+      kind = .siwe
+      canonicalParams = prepared.params
+      recordChainID = prepared.chainID
+    } else if method.lowercased() == "wallet_connect", Self.hasCapabilities(params) {
+      throw WalletError.invalidParams
+    } else if kind == .batch {
+      guard
+        await connectedSites.hasExactGrant(
+          origin: origin, address: signing.account, profileID: profileID)
+      else { throw WalletError.unauthorized }
+      do {
+        canonicalParams = try EIP5792.prepare(
+          params: params, account: signing.account, activeChainID: chainId
+        ).params
+      } catch let error as EIP5792Error {
+        throw Self.walletError(error)
+      }
+      if case .object(let object) = canonicalParams,
+        let requestedID = object["id"]?.stringValue
+      {
+        let duplicateActivity =
+          (try? await activityStore.callBundle(
+            id: requestedID, origin: origin, profileID: profileID, account: signing.account)) != nil
+        guard !duplicateActivity else {
+          throw Self.walletError(.duplicateID)
+        }
+      }
+    } else if kind == .send {
       canonicalParams = try canonicalizeTransaction(params: params, chainID: chainId)
     } else {
       canonicalParams = params
@@ -398,8 +468,8 @@ public actor WalletService {
     }
     let normalizedOrigin = Origin.normalize(origin)
     let intentDigest = CanonicalRequest.intentDigest(
-      method: method, origin: normalizedOrigin, chainId: chainId,
-      profileID: profileID, params: canonicalParams)
+      method: method, origin: normalizedOrigin, chainId: recordChainID,
+      profileID: profileID, params: kind == .siwe ? params : canonicalParams)
     let id = UUID()
     let record = WalletPendingRequest(
       id: id,
@@ -407,7 +477,7 @@ public actor WalletService {
       method: method,
       origin: normalizedOrigin,
       profileID: profileID,
-      chainId: chainId,
+      chainId: recordChainID,
       account: signing.account,
       params: canonicalParams,
       payloadDigest: CanonicalRequest.digest(of: canonicalParams, keyedBy: id),
@@ -422,7 +492,18 @@ public actor WalletService {
         throw WalletError.invalidParams
       }
     }
-    return (try await store.insertIfAbsent(record)) ?? record.id
+    let callBundleID: String?
+    if kind == .batch, case .object(let params) = canonicalParams {
+      callBundleID = params["id"]?.stringValue
+    } else {
+      callBundleID = nil
+    }
+    do {
+      return
+        (try await store.insertIfAbsent(record, rejectingCallBundleID: callBundleID)) ?? record.id
+    } catch PendingRequestStoreError.duplicateCallBundleID {
+      throw Self.walletError(.duplicateID)
+    }
   }
 
   /// Display-safe canonical summary for one pending request.
@@ -454,7 +535,7 @@ public actor WalletService {
       default: return row
       }
     }
-    if record.kind == .send {
+    if record.kind == .send || record.kind == .batch {
       rows.append(("Network Fee", await estimatedNetworkFee(for: record)))
     }
     return Summary(
@@ -471,6 +552,44 @@ public actor WalletService {
   }
 
   private func estimatedNetworkFee(for record: WalletPendingRequest) async -> String {
+    if record.kind == .batch {
+      guard let calldata = try? EIP5792.executeBatchCalldata(record.params) else {
+        return "Unable to estimate"
+      }
+      do {
+        let implementation = try await rpcData(
+          method: "eth_getCode",
+          params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
+          chainID: record.chainId)
+        guard
+          EIP5792.isVerifiedImplementation(
+            implementation, expectedRuntimeHash: simple7702AccountRuntimeHash)
+        else { return "Unable to estimate" }
+        let code = try await rpcData(
+          method: "eth_getCode", params: .array([.string(record.account), .string("latest")]),
+          chainID: record.chainId)
+        if code.isEmpty { return "Estimated after authorization" }
+        guard Self.isCanonicalDelegation(code) else { return "Unable to estimate" }
+        let estimate = try await rpcQuantity(
+          method: "eth_estimateGas",
+          params: .array([
+            .object([
+              "from": .string(record.account), "to": .string(record.account),
+              "value": .string("0x0"), "data": .string(calldata),
+            ])
+          ]), chainID: record.chainId)
+        guard let gas = Self.safeBatchGas(estimate, needsAuthorization: false),
+          let gasBytes = Hex.quantityData(hex: gas)
+        else { return "Unable to estimate" }
+        let fee = try await rpcQuantity(
+          method: "eth_gasPrice", params: .array([]), chainID: record.chainId)
+        guard let feeBytes = Hex.quantityData(hex: fee) else { return "Unable to estimate" }
+        let amount = NativeBalanceService.formatEther(bytes: Self.multiply(gasBytes, feeBytes))
+        return "~\(amount) \(Self.nativeCurrencySymbol(chainID: record.chainId))"
+      } catch {
+        return "Unable to estimate"
+      }
+    }
     guard case .array(let items) = record.params, items.count == 1,
       case .object(let transaction) = items[0]
     else { return "Unable to estimate" }
@@ -584,7 +703,7 @@ public actor WalletService {
     let queue = (try await store.pending()).sorted { $0.createdAt < $1.createdAt }
     guard queue.first?.id == record.id else { throw WalletError.queued }
     let activeChainID = try await activeChainID()
-    guard record.chainId == activeChainID else {
+    guard record.kind == .siwe || record.chainId == activeChainID else {
       let rpcError = JSONValue.object([
         "code": .number(4901),
         "message": .string("Active chain changed before approval"),
@@ -610,7 +729,19 @@ public actor WalletService {
       try await store.insert(record)
       throw WalletError.rpc(rpcError)
     }
-    guard RequestKind.kind(for: record.method) == record.kind else {
+    if record.kind == .batch,
+      !(await connectedSites.hasExactGrant(
+        origin: record.origin, address: record.account, profileID: profileID))
+    {
+      let rpcError = JSONValue.object([
+        "code": .number(4100), "message": .string("Origin disconnected before approval"),
+      ])
+      record.status = .failed
+      record.error = rpcError
+      try await store.insert(record)
+      throw WalletError.rpc(rpcError)
+    }
+    guard Self.kindMatches(record) else {
       throw WalletError.bindingMismatch
     }
     // Recompute the digest over the reloaded, canonical params; must equal the binding.
@@ -628,6 +759,20 @@ public actor WalletService {
 
     let result: JSONValue
     if requiresSignature {
+      if record.kind == .batch {
+        do {
+          let result = try await approveBatch(record: &record)
+          record.status = .consumed
+          record.result = result
+          try await store.insert(record)
+          return result
+        } catch WalletError.rpc(let error) {
+          record.status = .failed
+          record.error = error
+          try? await store.insert(record)
+          throw WalletError.rpc(error)
+        }
+      }
       let signable: [UInt8]
       do {
         if record.kind == .send {
@@ -727,7 +872,7 @@ public actor WalletService {
     if switchJournal != nil { try? chainStore.finishSwitch() }
     // A successful connect/chain-approval content grant establishes the durable
     // connection so a subsequent eth_requestAccounts from the same origin short-circuits.
-    if record.kind == .connect {
+    if record.kind == .connect || record.kind == .siwe {
       await connectedSites.connect(
         site: ConnectedSite(
           domain: Origin.downHost(of: record.origin),
@@ -737,6 +882,35 @@ public actor WalletService {
       )
     }
     return result
+  }
+
+  private static func hasSIWECapability(_ params: JSONValue) -> Bool {
+    guard case .array(let values) = params, case .object(let request)? = values.first,
+      case .object(let capabilities)? = request["capabilities"]
+    else { return false }
+    return capabilities["signInWithEthereum"] != nil
+  }
+
+  private static func hasCapabilities(_ params: JSONValue) -> Bool {
+    guard case .array(let values) = params, case .object(let request)? = values.first,
+      case .object(let capabilities)? = request["capabilities"]
+    else { return false }
+    return !capabilities.isEmpty
+  }
+
+  private static func kindMatches(_ record: WalletPendingRequest) -> Bool {
+    if record.kind == .siwe {
+      return record.method.lowercased() == "wallet_connect"
+        && SIWE.validatePersisted(
+          params: record.params, account: record.account, origin: record.origin,
+          chainID: record.chainId)
+    }
+    if record.kind == .batch {
+      return record.method.lowercased() == "wallet_sendcalls"
+        && EIP5792.validatePersisted(
+          params: record.params, account: record.account, chainID: record.chainId)
+    }
+    return RequestKind.kind(for: record.method) == record.kind
   }
 
   private static func requestedChainID(_ params: JSONValue) -> String? {
@@ -872,6 +1046,347 @@ public actor WalletService {
     return resolved
   }
 
+  private func approveBatch(record: inout WalletPendingRequest) async throws -> JSONValue {
+    guard
+      EIP5792.validatePersisted(
+        params: record.params, account: record.account, chainID: record.chainId),
+      case .object(let batch) = record.params,
+      let version = batch["version"]?.stringValue
+    else { throw WalletError.invalidParams }
+    let calldata = try EIP5792.executeBatchCalldata(record.params)
+    let implementationCode = try await rpcData(
+      method: "eth_getCode",
+      params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
+      chainID: record.chainId)
+    guard
+      EIP5792.isVerifiedImplementation(
+        implementationCode, expectedRuntimeHash: simple7702AccountRuntimeHash)
+    else {
+      throw WalletError.rpc(
+        .object([
+          "code": .number(5710),
+          "message": .string("Verified Simple7702Account is not deployed on this chain"),
+        ]))
+    }
+    let accountCode = try await rpcData(
+      method: "eth_getCode", params: .array([.string(record.account), .string("latest")]),
+      chainID: record.chainId)
+    let needsAuthorization: Bool
+    if accountCode.isEmpty {
+      needsAuthorization = true
+    } else if Self.isCanonicalDelegation(accountCode) {
+      needsAuthorization = false
+    } else {
+      throw WalletError.rpc(
+        .object([
+          "code": .number(5700),
+          "message": .string(
+            "Account code cannot be replaced by wallet_sendCalls; review it in Authorizations"),
+        ]))
+    }
+    let nonce = try await rpcQuantity(
+      method: "eth_getTransactionCount",
+      params: .array([.string(record.account), .string("pending")]), chainID: record.chainId)
+    let estimateTransaction: [String: JSONValue] = [
+      "from": .string(record.account), "to": .string(record.account),
+      "value": .string("0x0"), "data": .string(calldata),
+    ]
+    var estimateParams: [JSONValue] = [.object(estimateTransaction)]
+    if needsAuthorization {
+      // Simulate the reviewed runtime at the account without disclosing a reusable signed
+      // authorization to the RPC before the outer transaction is ready to broadcast.
+      estimateParams.append(.string("latest"))
+      estimateParams.append(
+        .object([
+          record.account: .object([
+            "code": .string("0x" + Hex.encode(implementationCode))
+          ])
+        ]))
+    }
+    let estimate = try await rpcQuantity(
+      method: "eth_estimateGas", params: .array(estimateParams), chainID: record.chainId)
+    guard let gas = Self.safeBatchGas(estimate, needsAuthorization: needsAuthorization) else {
+      throw WalletError.invalidParams
+    }
+    let priorityFee = try await rpcQuantity(
+      method: "eth_maxPriorityFeePerGas", params: .array([]), chainID: record.chainId)
+    let gasPrice = try await rpcQuantity(
+      method: "eth_gasPrice", params: .array([]), chainID: record.chainId)
+    let maxFee = try Self.maximumQuantity(gasPrice, priorityFee)
+    guard let chainQuantity = ChainStore.hexChainID(record.chainId) else {
+      throw WalletError.invalidParams
+    }
+
+    let raw: [UInt8]
+    let type: String
+    if needsAuthorization {
+      guard let authorizationNonce = EIP5792.adding(1, to: nonce),
+        let authorizationNonceValue = EIP5792.uint64Quantity(authorizationNonce)
+      else { throw WalletError.invalidParams }
+      let authorization = try EIP7702Authorization(
+        chainID: chainQuantity, delegate: EIP5792.simple7702Account,
+        nonce: authorizationNonceValue)
+      let authorizationSignature: [UInt8]
+      do {
+        authorizationSignature = try signing.signDigest(authorization.digest())
+      } catch {
+        throw WalletError.authCancelled
+      }
+      guard signing.verify(digest: authorization.digest(), signature: authorizationSignature) else {
+        throw WalletError.bindingMismatch
+      }
+      let transaction = try EIP7702Transaction(
+        chainID: chainQuantity, nonce: nonce, maxPriorityFeePerGas: priorityFee,
+        maxFeePerGas: maxFee, gasLimit: gas, destination: record.account, value: "0x0",
+        data: calldata,
+        authorizationList: [try authorization.signed(signature: authorizationSignature)])
+      let digest = Keccak.keccak256(transaction.signingPayload())
+      let signature: [UInt8]
+      do {
+        signature = try signing.signDigest(digest)
+      } catch {
+        throw WalletError.authCancelled
+      }
+      guard signing.verify(digest: digest, signature: signature) else {
+        throw WalletError.bindingMismatch
+      }
+      raw = try transaction.signedPayload(signature: signature)
+      type = "0x4"
+    } else {
+      guard let chainID = Int(record.chainId) else { throw WalletError.invalidParams }
+      let transaction = EIP1559Transaction(
+        chainId: chainID, nonce: nonce, maxPriorityFeePerGas: priorityFee,
+        maxFeePerGas: maxFee, gasLimit: gas, to: record.account, value: "0x0", data: calldata)
+      let digest = Keccak.keccak256(try transaction.signingPayload())
+      let signature: [UInt8]
+      do {
+        signature = try signing.signDigest(digest)
+      } catch {
+        throw WalletError.authCancelled
+      }
+      guard signing.verify(digest: digest, signature: signature) else {
+        throw WalletError.bindingMismatch
+      }
+      raw = try transaction.signedPayload(signature: signature)
+      type = "0x2"
+    }
+
+    record.resolvedParams = .array([
+      .object([
+        "from": .string(record.account), "to": .string(record.account),
+        "chainId": .string(chainQuantity), "nonce": .string(nonce), "gas": .string(gas),
+        "maxPriorityFeePerGas": .string(priorityFee), "maxFeePerGas": .string(maxFee),
+        "value": .string("0x0"), "data": .string(calldata), "type": .string(type),
+      ])
+    ])
+    let requestedID = batch["id"]?.stringValue
+    let hash =
+      try await broadcast(
+        rawTransaction: raw, record: &record, callBundleID: requestedID
+      ).stringValue ?? ""
+    if version == "2.0.0" {
+      return .object([
+        "id": .string(requestedID ?? hash),
+        "capabilities": .object(["atomic": .bool(true)]),
+      ])
+    }
+    return .string(hash)
+  }
+
+  public func getCapabilities(
+    params: JSONValue, origin: String, profileID: String? = nil
+  ) async throws -> JSONValue {
+    guard signing.hasKey() else { throw WalletError.notReady }
+    guard
+      await connectedSites.hasExactGrant(
+        origin: origin, address: signing.account, profileID: profileID)
+    else { throw WalletError.unauthorized }
+    guard case .array(let values) = params, values.count == 1 || values.count == 2,
+      let requestedAccount = values.first?.stringValue,
+      requestedAccount.caseInsensitiveCompare(signing.account) == .orderedSame
+    else { throw WalletError.invalidParams }
+
+    let configured = Set((try? networkStore.all().map(\.id)) ?? [])
+    let requestedChains: [String]
+    if values.count == 2 {
+      guard case .array(let chains) = values[1] else { throw WalletError.invalidParams }
+      requestedChains = try chains.map { value in
+        guard let quantity = value.stringValue, EIP5792.isCanonicalQuantity(quantity),
+          let decimal = ChainStore.normalize(quantity)
+        else { throw WalletError.invalidParams }
+        return decimal
+      }
+    } else {
+      requestedChains = configured.sorted()
+    }
+
+    var result: [String: JSONValue] = [:]
+    for chainID in requestedChains
+    where configured.contains(chainID)
+      && EIP5792.verifiedChains.contains(chainID)
+    {
+      guard let chainQuantity = ChainStore.hexChainID(chainID) else { continue }
+      do {
+        let code = try await rpcData(
+          method: "eth_getCode",
+          params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
+          chainID: chainID)
+        guard
+          EIP5792.isVerifiedImplementation(
+            code, expectedRuntimeHash: simple7702AccountRuntimeHash)
+        else { continue }
+        result[chainQuantity] = .object([
+          "atomic": .object(["status": .string("supported"), "supported": .bool(true)])
+        ])
+      } catch {
+        // Omit unknown support. RPC failures must never become a positive capability claim.
+      }
+    }
+    return .object(result)
+  }
+
+  public func getCallsStatus(
+    params: JSONValue, origin: String, profileID: String? = nil
+  ) async throws -> JSONValue {
+    guard signing.hasKey() else { throw WalletError.notReady }
+    guard
+      await connectedSites.hasExactGrant(
+        origin: origin, address: signing.account, profileID: profileID)
+    else { throw WalletError.unauthorized }
+    guard case .array(let values) = params, values.count == 1,
+      let id = values[0].stringValue, EIP5792.isValidID(id)
+    else { throw WalletError.invalidParams }
+    guard
+      let activity = try await activityStore.callBundle(
+        id: id, origin: origin, profileID: profileID, account: signing.account),
+      let hash = activity.transactionHash,
+      let chainQuantity = ChainStore.hexChainID(activity.chainID)
+    else {
+      throw WalletError.rpc(
+        .object(["code": .number(5730), "message": .string("Unknown bundle id")]))
+    }
+
+    let response: RPCResponse
+    do {
+      response = try await rpcClient.call(
+        url: resolver.resolve(chainID: activity.chainID), method: "eth_getTransactionReceipt",
+        params: .array([.string(hash)]))
+    } catch {
+      throw WalletError.rpc(Self.transportError)
+    }
+    switch response {
+    case .error(let error): throw WalletError.rpc(error)
+    case .result(.null):
+      let status: Int = [.dropped, .replaced].contains(activity.status) ? 400 : 100
+      return Self.callsStatus(id: id, chainID: chainQuantity, status: status)
+    case .result(.object(let receipt)):
+      guard let receiptStatus = receipt["status"]?.stringValue,
+        ["0x0", "0x1"].contains(receiptStatus),
+        let blockHash = receipt["blockHash"]?.stringValue,
+        let blockNumber = receipt["blockNumber"]?.stringValue,
+        let gasUsed = receipt["gasUsed"]?.stringValue,
+        case .array(let logs)? = receipt["logs"]
+      else {
+        throw WalletError.rpc(
+          .object([
+            "code": .number(-32603), "message": .string("Invalid transaction receipt"),
+          ]))
+      }
+      let filteredLogs: [JSONValue] = try logs.map { value in
+        guard case .object(let log) = value, let address = log["address"],
+          let data = log["data"], let topics = log["topics"]
+        else { throw WalletError.invalidParams }
+        return .object(["address": address, "data": data, "topics": topics])
+      }
+      var result = Self.callsStatus(
+        id: id, chainID: chainQuantity, status: receiptStatus == "0x1" ? 200 : 500)
+      guard case .object(var object) = result else { return result }
+      object["receipts"] = .array([
+        .object([
+          "logs": .array(filteredLogs), "status": .string(receiptStatus),
+          "blockHash": .string(blockHash), "blockNumber": .string(blockNumber),
+          "gasUsed": .string(gasUsed), "transactionHash": .string(hash),
+        ])
+      ])
+      result = .object(object)
+      return result
+    case .result:
+      throw WalletError.rpc(
+        .object(["code": .number(-32603), "message": .string("Invalid transaction receipt")]))
+    }
+  }
+
+  private static func callsStatus(
+    id: String, chainID: String, status: Int
+  ) -> JSONValue {
+    .object([
+      "version": .string("2.0.0"), "id": .string(id), "chainId": .string(chainID),
+      "status": .number(Double(status)), "atomic": .bool(true),
+    ])
+  }
+
+  private static func walletError(_ error: EIP5792Error) -> WalletError {
+    let code: Int
+    let message: String
+    switch error {
+    case .invalidParams: return .invalidParams
+    case .unsupportedCapability(let capability):
+      code = 5700
+      message = "Unsupported non-optional capability: \(capability)"
+    case .unsupportedChain:
+      code = 5710
+      message = "Unsupported chain id"
+    case .duplicateID:
+      code = 5720
+      message = "Duplicate ID"
+    case .bundleTooLarge:
+      code = 5740
+      message = "Bundle too large"
+    }
+    return .rpc(.object(["code": .number(Double(code)), "message": .string(message)]))
+  }
+
+  private static func isCanonicalDelegation(_ code: [UInt8]) -> Bool {
+    guard let designator = EIP7702DelegationDesignator(code: code),
+      let expected = Hex.data(EIP5792.simple7702Account)
+    else { return false }
+    return designator.delegate == expected
+  }
+
+  private static func safeBatchGas(_ estimate: String, needsAuthorization: Bool) -> String? {
+    guard let value = EIP5792.uint64Quantity(estimate) else { return nil }
+    let margin = max(value / 2, 1_500)
+    guard value <= UInt64.max - margin else { return nil }
+    var safe = max(value + margin, 21_000)
+    if needsAuthorization {
+      guard safe <= UInt64.max - 66_000 else { return nil }
+      safe += 66_000
+    }
+    return "0x" + String(safe, radix: 16)
+  }
+
+  private func rpcData(method: String, params: JSONValue, chainID: String) async throws -> [UInt8] {
+    let response: RPCResponse
+    do {
+      response = try await rpcClient.call(
+        url: resolver.resolve(chainID: chainID), method: method, params: params)
+    } catch {
+      throw WalletError.rpc(Self.transportError)
+    }
+    switch response {
+    case .result(.string(let value)):
+      guard value.hasPrefix("0x"), let data = Hex.data(value) else {
+        throw WalletError.rpc(
+          .object(["code": .number(-32603), "message": .string("Invalid data from \(method)")]))
+      }
+      return data
+    case .result:
+      throw WalletError.rpc(
+        .object(["code": .number(-32603), "message": .string("Invalid data from \(method)")]))
+    case .error(let error): throw WalletError.rpc(error)
+    }
+  }
+
   private func rpcQuantity(method: String, params: JSONValue, chainID: String) async throws
     -> String
   {
@@ -896,7 +1411,7 @@ public actor WalletService {
   }
 
   private func broadcast(
-    rawTransaction: [UInt8], record: inout WalletPendingRequest
+    rawTransaction: [UInt8], record: inout WalletPendingRequest, callBundleID: String? = nil
   ) async throws -> JSONValue {
     let response: RPCResponse
     do {
@@ -927,7 +1442,8 @@ public actor WalletService {
         .stringValue
       {
         try? await activityStore.recordTransaction(
-          request: record, hash: expectedHash, nonce: nonce)
+          request: record, hash: expectedHash, nonce: nonce,
+          callBundleID: record.kind == .batch ? (callBundleID ?? expectedHash) : nil)
       }
       return .string(expectedHash)
     case .result:

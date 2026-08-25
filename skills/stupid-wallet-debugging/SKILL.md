@@ -249,6 +249,20 @@ curl -sS -X POST -H 'content-type: application/json' \
   fake success responses. Confirm whether the dapp tolerates the error and falls back.
 - Do not retry state-changing RPC methods casually. Same-endpoint retries for reads require
   a concrete failure and regression coverage.
+- For first-time EIP-7702 batch estimation, never send a valid signed authorization to an
+  RPC before the outer transaction is ready to broadcast. Verify the implementation runtime
+  hash, estimate with that runtime applied to the account through a state override, and add
+  authorization overhead locally. A signed authorization retained by an RPC can become usable
+  after the account nonce advances even if the wallet's approval flow was cancelled.
+- Capability reporting and authorization must compare the full implementation runtime hash,
+  not merely check for nonempty code. Foreign delegation designators and malformed account code
+  must never be replaced by a dapp-triggered `wallet_sendCalls` request.
+- For a self-sponsored first-time type-4 batch, the outer transaction uses the current pending
+  nonce and the authorization uses that nonce plus one. When the authority is also the sender,
+  successful processing advances the account nonce twice; the next ordinary type-2 batch should
+  therefore use the original pending nonce plus two. Verify this against the mined transaction,
+  receipt, installed `0xef0100 || delegate` designator, and latest account nonce before sending a
+  follow-up batch.
 
 ### 7. Verify Cryptography And Transactions
 

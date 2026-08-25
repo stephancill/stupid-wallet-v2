@@ -21,6 +21,9 @@ import SwiftUI
             NavigationLink(destination: NetworksView()) {
               Text("Networks")
             }
+            NavigationLink(destination: AuthorizationsView(address: address)) {
+              Text("Authorizations")
+            }
             NavigationLink(destination: PrivateKeyView(address: address)) {
               Text("Private Key")
             }

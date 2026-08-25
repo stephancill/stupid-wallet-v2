@@ -146,6 +146,42 @@ private enum Server {
         return errorJSON(4900, "Active chain is unavailable")
       }
 
+    case "getCapabilities":
+      do {
+        let result = try await service.getCapabilities(
+          params: envelope.params ?? .array([]), origin: envelope.origin ?? "unknown",
+          profileID: profileID)
+        return success(["result": result])
+      } catch WalletError.invalidParams {
+        return errorJSON(-32602, "Invalid capabilities parameters")
+      } catch WalletError.unauthorized {
+        return errorJSON(4100, "Unauthorized")
+      } catch WalletError.notReady {
+        return errorJSON(4900, "No wallet key is available yet")
+      } catch WalletError.rpc(let error) {
+        return .object(["ok": .bool(false), "error": error])
+      } catch {
+        return failure("capabilities failed")
+      }
+
+    case "getCallsStatus":
+      do {
+        let result = try await service.getCallsStatus(
+          params: envelope.params ?? .array([]), origin: envelope.origin ?? "unknown",
+          profileID: profileID)
+        return success(["result": result])
+      } catch WalletError.invalidParams {
+        return errorJSON(-32602, "Invalid calls status parameters")
+      } catch WalletError.unauthorized {
+        return errorJSON(4100, "Unauthorized")
+      } catch WalletError.notReady {
+        return errorJSON(4900, "No wallet key is available yet")
+      } catch WalletError.rpc(let error) {
+        return .object(["ok": .bool(false), "error": error])
+      } catch {
+        return failure("calls status failed")
+      }
+
     case "list":
       do {
         let summaries = try await service.list(profileID: profileID)
@@ -175,7 +211,7 @@ private enum Server {
       } catch WalletError.notReady {
         return errorJSON(4900, "No wallet key is available yet")
       } catch WalletError.invalidParams {
-        return errorJSON(-32602, "Invalid transaction parameters")
+        return errorJSON(-32602, "Invalid request parameters")
       } catch WalletError.unauthorized {
         return errorJSON(4100, "Origin is not connected")
       } catch WalletError.rpc(let error) {

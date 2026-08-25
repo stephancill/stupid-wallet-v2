@@ -15,6 +15,9 @@ struct MethodPolicyTests {
     #expect(MethodPolicy.classify("personal_sign") == .sign)
     #expect(MethodPolicy.classify("eth_signTypedData_v4") == .sign)
     #expect(MethodPolicy.classify("eth_sendTransaction") == .send)
+    #expect(MethodPolicy.classify("wallet_sendCalls") == .calls)
+    #expect(MethodPolicy.classify("wallet_getCallsStatus") == .calls)
+    #expect(MethodPolicy.classify("wallet_getCapabilities") == .calls)
   }
 
   @Test("unsafe signing methods are denied")
@@ -57,6 +60,9 @@ struct MethodPolicyTests {
     #expect(MethodPolicy.requiresApproval("personal_sign"))
     #expect(MethodPolicy.requiresApproval("eth_sendTransaction"))
     #expect(MethodPolicy.requiresApproval("wallet_addEthereumChain"))
+    #expect(MethodPolicy.requiresApproval("wallet_sendCalls"))
+    #expect(!MethodPolicy.requiresApproval("wallet_getCallsStatus"))
+    #expect(!MethodPolicy.requiresApproval("wallet_getCapabilities"))
     #expect(!MethodPolicy.requiresApproval("wallet_switchEthereumChain"))
     #expect(!MethodPolicy.requiresApproval("eth_chainId"))
     #expect(!MethodPolicy.requiresApproval("eth_sign"))

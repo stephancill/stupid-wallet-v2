@@ -111,6 +111,17 @@ public actor ConnectedSitesStore {
     }
   }
 
+  /// Exact V2 grant check for privacy-sensitive wallet capability and batch-status reads.
+  public func hasExactGrant(origin: String, address: String, profileID: String? = nil) -> Bool {
+    let normalized = Origin.normalize(origin)
+    guard
+      let grant = normalizedGrants()[
+        normalizedKey(origin: normalized, profileID: profileID)
+      ]
+    else { return false }
+    return grant.address.caseInsensitiveCompare(address) == .orderedSame
+  }
+
   /// Establishes (or refreshes) a connection grant for the hostname, preserving the legacy
   /// `[domain: {address, connectedAt}]` shape so a downgraded/differently-versioned reader
   /// of the key sees a valid entry. Idempotent re-connect just updates the timestamp.

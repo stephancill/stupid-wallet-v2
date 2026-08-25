@@ -13,6 +13,7 @@
     "personal_sign",
     "eth_signtypeddata_v4",
     "eth_sendtransaction",
+    "wallet_sendcalls",
     "eth_addethereumchain",
     "wallet_addethereumchain",
     // Explicitly unsafe and intentionally unsupported:
@@ -221,6 +222,27 @@
       return;
     }
 
+    if (method === "wallet_getcapabilities" || method === "wallet_getcallsstatus") {
+      const response = await native({
+        action: method === "wallet_getcapabilities" ? "getCapabilities" : "getCallsStatus",
+        params: message.params ?? [],
+        origin: pageOrigin,
+      });
+      if (response.ok && response.data) {
+        envelope(sendResponse, { ok: true, result: response.data.result });
+        return;
+      }
+      const readError = response && response.error;
+      envelope(sendResponse, {
+        ok: false,
+        error:
+          readError && typeof readError === "object"
+            ? readError
+            : { code: -32603, message: String(readError || "Wallet read failed") },
+      });
+      return;
+    }
+
     // An authorized origin may switch the wallet's active chain immediately. Native code
     // validates the standard params and serializes the persistent state change; no popup
     // approval or keychain authentication is involved.
@@ -248,7 +270,10 @@
 
     // eth_requestAccounts / wallet_connect: if this origin already holds a grant for the
     // active account, resolve immediately without a new approval card / queue entry.
-    if (method === "eth_requestaccounts" || method === "wallet_connect") {
+    const capabilities = message.params?.[0]?.capabilities;
+    const hasCapabilities =
+      capabilities && typeof capabilities === "object" && Object.keys(capabilities).length > 0;
+    if (method === "eth_requestaccounts" || (method === "wallet_connect" && !hasCapabilities)) {
       const connected = await native({ action: "isConnected", origin: pageOrigin });
       if (connected.ok && connected.data && connected.data.connected) {
         const me = await native({ action: "me" });
@@ -276,7 +301,7 @@
           typeof message.requestKey === "string" && message.requestKey.length <= 128
             ? message.requestKey
             : undefined,
-        method,
+        method: message.method,
         params: message.params,
         origin: pageOrigin,
         chainId: chain.chainId,

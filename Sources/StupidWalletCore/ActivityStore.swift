@@ -37,6 +37,7 @@ public struct ActivityRecord: Sendable, Equatable, Identifiable {
   public let transactionData: String?
   public let signedMessage: String?
   public let signature: String?
+  public let callBundleID: String?
 
   public func belongs(to site: ConnectedSite) -> Bool {
     if let origin = site.origin {
@@ -85,20 +86,22 @@ public actor ActivityStore {
   }
 
   public func recordTransaction(
-    request: WalletPendingRequest, hash: String, nonce: String, at date: Date = Date()
+    request: WalletPendingRequest, hash: String, nonce: String, callBundleID: String? = nil,
+    at date: Date = Date()
   ) throws {
     try withDatabase { database in
       let appID = try upsertApp(database, origin: request.origin)
       let sql = """
         INSERT INTO transactions
           (tx_hash, app_id, chain_id_hex, method, from_address, created_at, status,
-           request_id, nonce, updated_at, profile_id, transaction_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           request_id, nonce, updated_at, profile_id, transaction_data, call_bundle_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(tx_hash) DO UPDATE SET
           status = excluded.status, request_id = excluded.request_id,
           nonce = excluded.nonce, updated_at = excluded.updated_at,
           profile_id = excluded.profile_id,
-          transaction_data = excluded.transaction_data;
+          transaction_data = excluded.transaction_data,
+          call_bundle_id = excluded.call_bundle_id;
         """
       try execute(database, sql: sql) { statement in
         bind(hash.lowercased(), to: 1, in: statement)
@@ -112,7 +115,9 @@ public actor ActivityStore {
         bind(nonce, to: 9, in: statement)
         sqlite3_bind_int64(statement, 10, Int64(date.timeIntervalSince1970))
         bindOptional(request.profileID, to: 11, in: statement)
-        bindOptional(Self.transactionData(request.params), to: 12, in: statement)
+        bindOptional(
+          Self.transactionData(request.resolvedParams ?? request.params), to: 12, in: statement)
+        bindOptional(callBundleID, to: 13, in: statement)
       }
     }
   }
@@ -196,6 +201,54 @@ public actor ActivityStore {
       profileID: nil)
   }
 
+  public func callBundle(
+    id: String, origin: String, profileID: String?, account: String
+  ) throws -> ActivityRecord? {
+    try withDatabase { database in
+      let profileClause = profileID == nil ? "t.profile_id IS NULL" : "t.profile_id = ?"
+      let sql = """
+        SELECT CAST(t.id AS TEXT), t.request_id, t.tx_hash, t.chain_id_hex,
+               COALESCE(t.method, 'eth_sendTransaction'), COALESCE(t.from_address, ''),
+               COALESCE(a.uri, a.domain, ''), t.nonce, t.created_at,
+               COALESCE(t.updated_at, t.created_at), t.status, t.block_number, t.error,
+               t.profile_id, t.transaction_data, t.call_bundle_id
+        FROM transactions t LEFT JOIN apps a ON a.id = t.app_id
+        WHERE lower(t.method) = 'wallet_sendcalls'
+          AND (lower(t.tx_hash) = lower(?) OR t.call_bundle_id = ?)
+          AND lower(COALESCE(a.uri, a.domain, '')) = lower(?)
+          AND lower(COALESCE(t.from_address, '')) = lower(?)
+          AND \(profileClause)
+        LIMIT 1;
+        """
+      var statement: OpaquePointer?
+      guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+        throw sqliteError(database)
+      }
+      defer { sqlite3_finalize(statement) }
+      bind(id, to: 1, in: statement)
+      bind(id, to: 2, in: statement)
+      bind(Origin.normalize(origin), to: 3, in: statement)
+      bind(account, to: 4, in: statement)
+      if let profileID { bind(profileID, to: 5, in: statement) }
+      guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+      return ActivityRecord(
+        id: "transaction-\(text(statement, 0) ?? "0")", kind: .transaction,
+        requestID: text(statement, 1).flatMap(UUID.init(uuidString:)),
+        transactionHash: text(statement, 2),
+        chainID: Self.decimalChainID(text(statement, 3) ?? "0x1"),
+        method: text(statement, 4) ?? "", account: text(statement, 5) ?? "",
+        origin: text(statement, 6) ?? "", nonce: text(statement, 7),
+        createdAt: Date(
+          timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 8))),
+        updatedAt: Date(
+          timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 9))),
+        status: ActivityStatus(rawValue: text(statement, 10) ?? "") ?? .pending,
+        blockNumber: text(statement, 11), error: text(statement, 12),
+        profileID: text(statement, 13), transactionData: text(statement, 14),
+        signedMessage: nil, signature: nil, callBundleID: text(statement, 15))
+    }
+  }
+
   private func activities(
     limit: Int,
     appFilter: (column: String, value: String)?,
@@ -220,14 +273,16 @@ public actor ActivityStore {
                t.chain_id_hex, COALESCE(t.method, 'eth_sendTransaction'),
                COALESCE(t.from_address, ''), COALESCE(a.uri, a.domain, ''), t.nonce,
                t.created_at, COALESCE(t.updated_at, t.created_at), t.status,
-               t.block_number, t.error, t.profile_id, t.transaction_data, NULL, NULL
+               t.block_number, t.error, t.profile_id, t.transaction_data, NULL, NULL,
+               t.call_bundle_id
         FROM transactions t LEFT JOIN apps a ON a.id = t.app_id
         \(filter(recordAlias: "t"))
         UNION ALL
         SELECT 'signature', CAST(s.id AS TEXT), s.request_id, NULL,
                s.chain_id_hex, s.method, COALESCE(s.from_address, ''),
                 COALESCE(a.uri, a.domain, ''), NULL, s.created_at, s.created_at,
-                 'signed', NULL, NULL, s.profile_id, NULL, s.message_content, s.signature_hex
+                  'signed', NULL, NULL, s.profile_id, NULL, s.message_content, s.signature_hex,
+                  NULL
         FROM signatures s LEFT JOIN apps a ON a.id = s.app_id
         \(filter(recordAlias: "s"))
         ORDER BY 10 DESC, 2 DESC LIMIT ?;
@@ -268,7 +323,8 @@ public actor ActivityStore {
               timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 10))),
             status: status, blockNumber: text(statement, 12), error: text(statement, 13),
             profileID: text(statement, 14), transactionData: text(statement, 15),
-            signedMessage: text(statement, 16), signature: text(statement, 17)))
+            signedMessage: text(statement, 16), signature: text(statement, 17),
+            callBundleID: text(statement, 18)))
       }
       return records
     }
@@ -319,10 +375,11 @@ public actor ActivityStore {
     try addColumn(database, table: "transactions", name: "error", type: "TEXT")
     try addColumn(database, table: "transactions", name: "profile_id", type: "TEXT")
     try addColumn(database, table: "transactions", name: "transaction_data", type: "TEXT")
+    try addColumn(database, table: "transactions", name: "call_bundle_id", type: "TEXT")
     try addColumn(database, table: "signatures", name: "request_id", type: "TEXT")
     try addColumn(database, table: "signatures", name: "profile_id", type: "TEXT")
     if previousVersion < 7 { try backfillActivityContent(database) }
-    try exec(database, "PRAGMA user_version=7;")
+    try exec(database, "PRAGMA user_version=8;")
   }
 
   private func schemaVersion(_ database: OpaquePointer) throws -> Int {
@@ -483,6 +540,8 @@ public actor ActivityStore {
 
   private static func signedMessage(_ request: WalletPendingRequest) -> String {
     switch request.kind {
+    case .siwe:
+      return (try? SIWE.message(from: request.params)) ?? ""
     case .message:
       guard case .array(let values) = request.params else { return "" }
       return values.first?.stringValue ?? ""
