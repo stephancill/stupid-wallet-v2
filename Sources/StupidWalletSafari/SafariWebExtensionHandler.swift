@@ -99,12 +99,16 @@ private enum Server {
 
     case "isConnected":
       let origin = envelope.origin ?? "unknown"
+      guard let connected = try? await service.isConnected(origin: origin, profileID: profileID)
+      else { return errorJSON(4900, "Connection state is unavailable") }
       return success([
-        "connected": .bool(await service.isConnected(origin: origin, profileID: profileID))
+        "connected": .bool(connected)
       ])
 
     case "listSites":
-      let sites = await service.connectedSitesList()
+      guard let sites = try? await service.connectedSitesList() else {
+        return errorJSON(4900, "Connection state is unavailable")
+      }
       return success([
         "sites": .array(
           sites.map {
@@ -117,7 +121,11 @@ private enum Server {
 
     case "disconnectSite":
       let origin = envelope.origin ?? "unknown"
-      await service.disconnect(origin: origin, profileID: profileID)
+      do {
+        try await service.disconnect(origin: origin, profileID: profileID)
+      } catch {
+        return errorJSON(4900, "Connection state is unavailable")
+      }
       return success(["ok": .bool(true)])
 
     case "passthrough":

@@ -9,6 +9,8 @@ import SwiftUI
 #if os(iOS)
   struct SettingsView: View {
     let address: String
+    let groupKind: WalletGroupKind
+    let accountCount: Int
     let forgetAccount: () async throws -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var isConfirmingForget = false
@@ -29,7 +31,7 @@ import SwiftUI
             }
           }
           Section {
-            Button("Forget Account", role: .destructive) {
+            Button(forgetLabel, role: .destructive) {
               isConfirmingForget = true
             }
           }
@@ -38,10 +40,10 @@ import SwiftUI
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .alert(
-          "Forget this account?",
+          forgetTitle,
           isPresented: $isConfirmingForget
         ) {
-          Button("Forget Account", role: .destructive) {
+          Button(forgetLabel, role: .destructive) {
             Task {
               do {
                 try await forgetAccount()
@@ -53,7 +55,7 @@ import SwiftUI
           }
           Button("Cancel", role: .cancel) {}
         } message: {
-          Text("This removes the private key from this device. Make sure you have a backup.")
+          Text(forgetMessage)
         }
         .alert("Could Not Forget Account", isPresented: errorIsPresented) {
           Button("OK", role: .cancel) {}
@@ -68,6 +70,20 @@ import SwiftUI
         get: { forgetError != nil },
         set: { if !$0 { forgetError = nil } }
       )
+    }
+
+    private var forgetLabel: String { groupKind == .seed ? "Forget Wallet" : "Forget Account" }
+
+    private var forgetTitle: String {
+      groupKind == .seed ? "Forget this wallet?" : "Forget this account?"
+    }
+
+    private var forgetMessage: String {
+      if groupKind == .seed {
+        return
+          "This removes the seed and all \(accountCount) derived accounts from this device. Make sure you have a backup."
+      }
+      return "This removes the private key from this device. Make sure you have a backup."
     }
   }
 
@@ -143,7 +159,7 @@ import SwiftUI
       isRevealing = true
       errorMessage = nil
       do {
-        privateKey = try WalletFactory.exportPrivateKey(account: address)
+        privateKey = try WalletAccountResolver().exportPrivateKey(address: address)
         scheduleClear()
       } catch {
         errorMessage = "The private key could not be unlocked."

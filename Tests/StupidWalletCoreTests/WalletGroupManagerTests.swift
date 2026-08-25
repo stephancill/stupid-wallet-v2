@@ -143,6 +143,47 @@ struct WalletGroupManagerTests {
     #expect(!environment.keys.contains(account: accountOne.address))
   }
 
+  @Test("home selection persists without changing connection authority")
+  func selectsHomeAccountOnly() throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+    let selected = group.accounts[0]
+    let connectionBefore = try environment.connection.load()
+
+    let registry = try environment.manager.selectHomeAccount(address: selected.address)
+
+    #expect(registry.homeSelectedAddress == selected.address)
+    #expect(try environment.registry.loadReady()?.homeSelectedAddress == selected.address)
+    #expect(WalletStore.activeAddress(directory: environment.directory) == nil)
+    #expect(try environment.connection.load() == connectionBefore)
+
+    let restored = try environment.manager.selectHomeAccount(address: environment.existingAddress)
+    #expect(restored.homeSelectedAddress == environment.existingAddress)
+    #expect(
+      WalletStore.activeAddress(directory: environment.directory) == environment.existingAddress)
+    #expect(try environment.connection.load() == connectionBefore)
+  }
+
+  @Test("home selection rejects unknown accounts and unavailable protected sources")
+  func rejectsUnavailableHomeSelection() throws {
+    let seeds = StubSeedStore()
+    let environment = try Environment(seeds: seeds)
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+    try seeds.delete(groupID: group.id)
+
+    #expect(throws: WalletGroupManagerError.secureStorage) {
+      try environment.manager.selectHomeAccount(address: group.accounts[0].address)
+    }
+    #expect(throws: WalletGroupManagerError.groupNotFound) {
+      try environment.manager.selectHomeAccount(
+        address: "0x0000000000000000000000000000000000000000")
+    }
+    #expect(
+      try environment.registry.loadReady()?.homeSelectedAddress == environment.existingAddress)
+  }
+
   @Test("group deletion removes only that group's pending, connection, cache, and secret state")
   func deletesGroup() async throws {
     let environment = try Environment()
@@ -155,10 +196,13 @@ struct WalletGroupManagerTests {
       let grant = ConnectionGrant(
         account: second.address, origin: origin, legacyDomain: "delete.example", profileID: nil,
         connectedAt: Date(), precision: .exact)
+      let survivingGrant = ConnectionGrant(
+        account: environment.existingAddress, origin: origin, legacyDomain: "delete.example",
+        profileID: nil, connectedAt: Date(timeIntervalSince1970: 1), precision: .exact)
       return ConnectionState(
         revision: state.revision + 1,
         defaultAccount: second.address,
-        grants: [grant],
+        grants: [grant, survivingGrant],
         activeConnections: [
           ActiveConnection(origin: origin, profileID: nil, account: second.address)
         ])
@@ -178,7 +222,7 @@ struct WalletGroupManagerTests {
     #expect(registry.homeSelectedAddress == environment.existingAddress)
     #expect(!environment.seeds.contains(groupID: group.id))
     #expect(connection.defaultAccount == environment.existingAddress)
-    #expect(connection.grants.isEmpty)
+    #expect(connection.grants.map(\.account) == [environment.existingAddress])
     #expect(connection.activeConnections.isEmpty)
     #expect(try environment.cache.entry(account: second.address) == nil)
     #expect(terminal.status == .failed)
@@ -235,6 +279,7 @@ private struct Environment {
     existingAddress = try EthereumKeypair.from(secret: secret).address
     registry = WalletRegistryStore(directory: directory)
     self.keys = keys
+    try keys.save(key: secret, account: existingAddress)
     self.seeds = seeds
     let suite = "WalletGroupManagerTests-\(UUID().uuidString)"
     connection = ConnectionStateStore(directory: directory, suiteName: suite)

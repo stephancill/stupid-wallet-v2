@@ -54,13 +54,24 @@ view model run `ensureAdopted()` before handling, and the
 `WalletService` used by the extension is registry-gated and fails closed while `.migrating`. The containing app publishes
 no wallet state until adoption succeeds and reads the validated registry home; the Safari extension
 also constructs its singleton signer from that registry rather than the removed UserDefaults
-fallback. The old `ConnectedSitesStore` remains the runtime connection API until the account-scoped
-connection gates, but `connection-state.json` is the validated migration authority. The locked
+fallback. Gate C is hermetically complete. `ConnectedSitesStore` now uses `connection-state.json` as
+its runtime authority and resolves account visibility under registry-then-connection locking. It
+retains multiple account grants for one origin/profile, keeps active and default connection accounts
+separate, and provides distinct provider and exact-row disconnect semantics. Provider disconnect also
+removes an effective same-account Dawn hostname fallback, while exact-row deletion retains separately
+persisted hostname grants. Account-scoped activity queries and connected-app details cannot mix rows, repeated
+deterministic signatures persist as separate request events, and group deletion removes only the
+deleted accounts' connection state through the recoverable lifecycle. SQLite migration is serialized,
+supports Dawn versions 1/2 and shipped rebuild versions 3/4/6/7/8/9, and validates known table,
+column, foreign-key, uniqueness, and current-index shapes before mutation. A child-process test proves
+an external grant update is retained by the next mutation. `wallet_disconnect` now rejects with the
+native structured error when durable revocation fails instead of resolving a false success. The locked
 behavior, migration,
 account-resolution boundaries, popup connection picker, ordered implementation gates, and acceptance
 criteria are specified in
-`docs/multi-account-implementation-plan.md`. Until those gates pass, user-visible behavior remains the
-single-account system described below.
+`docs/multi-account-implementation-plan.md`. The containing app now exposes the Gate D multi-account
+model, while Safari account-specific request policy, popup selection, and provider events remain behind
+Gates E through G.
 
 Gate B is now hermetically implemented and remains open for physical-device acceptance.
 `EthereumSeedPhrase` generates canonical entropy, round-trips every supported English BIP-39 size, and
@@ -80,8 +91,13 @@ material, and the registry group, and adoption resumes interrupted deletion befo
 children transiently for signing or export, verifies the derived address, and never persists a child
 key. The Safari home-account signer and Settings private-key export now use this resolver. Future Gate F
 connect-commit markers are preserved and make deletion fail loudly until Gate F adds the approved
-marker reconciliation protocol. Gate D still owns setup/account-picker integration, and physical-device
-seed protection, derivation, signing, export, and deletion proof remain before Gate B is complete.
+marker reconciliation protocol. Gate D is complete: the address menu opens a grouped account picker;
+generated seed creation requires explicit backup confirmation; seed/private-key imports and sibling
+derivation add groups/accounts without replacement; home selection persists through the journaled
+registry transition; and balance, Activity, Connected Apps, Settings, authorizations, and private-key
+export use stable home-account identity. Home selection never mutates connection default, grants, or
+provider-visible active accounts. Physical-device seed protection, derivation, signing, export, and
+deletion proof remain before Gate B is complete.
 
 The macOS direction is the same iOS build running through Apple Silicon's iPhone/iPad-app
 compatibility environment, not a native macOS or Mac Catalyst target. Distribution uses
@@ -304,12 +320,13 @@ second section. Activity list and detail content uses regular system typography 
 hashes, addresses, signatures, and typed-data hex values are not monospaced.
 
 Settings also includes a separate destructive Forget Account section. Its modal confirmation
-alert warns that the private key will be removed and requires an explicit destructive choice.
-Confirming removes the expected active keychain item, clears the shared active-
-account registration and migration remnants (including retained old-format material for
-that same account), revokes that account's legacy and normalized site grants, dismisses
-Settings, and returns to setup. Account-mismatch and keychain-deletion failures do not
-silently clear the visible registration. Activity and network preferences are retained.
+alert warns that the protected source will be removed and requires an explicit destructive choice.
+Confirming resolves the home account's registry group and runs the recoverable group-deletion
+lifecycle, which terminalizes matching pending requests, removes the exact protected source,
+account caches, migration material, and only that group's grants/active mappings, then repairs home
+and connection defaults. It dismisses Settings and reloads the surviving home account or returns to
+setup. Secret-deletion and registry failures do not silently clear visible authority. Activity and
+network preferences are retained.
 
 The aggregate native balance uses an account-bound, atomically written App Group cache.
 The containing app hydrates the last successful formatted total during initialization, keeps
@@ -617,7 +634,8 @@ The first usable milestone includes:
 
 ### Multiple Wallet Groups And Accounts
 
-Approved next-scope. Gate A is complete; later gates remain pending:
+Approved next-scope. Gates A, C, and D are complete; Gate B is hermetically complete but still requires
+physical-device acceptance, and Gates E through H remain pending:
 
 - Only Dawn v1 is a supported migration source. The current rebuild v2 is unsupported, and its
   `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, singleton balance cache, and
@@ -644,7 +662,7 @@ Approved next-scope. Gate A is complete; later gates remain pending:
   also proved exclusion without either process being terminated: iOS granted the app a File
   Coordination suspension assertion for a 45-second diagnostic claim, the extension did not enter the
   accessor during that claim, and a fresh popup request entered and completed immediately after
-  release. Runtime multi-account connection and signer selection remain
+  release. Runtime Safari multi-account connection and signer selection remain
   deliberately deferred to their later gates. Rebuild source resolution, V2 grant ingestion, singleton
   cache migration, and retained rebuild-request migration have been removed.
 
@@ -1318,19 +1336,22 @@ investigation history in implementation notes.
    signing and private-key export, and complete resumable group deletion. The hermetic implementation
    and simulator build are complete. Keep future connect-marker reconciliation coupled to Gate F before
    connect commits become writable at runtime.
-2. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
+2. Proceed to Gate E account-specific Safari request policy now that Gate D containing-app account UX
+   is complete. Keep Gate F connect rebind and Gate G provider account events behind their ordered
+   acceptance boundaries.
+3. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
    reveal/cancellation/timeout, Forget Account, automatic migration launch, and Safari
    signing with each newly provisioned key. Raw private-key import, including recovery of a
    protected item retained across uninstall, is proven on the physical iPhone; the remaining
    device-bound flows are not yet gate-proven.
-3. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
+4. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
    supported iOS version. The product owner chose seamless authorization for pre-existing
    hostname grants; consider a later user-visible reconnect campaign before removing that
    compatibility fallback.
-4. Finish parity details that do not weaken the new model: richer activity detail and broader
+5. Finish parity details that do not weaken the new model: richer activity detail and broader
    optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
    inside Gate 6.
-5. Gate 7 and later per the implementation gates.
+6. Gate 7 and later per the implementation gates.
 
 ## Reference Sources
 

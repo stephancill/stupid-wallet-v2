@@ -1082,6 +1082,13 @@ Exit conditions:
 
 ### Gate C: Account-scoped connections and activity
 
+Status (2026-08-26): hermetically complete. Runtime authorization reads use registry-then-connection
+locking; account grants, active/default state, provider versus exact-row disconnect, account-filtered
+activity, repeated-signature identity, containing-app deletion, serialized SQLite migration, strict
+known-schema validation, and a real child-process grant update are covered. Provider disconnect also
+preserves native structured failures through the JavaScript envelope. Physical migration and Safari
+lifecycle evidence remain governed by their existing Gate A/B and later provider gates.
+
 Exit conditions:
 
 - Multiple accounts retain grants for one origin/profile.
@@ -1093,6 +1100,12 @@ Exit conditions:
 - Cross-process grant updates are not lost.
 
 ### Gate D: Containing-app account UX
+
+Status: complete on 2026-08-26. The containing app now uses the registry-backed group manager for
+generated seed creation, seed/private-key import, derivation, persisted home selection, and group
+deletion. Simulator acceptance covered additive groups, sibling derivation, relaunch persistence,
+account-scoped views, seed-derived export, and the independence of home selection from connection
+authority. Gate B's physical protected-seed acceptance remains separate.
 
 Exit conditions:
 

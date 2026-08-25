@@ -312,11 +312,13 @@ public actor WalletService {
   ) {
     self.signing = signing
     self.store = store ?? PendingRequestStore()
-    self.connectedSites = ConnectedSitesStore(suiteName: grantsSuite)
     let chainDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "ChainStore-\(grantsSuite)")
     try? FileManager.default.createDirectory(
       at: chainDirectory, withIntermediateDirectories: true)
+    _ = try? ConnectionStateStore(directory: chainDirectory, suiteName: grantsSuite)
+      .getOrCreate(ConnectionState(revision: 0))
+    self.connectedSites = ConnectedSitesStore(suiteName: grantsSuite, directory: chainDirectory)
     self.chainStore = ChainStore(directory: chainDirectory)
     self.networkStore = NetworkStore(
       directory: chainDirectory, legacySuiteName: grantsSuite)
@@ -334,19 +336,20 @@ public actor WalletService {
   // MARK: Connection grants
 
   /// Whether this origin already has a connection grant to the active account.
-  public nonisolated func isConnected(origin: String, profileID: String? = nil) async -> Bool {
-    await connectedSites.isConnected(
+  public nonisolated func isConnected(origin: String, profileID: String? = nil) async throws -> Bool
+  {
+    try await connectedSites.isConnected(
       origin: origin, address: signing.account, profileID: profileID)
   }
 
-  /// All persisted connection grants.
-  public func connectedSitesList() async -> [ConnectedSite] {
-    await connectedSites.all()
+  /// Persisted connection grants for the current account.
+  public func connectedSitesList() async throws -> [ConnectedSite] {
+    try await connectedSites.grants(account: signing.account)
   }
 
   /// Grants a connection and binds it to the active account. Idempotent.
-  public func connect(origin: String, profileID: String? = nil) async {
-    await connectedSites.connect(
+  public func connect(origin: String, profileID: String? = nil) async throws {
+    try await connectedSites.connect(
       site: ConnectedSite(
         domain: Origin.downHost(of: origin),
         address: signing.account,
@@ -356,8 +359,9 @@ public actor WalletService {
   }
 
   /// Revokes a connection. Idempotent.
-  public func disconnect(origin: String, profileID: String? = nil) async {
-    await connectedSites.disconnect(origin: origin, profileID: profileID)
+  public func disconnect(origin: String, profileID: String? = nil) async throws {
+    try await connectedSites.disconnect(
+      account: signing.account, origin: origin, profileID: profileID)
   }
 
   public nonisolated var account: String { signing.account }
@@ -409,7 +413,7 @@ public actor WalletService {
   ) async throws -> JSONValue {
     guard signing.hasKey() else { throw WalletError.notReady }
     guard
-      await connectedSites.isConnected(
+      try await connectedSites.isConnected(
         origin: origin, address: signing.account, profileID: profileID)
     else { throw WalletError.unauthorized }
     guard let target = Self.requestedChainID(params) else { throw WalletError.invalidParams }
@@ -459,7 +463,7 @@ public actor WalletService {
     guard MethodPolicy.requiresApproval(method) else { throw WalletError.methodNotApproved }
     guard signing.hasKey() else { throw WalletError.notReady }
     if kind == .chain,
-      !(await connectedSites.isConnected(
+      !(try await connectedSites.isConnected(
         origin: origin, address: signing.account, profileID: profileID))
     {
       throw WalletError.unauthorized
@@ -476,7 +480,7 @@ public actor WalletService {
       throw WalletError.invalidParams
     } else if kind == .batch {
       guard
-        await connectedSites.hasExactGrant(
+        try await connectedSites.hasExactGrant(
           origin: origin, address: signing.account, profileID: profileID)
       else { throw WalletError.unauthorized }
       guard (try? networkStore.network(chainID: chainId)) != nil else {
@@ -834,7 +838,7 @@ public actor WalletService {
       throw WalletError.bindingMismatch
     }
     if record.kind == .chain,
-      !(await connectedSites.isConnected(
+      !(try await connectedSites.isConnected(
         origin: record.origin, address: record.account, profileID: profileID))
     {
       let rpcError = JSONValue.object([
@@ -847,7 +851,7 @@ public actor WalletService {
       throw WalletError.rpc(rpcError)
     }
     if record.kind == .batch,
-      !(await connectedSites.hasExactGrant(
+      !(try await connectedSites.hasExactGrant(
         origin: record.origin, address: record.account, profileID: profileID))
     {
       let rpcError = JSONValue.object([
@@ -1025,7 +1029,7 @@ public actor WalletService {
     // A successful connect/chain-approval content grant establishes the durable
     // connection so a subsequent eth_requestAccounts from the same origin short-circuits.
     if record.kind == .connect || record.kind == .siwe {
-      await connectedSites.connect(
+      try await connectedSites.connect(
         site: ConnectedSite(
           domain: Origin.downHost(of: record.origin),
           address: record.account,
@@ -1544,7 +1548,7 @@ public actor WalletService {
   ) async throws -> JSONValue {
     guard signing.hasKey() else { throw WalletError.notReady }
     guard
-      await connectedSites.hasExactGrant(
+      try await connectedSites.hasExactGrant(
         origin: origin, address: signing.account, profileID: profileID)
     else { throw WalletError.unauthorized }
     guard case .array(let values) = params, values.count == 1 || values.count == 2,
@@ -1598,7 +1602,7 @@ public actor WalletService {
   ) async throws -> JSONValue {
     guard signing.hasKey() else { throw WalletError.notReady }
     guard
-      await connectedSites.hasExactGrant(
+      try await connectedSites.hasExactGrant(
         origin: origin, address: signing.account, profileID: profileID)
     else { throw WalletError.unauthorized }
     guard case .array(let values) = params, values.count == 1,
@@ -1820,19 +1824,35 @@ public actor WalletService {
     try await activityStore.activities(limit: limit)
   }
 
+  public func activities(account: String, limit: Int = 100) async throws -> [ActivityRecord] {
+    try await activityStore.activities(account: account, limit: limit)
+  }
+
   public func activities(for site: ConnectedSite, limit: Int = 100) async throws
     -> [ActivityRecord]
   {
     try await activityStore.activities(for: site, limit: limit)
   }
 
+  public func activities(
+    for site: ConnectedSite, account: String, limit: Int = 100
+  ) async throws -> [ActivityRecord] {
+    try await activityStore.activities(for: site, account: account, limit: limit)
+  }
+
   /// Refreshes unresolved transactions through the same resolver used for preparation and
   /// broadcast. A missing receipt is not treated as failure while the node still knows the
   /// transaction or while propagation is within the grace period.
   public func refreshTransactionActivity(
-    now: Date = Date(), missingGracePeriod: TimeInterval = 60
+    account: String? = nil, now: Date = Date(), missingGracePeriod: TimeInterval = 60
   ) async {
-    guard let unresolved = try? await activityStore.unresolvedTransactions() else { return }
+    let unresolved: [ActivityRecord]?
+    if let account {
+      unresolved = try? await activityStore.unresolvedTransactions(account: account)
+    } else {
+      unresolved = try? await activityStore.unresolvedTransactions()
+    }
+    guard let unresolved else { return }
     for activity in unresolved {
       guard let hash = activity.transactionHash else { continue }
       let receipt = await rpcResult(

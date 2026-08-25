@@ -106,7 +106,7 @@ struct RPCClientTests {
       chainStore: ChainStore(directory: directory),
       networkStore: NetworkStore(directory: directory, legacySuiteName: UUID().uuidString),
       rpcClient: RPCClient(session: URLSession.stubSession), rpcOverrideStore: overrideStore)
-    await service.connect(origin: "https://dapp.example")
+    try await service.connect(origin: "https://dapp.example")
 
     let id = try await service.prepare(
       method: "wallet_addEthereumChain",
@@ -138,7 +138,7 @@ struct RPCClientTests {
       chainStore: ChainStore(directory: directory),
       networkStore: NetworkStore(directory: directory, legacySuiteName: UUID().uuidString),
       rpcClient: RPCClient(session: URLSession.stubSession), rpcOverrideStore: overrideStore)
-    await service.connect(origin: "https://dapp.example")
+    try await service.connect(origin: "https://dapp.example")
 
     let id = try await service.prepare(
       method: "wallet_addEthereumChain",
@@ -165,7 +165,7 @@ struct RPCClientTests {
       chainStore: ChainStore(directory: directory), networkStore: networkStore,
       rpcClient: RPCClient(session: URLSession.stubSession),
       rpcOverrideStore: RPCOverrideStore(directory: directory))
-    await service.connect(origin: "https://dapp.example")
+    try await service.connect(origin: "https://dapp.example")
 
     let id = try await service.prepare(
       method: "wallet_addEthereumChain",

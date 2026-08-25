@@ -277,6 +277,20 @@ public struct WalletRegistryStore: Sendable {
     return registry
   }
 
+  /// Runs a short local-state operation while the complete registry snapshot remains stable.
+  /// Callers may acquire only later lock domains (for example connection state) inside `body`.
+  func withLockedReady<T>(_ body: (WalletRegistry) throws -> T) throws -> T {
+    try withLock {
+      try recoverTransitionUnlocked()
+      guard let registry = try loadRegistryUnlocked() else { throw WalletRegistryError.missing }
+      guard registry.adoptionState == .complete else {
+        throw WalletRegistryError.adoptionIncomplete
+      }
+      try repairProjectionUnlocked(for: registry)
+      return try body(registry)
+    }
+  }
+
   /// Confirms that the fail-closed rebuild projection exactly matches a registry snapshot.
   public func validateProjection(for registry: WalletRegistry) throws {
     try withLock {

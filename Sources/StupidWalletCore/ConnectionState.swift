@@ -347,6 +347,31 @@ public struct ConnectionStateStore: @unchecked Sendable {
     }
   }
 
+  /// Applies one revision-incrementing mutation while holding the cross-process lock.
+  /// Unlike `update(expectedRevision:)`, this is suitable for independent app and extension
+  /// writers because the transform always receives the latest durable value.
+  @discardableResult
+  public func mutate(
+    _ transform: (inout ConnectionState) throws -> Void
+  ) throws -> ConnectionState {
+    try withLock {
+      guard var current = try loadUnlocked() else { throw ConnectionStateError.missing }
+      guard current.revision < UInt64.max else { throw ConnectionStateError.invalidRevision }
+      try transform(&current)
+      current = ConnectionState(
+        revision: current.revision + 1,
+        defaultAccount: current.defaultAccount,
+        grants: current.grants,
+        activeConnections: current.activeConnections,
+        connectCommits: current.connectCommits)
+      let updated = try Self.persistenceNormalized(current)
+      try updated.validate()
+      try writeUnlocked(updated)
+      mirrorLegacy(updated)
+      return updated
+    }
+  }
+
   /// Builds an initial revision-zero connection state from Dawn hostname grants currently
   /// held in `UserDefaults`, without writing. Current-rebuild normalized grants are ignored.
   public func initialMigratedState(defaultAccount: String? = nil) throws -> ConnectionState {

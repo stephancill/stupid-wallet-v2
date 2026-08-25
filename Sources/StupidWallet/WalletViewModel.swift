@@ -4,7 +4,10 @@ import StupidWalletCore
 @MainActor
 final class WalletViewModel: ObservableObject {
   private let balanceCache = BalanceCache()
+  private let groupManager = WalletGroupManager()
+  private var stateGeneration = 0
   @Published var addressHex = ""
+  @Published var walletGroups: [WalletGroup] = []
   @Published var balance: String?
   @Published var networkBalances: [NetworkBalanceItem] = []
   @Published var chainID = ChainStore.defaultChainID
@@ -13,7 +16,16 @@ final class WalletViewModel: ObservableObject {
   @Published var errorMessage: String?
 
   var hasWallet: Bool { !addressHex.isEmpty }
+  var hasRegisteredAccounts: Bool { walletGroups.contains { $0.lifecycle == .active } }
   var chainName: String { NetworkInfo.name(for: chainID) }
+  var selectedGroup: WalletGroup? {
+    walletGroups.first { group in
+      group.lifecycle == .active
+        && group.accounts.contains {
+          $0.address.caseInsensitiveCompare(addressHex) == .orderedSame
+        }
+    }
+  }
 
   init() {
     Task { await adoptAndLoad() }
@@ -24,13 +36,20 @@ final class WalletViewModel: ObservableObject {
   /// continues to drive the visible account.
   @MainActor
   private func adoptAndLoad() async {
+    stateGeneration += 1
     do {
       let result = try await WalletRegistryAdoption().ensureAdopted()
-      guard let registry = result.registry,
-        let address = registry.homeSelectedAddress
-      else {
+      guard let registry = result.registry else {
+        walletGroups = []
         addressHex = ""
         balance = nil
+        return
+      }
+      walletGroups = registry.groups.filter { $0.lifecycle == .active }
+      guard let address = registry.homeSelectedAddress else {
+        addressHex = ""
+        balance = nil
+        networkBalances = []
         return
       }
       addressHex = address
@@ -38,69 +57,129 @@ final class WalletViewModel: ObservableObject {
       errorMessage = nil
     } catch {
       addressHex = ""
+      walletGroups = []
       balance = nil
       errorMessage = "Your existing wallet could not be loaded. Please try again."
       return
     }
   }
 
-  func createNewWallet() {
-    isSaving = true
-    errorMessage = nil
-    do {
-      _ = try WalletFactory.create()
-      Task {
-        await adoptAndLoad()
-        await refreshBalance()
-      }
-    } catch {
-      errorMessage = message(for: error)
-    }
-    isSaving = false
+  func generateSeedPhrase() throws -> String {
+    var entropy = try EthereumSeedPhrase.generateEntropy()
+    defer { entropy.resetBytes(in: entropy.indices) }
+    return try EthereumSeedPhrase.mnemonic(entropy: entropy)
   }
 
-  func importWallet(input: String) {
+  @discardableResult
+  func createSeedWallet(mnemonic: String) async -> Bool {
     isSaving = true
+    defer { isSaving = false }
+    errorMessage = nil
+    do {
+      let group = try groupManager.importSeedGroup(mnemonic: mnemonic)
+      _ = try groupManager.selectHomeAccount(address: group.accounts[0].address)
+      await adoptAndLoad()
+      await refreshBalance()
+      return true
+    } catch {
+      let errorMessage = message(for: error)
+      await adoptAndLoad()
+      self.errorMessage = errorMessage
+      return false
+    }
+  }
+
+  @discardableResult
+  func importWallet(input: String) async -> Bool {
+    isSaving = true
+    defer { isSaving = false }
     errorMessage = nil
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let words = trimmed.split(whereSeparator: \.isWhitespace)
     do {
+      let group: WalletGroup
       if words.count == 1 {
-        _ = try WalletFactory.importPrivateKey(trimmed)
+        group = try groupManager.importPrivateKey(privateKey: trimmed)
       } else {
-        _ = try WalletFactory.importSeedPhrase(trimmed)
+        group = try groupManager.importSeedGroup(mnemonic: trimmed)
       }
-      Task {
-        await adoptAndLoad()
-        await refreshBalance()
-      }
+      _ = try groupManager.selectHomeAccount(address: group.accounts[0].address)
+      await adoptAndLoad()
+      await refreshBalance()
+      return true
+    } catch {
+      let errorMessage = message(for: error)
+      await adoptAndLoad()
+      self.errorMessage = errorMessage
+      return false
+    }
+  }
+
+  @discardableResult
+  func deriveAccount(groupID: UUID) async -> Bool {
+    isSaving = true
+    defer { isSaving = false }
+    errorMessage = nil
+    do {
+      let account = try groupManager.deriveAccount(groupID: groupID)
+      _ = try groupManager.selectHomeAccount(address: account.address)
+      await adoptAndLoad()
+      await refreshBalance()
+      return true
+    } catch {
+      let errorMessage = message(for: error)
+      await adoptAndLoad()
+      self.errorMessage = errorMessage
+      return false
+    }
+  }
+
+  @discardableResult
+  func selectHomeAccount(address: String) async -> Bool {
+    isSaving = true
+    defer { isSaving = false }
+    errorMessage = nil
+    do {
+      _ = try groupManager.selectHomeAccount(address: address)
+      networkBalances = []
+      await adoptAndLoad()
+      await refreshBalance()
+      return true
     } catch {
       errorMessage = message(for: error)
+      return false
     }
-    isSaving = false
   }
 
   func forgetAccount() async throws {
     let account = addressHex
-    try WalletFactory.forget(account: account)
-    await ConnectedSitesStore().disconnectAll(address: account)
-    try? balanceCache.remove(account: account)
-    addressHex = ""
-    balance = nil
+    guard
+      let registry = try WalletRegistryStore().loadReady(),
+      let group = registry.groups.first(where: { group in
+        group.lifecycle == .active
+          && group.accounts.contains {
+            $0.address.caseInsensitiveCompare(account) == .orderedSame
+          }
+      })
+    else { throw WalletGroupManagerError.groupNotFound }
+    try WalletGroupManager().deleteGroup(groupID: group.id)
     networkBalances = []
-    errorMessage = nil
+    await adoptAndLoad()
   }
 
   func refreshBalance() async {
     guard hasWallet else { return }
     let account = addressHex
+    let generation = stateGeneration
     do {
       chainID = try ChainStore().currentChainID()
       let included = try NetworkStore().all().filter(\.includeInBalance)
       includedNetworkCount = included.count
       let results = await NativeBalanceService().balances(
         account: account, chainIDs: included.map(\.id))
-      guard addressHex.caseInsensitiveCompare(account) == .orderedSame else { return }
+      guard generation == stateGeneration,
+        addressHex.caseInsensitiveCompare(account) == .orderedSame
+      else { return }
       let resultsByChain = Dictionary(uniqueKeysWithValues: results.map { ($0.chainID, $0.wei) })
       networkBalances = included.compactMap { network in
         let wei = resultsByChain[network.id] ?? nil
@@ -154,6 +233,16 @@ final class WalletViewModel: ObservableObject {
       return "The seed phrase checksum is invalid."
     case SeedPhraseError.derivationFailed:
       return "The seed phrase could not be derived."
+    case WalletGroupManagerError.duplicateAccount:
+      return "That wallet already exists on this device."
+    case WalletGroupManagerError.verificationFailed:
+      return "Wallet verification was cancelled or failed. No wallet was added."
+    case WalletGroupManagerError.secureStorage:
+      return "The wallet could not be unlocked or saved securely."
+    case WalletGroupManagerError.wrongGroupKind:
+      return "Only seed wallets can add another account."
+    case WalletGroupManagerError.registryChanged:
+      return "Wallet state changed. Please try again."
     default:
       return "The wallet could not be saved. Please try again."
     }

@@ -218,7 +218,18 @@
     // wallet_disconnect revokes the origin's durable connection grant.
     if (method === "wallet_disconnect") {
       const dis = await native({ action: "disconnectSite", origin: pageOrigin });
-      envelope(sendResponse, { ok: true, result: dis.ok === true });
+      if (dis.ok && dis.data && dis.data.ok === true) {
+        envelope(sendResponse, { ok: true, result: true });
+        return;
+      }
+      const disconnectError = dis && dis.error;
+      envelope(sendResponse, {
+        ok: false,
+        error:
+          disconnectError && typeof disconnectError === "object"
+            ? disconnectError
+            : { code: 4900, message: String(disconnectError || "Disconnect failed") },
+      });
       return;
     }
 

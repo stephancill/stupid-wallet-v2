@@ -1,12 +1,6 @@
 import Foundation
 
-/// A connection grant from an authorized dapp to the active wallet.
-///
-/// Persisted in the SAME App Group `UserDefaults` `connectedSites` key used by the legacy
-/// app, shaped as `[lowercased-hostname: { address, connectedAt }]`. Reusing this key means
-/// a shipped new app immediately sees the user's existing connections with no migration.
-/// The persisted identity is a hostname (scheme/port agnostic) to preserve the old format;
-/// the review surface reads the normalized origin separately for display/validation.
+/// A connection grant from an authorized dapp to one wallet account.
 public struct ConnectedSite: Sendable, Codable, Equatable, Identifiable {
   /// Lowercased hostname — the stable persisted key (same as the old app).
   public let domain: String
@@ -19,7 +13,9 @@ public struct ConnectedSite: Sendable, Codable, Equatable, Identifiable {
   /// Safari profile identifier supplied by native Safari context when available.
   public let profileID: String?
 
-  public var id: String { [origin ?? domain, profileID ?? "default"].joined(separator: "|") }
+  public var id: String {
+    [origin ?? domain, profileID ?? "default", address.lowercased()].joined(separator: "|")
+  }
 
   public init(
     domain: String,
@@ -36,184 +32,216 @@ public struct ConnectedSite: Sendable, Codable, Equatable, Identifiable {
   }
 }
 
-/// Reads/writes the legacy App Group `UserDefaults` `connectedSites` entry so both the old
-/// and new app share one durable grant list across processes. Non-secret (no key material).
+/// Account-scoped facade over the atomic connection-state authority. The legacy
+/// `connectedSites` dictionary is written only by `ConnectionStateStore` as a downgrade mirror.
 public actor ConnectedSitesStore {
   public static let defaultAppGroup = PendingRequestStore.defaultAppGroup
-  private static let key = "connectedSites"
-  private static let normalizedKey = "connectedOriginsV2"
+  private let store: ConnectionStateStore
+  private let registryStore: WalletRegistryStore?
 
-  private struct NormalizedGrant: Sendable, Codable {
-    let origin: String
-    let address: String
-    let connectedAt: Date
-    let profileID: String?
+  public init(
+    appGroupID: String = ConnectedSitesStore.defaultAppGroup,
+    directory: URL? = nil
+  ) {
+    store = ConnectionStateStore(directory: directory, suiteName: appGroupID)
+    registryStore = WalletRegistryStore(directory: directory, appGroup: appGroupID)
   }
 
-  private let defaults: UserDefaults
-  private let isoFormatter: ISO8601DateFormatter
-  private let isoFormatterNoFraction: ISO8601DateFormatter
-
-  public init(appGroupID: String = ConnectedSitesStore.defaultAppGroup) {
-    self.defaults = UserDefaults(suiteName: appGroupID) ?? .standard
-    let fraction = ISO8601DateFormatter()
-    fraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    self.isoFormatter = fraction
-    let whole = ISO8601DateFormatter()
-    whole.formatOptions = [.withInternetDateTime]
-    self.isoFormatterNoFraction = whole
+  /// Hermetic-test initializer. The caller owns cleanup of the suite and directory.
+  public init(suiteName: String, directory: URL) {
+    store = ConnectionStateStore(directory: directory, suiteName: suiteName)
+    registryStore = nil
   }
 
-  /// Hermetic-test initializer: persists to a throwaway suite instead of the App Group.
+  /// Convenience hermetic initializer retained for tests that do not need to inspect files.
   public init(suiteName: String) {
-    self.defaults = UserDefaults(suiteName: suiteName) ?? .standard
-    self.defaults.removePersistentDomain(forName: suiteName)
-    let fraction = ISO8601DateFormatter()
-    fraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    self.isoFormatter = fraction
-    let whole = ISO8601DateFormatter()
-    whole.formatOptions = [.withInternetDateTime]
-    self.isoFormatterNoFraction = whole
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ConnectedSitesStore-\(suiteName)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let stateStore = ConnectionStateStore(directory: directory, suiteName: suiteName)
+    _ = try? stateStore.getOrCreate(ConnectionState(revision: 0))
+    store = stateStore
+    registryStore = nil
   }
 
   /// All connected sites, most recently connected first.
-  public func all() -> [ConnectedSite] {
-    let normalized = normalizedGrants().values.map {
-      ConnectedSite(
-        domain: Origin.downHost(of: $0.origin),
-        address: $0.address,
-        connectedAt: $0.connectedAt,
-        origin: $0.origin,
-        profileID: $0.profileID)
-    }
-    let normalizedDomains = Set(normalized.map(\.domain))
-    let legacyOnly = legacySites().filter { !normalizedDomains.contains($0.domain) }
-    return (normalized + legacyOnly).sorted { $0.connectedAt > $1.connectedAt }
+  public func all() throws -> [ConnectedSite] {
+    try sites(account: nil)
   }
 
-  /// Whether the given normalized origin has a connection grant for the account.
-  public func isConnected(origin: String, address: String, profileID: String? = nil) -> Bool {
+  /// Grants belonging to one account. Legacy grants remain visible only while their domain
+  /// has no exact grants, matching the authorization fallback policy.
+  public func grants(account: String) throws -> [ConnectedSite] {
+    try sites(account: account)
+  }
+
+  /// Whether the account is currently active for an exact origin/profile, or is authorized
+  /// by the retained hostname fallback when that domain has no exact grants.
+  public func isConnected(origin: String, address: String, profileID: String? = nil) throws -> Bool
+  {
+    let state = try loadValidatedState()
     let normalized = Origin.normalize(origin)
-    let grants = normalizedGrants()
-    if let grant = grants[normalizedKey(origin: normalized, profileID: profileID)],
-      grant.address.caseInsensitiveCompare(address) == .orderedSame
-    {
-      return true
+    if let active = state.activeConnections.first(where: {
+      $0.origin == normalized && $0.profileID == profileID
+    }) {
+      return active.account.caseInsensitiveCompare(address) == .orderedSame
     }
     let domain = Origin.downHost(of: origin)
-    if grants.values.contains(where: { Origin.downHost(of: $0.origin) == domain }) {
+    if state.grants.contains(where: { $0.precision == .exact && $0.legacyDomain == domain }) {
       return false
     }
-    // Existing hostname-only grants retain authorization by product decision. Every new
-    // approval also writes the stronger normalized grant below.
-    return legacySites().contains {
-      $0.domain == domain && $0.address.caseInsensitiveCompare(address) == .orderedSame
+    return state.grants.contains {
+      $0.precision == .hostname && $0.legacyDomain == domain
+        && $0.account.caseInsensitiveCompare(address) == .orderedSame
     }
   }
 
-  /// Exact V2 grant check for privacy-sensitive wallet capability and batch-status reads.
-  public func hasExactGrant(origin: String, address: String, profileID: String? = nil) -> Bool {
+  /// Exact active-grant check for privacy-sensitive wallet capability and batch-status reads.
+  public func hasExactGrant(origin: String, address: String, profileID: String? = nil) throws
+    -> Bool
+  {
+    let state = try loadValidatedState()
     let normalized = Origin.normalize(origin)
     guard
-      let grant = normalizedGrants()[
-        normalizedKey(origin: normalized, profileID: profileID)
-      ]
+      state.activeConnections.contains(where: {
+        $0.origin == normalized && $0.profileID == profileID
+          && $0.account.caseInsensitiveCompare(address) == .orderedSame
+      })
     else { return false }
-    return grant.address.caseInsensitiveCompare(address) == .orderedSame
+    return state.grants.contains {
+      $0.precision == .exact && $0.origin == normalized && $0.profileID == profileID
+        && $0.account.caseInsensitiveCompare(address) == .orderedSame
+    }
   }
 
-  /// Establishes (or refreshes) a connection grant for the hostname, preserving the legacy
-  /// `[domain: {address, connectedAt}]` shape so a downgraded/differently-versioned reader
-  /// of the key sees a valid entry. Idempotent re-connect just updates the timestamp.
-  public func connect(site: ConnectedSite) {
-    if let origin = site.origin {
-      var grants = normalizedGrants()
-      let normalized = Origin.normalize(origin)
-      grants[normalizedKey(origin: normalized, profileID: site.profileID)] = NormalizedGrant(
-        origin: normalized,
-        address: site.address,
+  /// Establishes or refreshes one account grant. Exact connections become active without
+  /// deleting another account's retained grant for the same origin/profile.
+  public func connect(site: ConnectedSite) throws {
+    let account = try canonicalAddress(site.address)
+    try mutate { state in
+      let grant = ConnectionGrant(
+        account: account,
+        origin: site.origin,
+        legacyDomain: site.domain,
+        profileID: site.origin == nil ? nil : site.profileID,
         connectedAt: site.connectedAt,
-        profileID: site.profileID)
-      persistNormalized(grants)
+        precision: site.origin == nil ? .hostname : .exact)
+      state.grants.removeAll { $0.id == grant.id }
+      state.grants.append(grant)
+      if let origin = grant.origin {
+        state.activeConnections.removeAll {
+          $0.origin == origin && $0.profileID == grant.profileID
+        }
+        state.activeConnections.append(
+          ActiveConnection(origin: origin, profileID: grant.profileID, account: account))
+      }
+      if state.defaultAccount == nil { state.defaultAccount = account }
     }
-    var dict = legacyDictionary()
-    dict[site.domain] = meta(address: site.address, connectedAt: site.connectedAt)
-    defaults.set(dict, forKey: ConnectedSitesStore.key)
   }
 
-  /// Removes a connection grant by hostname. Idempotent.
-  public func disconnect(origin: String, profileID: String? = nil) {
+  /// Revokes the connection currently visible to one provider origin. Removing an exact grant
+  /// also removes that account's retained hostname fallback so disconnect cannot reveal it again.
+  public func disconnect(
+    account: String, origin: String, profileID: String? = nil
+  ) throws {
     let normalized = Origin.normalize(origin)
-    var grants = normalizedGrants()
-    grants.removeValue(forKey: normalizedKey(origin: normalized, profileID: profileID))
-    persistNormalized(grants)
     let domain = Origin.downHost(of: origin)
-    var dict = legacyDictionary()
-    dict.removeValue(forKey: domain)
-    defaults.set(dict, forKey: ConnectedSitesStore.key)
-  }
-
-  /// Revokes every legacy and normalized grant tied to an account being forgotten.
-  public func disconnectAll(address: String) {
-    var grants = normalizedGrants()
-    grants = grants.filter {
-      $0.value.address.caseInsensitiveCompare(address) != .orderedSame
+    try mutate { state in
+      state.grants.removeAll {
+        $0.account.caseInsensitiveCompare(account) == .orderedSame
+          && (($0.precision == .exact && $0.origin == normalized && $0.profileID == profileID)
+            || ($0.precision == .hostname && $0.legacyDomain == domain))
+      }
+      state.activeConnections.removeAll {
+        $0.origin == normalized && $0.profileID == profileID
+          && $0.account.caseInsensitiveCompare(account) == .orderedSame
+      }
     }
-    persistNormalized(grants)
+  }
 
-    var dict = legacyDictionary()
-    dict = dict.filter {
-      guard let stored = $0.value["address"] as? String else { return true }
-      return stored.caseInsensitiveCompare(address) != .orderedSame
+  /// Removes the exact or hostname grant represented by a connected-app row.
+  public func disconnect(site: ConnectedSite) throws {
+    if let origin = site.origin {
+      try mutate { state in
+        state.grants.removeAll {
+          $0.account.caseInsensitiveCompare(site.address) == .orderedSame
+            && $0.precision == .exact && $0.origin == Origin.normalize(origin)
+            && $0.profileID == site.profileID
+        }
+        state.activeConnections.removeAll {
+          $0.origin == Origin.normalize(origin) && $0.profileID == site.profileID
+            && $0.account.caseInsensitiveCompare(site.address) == .orderedSame
+        }
+      }
+      return
     }
-    defaults.set(dict, forKey: ConnectedSitesStore.key)
-  }
-
-  // MARK: Legacy shape
-
-  private func legacyDictionary() -> [String: [String: Any]] {
-    (defaults.dictionary(forKey: ConnectedSitesStore.key) as? [String: [String: Any]])
-      ?? [:]
-  }
-
-  private func meta(address: String, connectedAt: Date) -> [String: Any] {
-    ["address": address, "connectedAt": isoFormatter.string(from: connectedAt)]
-  }
-
-  private func legacySites() -> [ConnectedSite] {
-    let dict = legacyDictionary()
-    var out: [ConnectedSite] = []
-    out.reserveCapacity(dict.count)
-    for (domain, meta) in dict {
-      guard let address = meta["address"] as? String else { continue }
-      out.append(
-        ConnectedSite(
-          domain: domain,
-          address: address,
-          connectedAt: parseISODate(meta["connectedAt"] as? String)
-        ))
+    try mutate { state in
+      state.grants.removeAll {
+        $0.precision == .hostname && $0.legacyDomain == site.domain
+          && $0.account.caseInsensitiveCompare(site.address) == .orderedSame
+      }
     }
-    return out
   }
 
-  private func normalizedKey(origin: String, profileID: String?) -> String {
-    origin + "|" + (profileID ?? "default")
+  /// Revokes every grant and active mapping tied to one account.
+  public func disconnectAll(account: String) throws {
+    try mutate { state in
+      state.grants.removeAll { $0.account.caseInsensitiveCompare(account) == .orderedSame }
+      state.activeConnections.removeAll {
+        $0.account.caseInsensitiveCompare(account) == .orderedSame
+      }
+    }
   }
 
-  private func normalizedGrants() -> [String: NormalizedGrant] {
-    guard let data = defaults.data(forKey: ConnectedSitesStore.normalizedKey) else { return [:] }
-    return (try? JSONDecoder().decode([String: NormalizedGrant].self, from: data)) ?? [:]
+  private func sites(account: String?) throws -> [ConnectedSite] {
+    let state = try loadValidatedState()
+    let exactDomains = Set(
+      state.grants.filter { $0.precision == .exact }.map(\.legacyDomain))
+    return state.grants.compactMap { grant in
+      if let account,
+        grant.account.caseInsensitiveCompare(account) != .orderedSame
+      {
+        return nil
+      }
+      if grant.precision == .hostname, exactDomains.contains(grant.legacyDomain) { return nil }
+      return ConnectedSite(
+        domain: grant.legacyDomain,
+        address: grant.account,
+        connectedAt: grant.connectedAt,
+        origin: grant.origin,
+        profileID: grant.profileID)
+    }.sorted { $0.connectedAt > $1.connectedAt }
   }
 
-  private func persistNormalized(_ grants: [String: NormalizedGrant]) {
-    guard let data = try? JSONEncoder().encode(grants) else { return }
-    defaults.set(data, forKey: ConnectedSitesStore.normalizedKey)
+  private func loadValidatedState() throws -> ConnectionState {
+    if let registryStore {
+      return try registryStore.withLockedReady { registry in
+        guard let state = try store.load() else { throw ConnectionStateError.missing }
+        try state.validate(against: registry)
+        return state
+      }
+    }
+    guard let state = try store.load() else { throw ConnectionStateError.missing }
+    return state
   }
 
-  private func parseISODate(_ string: String?) -> Date {
-    guard let string, !string.isEmpty else { return .distantPast }
-    if let date = isoFormatter.date(from: string) { return date }
-    if let date = isoFormatterNoFraction.date(from: string) { return date }
-    return ISO8601DateFormatter().date(from: string) ?? .distantPast
+  private func mutate(_ transform: (inout ConnectionState) throws -> Void) throws {
+    if let registryStore {
+      try registryStore.withLockedReady { registry in
+        _ = try store.mutate { state in
+          try transform(&state)
+          try state.validate(against: registry)
+        }
+      }
+    } else {
+      _ = try store.mutate(transform)
+    }
+  }
+
+  private func canonicalAddress(_ address: String) throws -> String {
+    guard address.hasPrefix("0x"), address.count == 42,
+      let bytes = Hex.data(String(address.dropFirst(2))), bytes.count == 20
+    else { throw ConnectionStateError.invalid(.invalidAddress) }
+    return EIP55.checksum(from: bytes)
   }
 }

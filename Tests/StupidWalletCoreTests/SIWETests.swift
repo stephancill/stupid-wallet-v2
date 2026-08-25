@@ -82,7 +82,7 @@ struct SIWETests {
     #expect(siwe["message"] == persisted.params.objectValue?["message"])
     #expect(siwe["signature"]?.stringValue?.hasPrefix("0x") == true)
     #expect(response["chainIds"] == .array([.string("0x2105"), .string("0x1")]))
-    #expect(await service.isConnected(origin: origin))
+    #expect(try await service.isConnected(origin: origin))
 
     let activity = try #require(await service.activities().first)
     let signedMessage = try SIWE.message(from: persisted.params)

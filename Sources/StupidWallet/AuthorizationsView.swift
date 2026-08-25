@@ -30,9 +30,12 @@ import SwiftUI
     @State private var refreshGeneration = 0
 
     init(address: String) {
+      let signing =
+        (try? WalletAccountResolver().signer(address: address))
+        ?? UnavailableSigner(account: address)
       service = AuthorizationService(
         account: address,
-        signing: KeychainSigner(account: address, store: KeychainKeyStore()),
+        signing: signing,
         networkStore: NetworkStore(),
         resolver: .persisted(),
         rpcClient: RPCClient())

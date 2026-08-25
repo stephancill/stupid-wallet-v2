@@ -5,6 +5,7 @@ import SwiftUI
   struct ConnectedAppsView: View {
     let address: String
     @State private var sites: [ConnectedSite] = []
+    @State private var loadError: String?
 
     var body: some View {
       List {
@@ -25,7 +26,7 @@ import SwiftUI
         } else {
           Section {
             ForEach(sites) { site in
-              NavigationLink(destination: ConnectedAppDetailView(site: site)) {
+              NavigationLink(destination: ConnectedAppDetailView(site: site, account: address)) {
                 HStack {
                   Text(site.domain)
                   Spacer()
@@ -40,19 +41,32 @@ import SwiftUI
       .listStyle(.insetGrouped)
       .navigationTitle("Connected Apps")
       .navigationBarTitleDisplayMode(.inline)
+      .overlay(alignment: .top) {
+        if let loadError {
+          Text(loadError)
+            .padding(8)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.top, 8)
+        }
+      }
       .task { await load() }
       .refreshable { await load() }
     }
 
     private func load() async {
-      sites = await ConnectedSitesStore().all().filter {
-        $0.address.caseInsensitiveCompare(address) == .orderedSame
+      do {
+        sites = try await ConnectedSitesStore().grants(account: address)
+        loadError = nil
+      } catch {
+        loadError = "Connected apps could not be loaded."
       }
     }
   }
 
   struct ConnectedAppDetailView: View {
     let site: ConnectedSite
+    let account: String
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var activity: [ActivityRecord] = []
@@ -104,9 +118,12 @@ import SwiftUI
         Section {
           Button("Disconnect", role: .destructive) {
             Task {
-              await ConnectedSitesStore().disconnect(
-                origin: site.origin ?? "https://\(site.domain)", profileID: site.profileID)
-              dismiss()
+              do {
+                try await ConnectedSitesStore().disconnect(site: site)
+                dismiss()
+              } catch {
+                activityError = "The app could not be disconnected."
+              }
             }
           }
         }
@@ -120,18 +137,18 @@ import SwiftUI
     private func loadActivity() async {
       isLoadingActivity = true
       activityError = nil
-      let service = makeWalletService()
+      let service = makeWalletService(account: account)
       do {
-        activity = try await service.activities(for: site)
+        activity = try await service.activities(for: site, account: account)
       } catch {
         activityError = "Activity could not be loaded."
       }
       isLoadingActivity = false
 
       guard !Task.isCancelled else { return }
-      await service.refreshTransactionActivity()
+      await service.refreshTransactionActivity(account: account)
       guard !Task.isCancelled else { return }
-      if let refreshedActivity = try? await service.activities(for: site) {
+      if let refreshedActivity = try? await service.activities(for: site, account: account) {
         activity = refreshedActivity
       }
     }

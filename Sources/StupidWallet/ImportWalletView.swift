@@ -3,6 +3,7 @@ import SwiftUI
 #if os(iOS)
   struct ImportWalletView: View {
     @ObservedObject var vm: WalletViewModel
+    var onSuccess: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var inputText = ""
     @FocusState private var isInputFocused: Bool
@@ -11,7 +12,8 @@ import SwiftUI
       let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
       let hex = trimmed.lowercased().hasPrefix("0x") ? String(trimmed.dropFirst(2)) : trimmed
       let words = trimmed.split(whereSeparator: \.isWhitespace)
-      return (hex.count == 64 && hex.allSatisfy(\.isHexDigit)) || (12...24).contains(words.count)
+      return (hex.count == 64 && hex.allSatisfy(\.isHexDigit))
+        || [12, 15, 18, 21, 24].contains(words.count)
     }
 
     var body: some View {
@@ -34,10 +36,12 @@ import SwiftUI
             .focused($isInputFocused)
 
           Button {
-            vm.importWallet(input: inputText)
-            if vm.hasWallet {
-              inputText = ""
-              dismiss()
+            Task {
+              if await vm.importWallet(input: inputText) {
+                inputText = ""
+                onSuccess()
+                dismiss()
+              }
             }
           } label: {
             HStack {
@@ -66,6 +70,7 @@ import SwiftUI
       }
       .navigationBarTitleDisplayMode(.inline)
       .contentShape(Rectangle())
+      .onAppear { vm.errorMessage = nil }
       .onTapGesture { isInputFocused = false }
     }
   }

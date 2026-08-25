@@ -205,6 +205,9 @@ public implementation notes.
   initialized. If its connector appears, inspect request/re-announcement timing and provider
   metadata rather than changing the dapp's connector configuration.
 - Preserve structured errors as `{ code, message, data? }` through every layer.
+- Native replies use `{ ok, data }` for success and `{ ok: false, error }` for failure. A background
+  route must inspect the operation value inside `data` and forward `error`; treating the outer native
+  envelope as the operation result can resolve a failed durable mutation as provider success.
 - In the popup, never render an object with `String(error)`; read `error.message` and retain
   the code/data for diagnosis.
 - Remove all temporary alerts/logging before the final build. Never log complete signing

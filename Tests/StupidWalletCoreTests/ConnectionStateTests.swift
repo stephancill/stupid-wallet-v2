@@ -54,6 +54,31 @@ struct ConnectionStateTests {
     #expect(again.revision == 0)
   }
 
+  @Test("default account changes without changing active connections")
+  func defaultAndActiveAreIndependent() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let suite = "conn-\(UUID().uuidString)"
+    let first = try address(secret: 1)
+    let second = try address(secret: 2)
+    let store = ConnectionStateStore(suiteName: suite, directory: directory)
+    _ = try store.getOrCreate(
+      ConnectionState(
+        revision: 0, defaultAccount: first,
+        grants: [
+          exact(account: first, origin: "https://dapp.example", profile: nil),
+          exact(account: second, origin: "https://dapp.example", profile: nil),
+        ],
+        activeConnections: [
+          ActiveConnection(origin: "https://dapp.example", profileID: nil, account: first)
+        ]))
+
+    let updated = try store.mutate { $0.defaultAccount = second }
+    #expect(updated.defaultAccount == second)
+    #expect(updated.activeConnections.map(\.account) == [first])
+    #expect(updated.grants.count == 2)
+  }
+
   @Test("active connection without a matching exact grant is rejected")
   func activeRequiresGrant() throws {
     let account = try address(secret: 1)

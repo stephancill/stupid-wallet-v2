@@ -3,6 +3,7 @@ import SwiftUI
 #if os(iOS)
   struct SetupView: View {
     @ObservedObject var vm: WalletViewModel
+    let showAccounts: () -> Void
 
     var body: some View {
       VStack(spacing: 24) {
@@ -32,22 +33,21 @@ import SwiftUI
           }
           .buttonStyle(.borderedProminent)
 
-          Button {
-            vm.createNewWallet()
-          } label: {
+          NavigationLink(destination: SeedBackupView(vm: vm)) {
             HStack {
-              if vm.isSaving {
-                ProgressView().tint(.white)
-              } else {
-                Image(systemName: "plus.circle.fill").font(.title2)
-                Text("Create New Wallet").font(.headline)
-              }
+              Image(systemName: "plus.circle.fill").font(.title2)
+              Text("Create New Wallet").font(.headline)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
           }
           .buttonStyle(.bordered)
           .disabled(vm.isSaving)
+
+          if vm.hasRegisteredAccounts {
+            Button("Choose Existing Account", action: showAccounts)
+              .disabled(vm.isSaving)
+          }
         }
         .padding(.horizontal, 32)
         Spacer()

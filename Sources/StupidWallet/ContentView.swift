@@ -1,3 +1,4 @@
+import StupidWalletCore
 import SwiftUI
 
 #if canImport(UIKit)
@@ -12,6 +13,7 @@ import SwiftUI
     @State private var showActivity = false
     @State private var showConnectedApps = false
     @State private var showSettingsSheet = false
+    @State private var showAccountPicker = false
 
     var body: some View {
       NavigationView {
@@ -19,16 +21,19 @@ import SwiftUI
           if vm.hasWallet {
             walletView
           } else {
-            SetupView(vm: vm)
+            SetupView(vm: vm) { showAccountPicker = true }
           }
         }
         .background {
-          NavigationLink(destination: ActivityView(), isActive: $showActivity) {
+          NavigationLink(
+            destination: ActivityView(account: vm.addressHex).id(vm.addressHex.lowercased()),
+            isActive: $showActivity
+          ) {
             EmptyView()
           }
           .hidden()
           NavigationLink(
-            destination: ConnectedAppsView(address: vm.addressHex),
+            destination: ConnectedAppsView(address: vm.addressHex).id(vm.addressHex.lowercased()),
             isActive: $showConnectedApps
           ) {
             EmptyView()
@@ -47,6 +52,9 @@ import SwiftUI
 
               AddressMenuButton(
                 address: vm.addressHex,
+                showAccounts: {
+                  showAccountPicker = true
+                },
                 showActivity: {
                   showActivity = true
                 },
@@ -68,15 +76,30 @@ import SwiftUI
           Task { await vm.refreshBalance() }
         }
       ) {
-        SettingsView(address: vm.addressHex) {
+        SettingsView(
+          address: vm.addressHex,
+          groupKind: vm.selectedGroup?.kind ?? .privateKey,
+          accountCount: vm.selectedGroup?.accounts.count ?? 1
+        ) {
           try await vm.forgetAccount()
         }
+        .id(vm.addressHex.lowercased())
+      }
+      .sheet(isPresented: $showAccountPicker) {
+        AccountPickerView(vm: vm)
       }
       .task {
         await vm.refreshBalance()
       }
       .onChange(of: scenePhase) { _, phase in
         if phase == .active { Task { await vm.refreshBalance() } }
+      }
+      .onChange(of: vm.addressHex) { oldAddress, newAddress in
+        guard oldAddress.caseInsensitiveCompare(newAddress) != .orderedSame else { return }
+        showBalanceDetails = false
+        showActivity = false
+        showConnectedApps = false
+        showSettingsSheet = false
       }
     }
 
@@ -164,6 +187,7 @@ import SwiftUI
 
   private struct AddressMenuButton: UIViewRepresentable {
     let address: String
+    let showAccounts: () -> Void
     let showActivity: () -> Void
     let showConnectedApps: () -> Void
     let showSettings: () -> Void
@@ -191,8 +215,9 @@ import SwiftUI
 
       let displayAddress =
         address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
-      let accountAction = UIAction(title: displayAddress, image: icon) { _ in }
-      accountAction.attributes = .keepsMenuPresented
+      let accountAction = UIAction(title: displayAddress, image: icon) { _ in
+        showAccounts()
+      }
       let activityAction = UIAction(
         title: "Activity",
         image: UIImage(systemName: "clock")

@@ -31,7 +31,9 @@ struct ApprovalTests {
     _ store: PendingRequestStore? = nil, signer: any Signing = StubSigner()
   ) -> WalletService {
     WalletService(
-      store: store ?? Self.tmpStore(), signing: signer, chainStore: Self.tmpChainStore(),
+      store: store ?? Self.tmpStore(), signing: signer,
+      connectedSites: ConnectedSitesStore(suiteName: "ApprovalTests-\(UUID().uuidString)"),
+      chainStore: Self.tmpChainStore(),
       networkStore: Self.tmpNetworkStore())
   }
 
@@ -273,7 +275,7 @@ struct ApprovalTests {
   @Test("wallet_addEthereumChain accepts standard [chainObject] params")
   func standardChainParams() async throws {
     let svc = service()
-    await svc.connect(origin: "https://dapp.example")
+    try await svc.connect(origin: "https://dapp.example")
     let id = try await svc.prepare(
       method: "wallet_addEthereumChain",
       params: .array([

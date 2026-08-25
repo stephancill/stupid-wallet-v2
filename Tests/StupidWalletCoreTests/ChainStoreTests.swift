@@ -48,7 +48,7 @@ struct ChainStoreTests {
       connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
       chainStore: chainStore,
       networkStore: networkStore)
-    await service.connect(origin: "https://dapp.example")
+    try await service.connect(origin: "https://dapp.example")
 
     let add = try await service.prepare(
       method: "wallet_addEthereumChain",
@@ -72,7 +72,7 @@ struct ChainStoreTests {
     let service = WalletService(
       store: PendingRequestStore(directory: directory()), signing: StubSigner(),
       grantsSuite: UUID().uuidString)
-    await service.connect(origin: "https://dapp.example")
+    try await service.connect(origin: "https://dapp.example")
     await #expect(throws: WalletError.invalidParams) {
       try await service.switchChain(
         params: .array([.object([:])]),
@@ -100,8 +100,8 @@ struct ChainStoreTests {
       store: PendingRequestStore(directory: directory()), signing: StubSigner(),
       connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
       chainStore: chainStore)
-    await service.connect(origin: "https://dapp.example")
-    await service.disconnect(origin: "https://dapp.example")
+    try await service.connect(origin: "https://dapp.example")
+    try await service.disconnect(origin: "https://dapp.example")
 
     await #expect(throws: WalletError.unauthorized) {
       try await service.switchChain(
@@ -116,7 +116,7 @@ struct ChainStoreTests {
     let service = WalletService(
       store: PendingRequestStore(directory: directory()), signing: StubSigner(),
       grantsSuite: UUID().uuidString)
-    await service.connect(origin: "https://dapp.example")
+    try await service.connect(origin: "https://dapp.example")
 
     await #expect(throws: WalletError.methodNotApproved) {
       try await service.prepare(

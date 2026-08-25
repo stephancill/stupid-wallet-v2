@@ -7,6 +7,7 @@ import SwiftUI
 
 #if os(iOS)
   struct ActivityView: View {
+    let account: String
     @State private var items: [ActivityRecord] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -48,18 +49,18 @@ import SwiftUI
     private func load() async {
       isLoading = true
       errorMessage = nil
-      let service = makeWalletService()
+      let service = makeWalletService(account: account)
       do {
-        items = try await service.activities()
+        items = try await service.activities(account: account)
       } catch {
         errorMessage = "Activity could not be loaded."
       }
       isLoading = false
 
       guard !Task.isCancelled else { return }
-      await service.refreshTransactionActivity()
+      await service.refreshTransactionActivity(account: account)
       guard !Task.isCancelled else { return }
-      if let refreshedItems = try? await service.activities() {
+      if let refreshedItems = try? await service.activities(account: account) {
         items = refreshedItems
       }
     }
@@ -68,6 +69,7 @@ import SwiftUI
   struct ActivityDetailView: View {
     let item: ActivityRecord
     @State private var connectedSite: ConnectedSite?
+    @State private var connectionError = false
 
     init(item: ActivityRecord, connectedSite: ConnectedSite? = nil) {
       self.item = item
@@ -78,11 +80,16 @@ import SwiftUI
       Form {
         Section("App") {
           if let connectedSite {
-            NavigationLink(destination: ConnectedAppDetailView(site: connectedSite)) {
+            NavigationLink(
+              destination: ConnectedAppDetailView(site: connectedSite, account: item.account)
+            ) {
               detailRow("App", connectedSite.domain)
             }
           } else {
             detailRow("App", appLabel(item.origin))
+            if connectionError {
+              Text("Connection state is unavailable.").foregroundStyle(.secondary)
+            }
           }
         }
         if item.kind == .transaction {
@@ -132,7 +139,13 @@ import SwiftUI
     }
 
     private func loadConnectedSite() async {
-      connectedSite = await ConnectedSitesStore().all().first { item.belongs(to: $0) }
+      do {
+        connectedSite = try await ConnectedSitesStore().grants(account: item.account).first {
+          item.belongs(to: $0)
+        }
+      } catch {
+        connectionError = true
+      }
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {
@@ -446,13 +459,10 @@ import SwiftUI
     }
   }
 
-  func makeWalletService() -> WalletService {
-    let signing: any Signing
-    if let address = try? WalletRegistryStore().loadReady()?.homeSelectedAddress {
-      signing = KeychainSigner(account: address, store: KeychainKeyStore())
-    } else {
-      signing = UnavailableSigner()
-    }
+  func makeWalletService(account: String) -> WalletService {
+    let signing =
+      (try? WalletAccountResolver().signer(address: account))
+      ?? UnavailableSigner(account: account)
     return WalletService(
       signing: signing, resolver: .persisted(), registryStore: WalletRegistryStore())
   }

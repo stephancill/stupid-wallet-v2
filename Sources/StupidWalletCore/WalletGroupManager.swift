@@ -286,6 +286,58 @@ public struct WalletGroupManager: Sendable {
     }
   }
 
+  /// Selects containing-app state only. Connection defaults, grants, and active accounts
+  /// remain authoritative in the separate connection-state store.
+  @discardableResult
+  public func selectHomeAccount(address: String) throws -> WalletRegistry {
+    guard let current = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    guard
+      let group = current.groups.first(where: { group in
+        group.lifecycle == .active
+          && group.accounts.contains {
+            $0.address.caseInsensitiveCompare(address) == .orderedSame
+          }
+      }),
+      let account = group.accounts.first(where: {
+        $0.address.caseInsensitiveCompare(address) == .orderedSame
+      })
+    else {
+      throw WalletGroupManagerError.groupNotFound
+    }
+    let sourceExists: Bool
+    switch group.kind {
+    case .privateKey:
+      sourceExists = keyStore.contains(account: account.address)
+    case .seed:
+      sourceExists = seedStore.contains(groupID: group.id)
+    }
+    guard sourceExists else { throw WalletGroupManagerError.secureStorage }
+    if current.homeSelectedAddress?.caseInsensitiveCompare(account.address) == .orderedSame {
+      return current
+    }
+    return try registryStore.update(expectedRevision: current.revision) { registry in
+      guard registry.adoptionState == .complete else {
+        throw WalletGroupManagerError.registryNotReady
+      }
+      guard
+        registry.groups.contains(where: { candidate in
+          candidate.id == group.id && candidate.lifecycle == .active
+            && candidate.accounts.contains { $0.address == account.address }
+        })
+      else {
+        throw WalletGroupManagerError.registryChanged
+      }
+      return WalletRegistry(
+        revision: registry.revision + 1,
+        adoptionState: registry.adoptionState,
+        groups: registry.groups,
+        homeSelectedAddress: account.address,
+        legacyWalletAddressFallbackRemoved: registry.legacyWalletAddressFallbackRemoved)
+    }
+  }
+
   /// Marks the group inactive before deleting any secret, then commits each cleanup phase
   /// forward. A later adoption entry resumes any group left in `.deleting`.
   public func deleteGroup(groupID: UUID) throws {
@@ -343,7 +395,7 @@ public struct WalletGroupManager: Sendable {
     let removedAccounts = Set(group.accounts.map { $0.address.lowercased() })
     try terminalizePendingRequests(accounts: removedAccounts)
     try deleteSecret(for: group)
-    try removeConnections(accounts: removedAccounts, registry: registry)
+    try removeConnections(accounts: removedAccounts)
     for account in group.accounts {
       try balanceCache.remove(account: account.address)
       if migrationBackend.oldAddress()?.caseInsensitiveCompare(account.address) == .orderedSame {
@@ -422,31 +474,33 @@ public struct WalletGroupManager: Sendable {
     }
   }
 
-  private func removeConnections(accounts: Set<String>, registry: WalletRegistry) throws {
-    guard let state = try connectionStore.load() else {
-      throw WalletGroupManagerError.corruptState
+  private func removeConnections(accounts: Set<String>) throws {
+    try registryStore.withLockedReady { registry in
+      let survivingDefault =
+        registry.homeSelectedAddress
+        ?? registry.groups
+        .filter { $0.lifecycle == .active }
+        .flatMap(\.accounts)
+        .first?.address
+      _ = try connectionStore.mutate { current in
+        if current.connectCommits.contains(where: { accounts.contains($0.account.lowercased()) }) {
+          throw WalletGroupManagerError.corruptState
+        }
+        let candidate = ConnectionState(
+          revision: current.revision,
+          defaultAccount: current.defaultAccount.map { accounts.contains($0.lowercased()) }
+            == true ? survivingDefault : current.defaultAccount,
+          grants: current.grants.filter { !accounts.contains($0.account.lowercased()) },
+          activeConnections: current.activeConnections.filter {
+            !accounts.contains($0.account.lowercased())
+          },
+          connectCommits: current.connectCommits)
+        try candidate.validate(against: registry)
+        current.defaultAccount = candidate.defaultAccount
+        current.grants = candidate.grants
+        current.activeConnections = candidate.activeConnections
+      }
     }
-    if state.connectCommits.contains(where: { accounts.contains($0.account.lowercased()) }) {
-      throw WalletGroupManagerError.corruptState
-    }
-    let survivingDefault =
-      registry.homeSelectedAddress
-      ?? registry.groups
-      .filter { $0.lifecycle == .active }
-      .flatMap(\.accounts)
-      .first?.address
-    let updated = try connectionStore.update(expectedRevision: state.revision) { current in
-      ConnectionState(
-        revision: current.revision + 1,
-        defaultAccount: current.defaultAccount.map { accounts.contains($0.lowercased()) }
-          == true ? survivingDefault : current.defaultAccount,
-        grants: current.grants.filter { !accounts.contains($0.account.lowercased()) },
-        activeConnections: current.activeConnections.filter {
-          !accounts.contains($0.account.lowercased())
-        },
-        connectCommits: current.connectCommits)
-    }
-    try updated.validate(against: registry)
   }
 
   private static func contains(account: String, in registry: WalletRegistry) -> Bool {

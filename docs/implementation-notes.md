@@ -50,6 +50,98 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Gate D Containing-App Account UX
+
+### Summary
+
+- Added a grouped account picker opened from the home account-menu address. It selects existing
+  accounts, derives the next account only for seed groups, and links to additive seed/private-key
+  wallet flows without exposing creation or key operations to Safari.
+- Replaced containing-app singleton provisioning with registry-backed group operations. New wallet
+  creation now generates a BIP-39 phrase, requires explicit backup confirmation before registration,
+  clears the visible phrase on cancellation/backgrounding/completion, and stores protected entropy
+  rather than an address-keyed child key.
+- Added journaled home-account selection with protected-source availability validation. Selection
+  updates only registry/home state and the fail-closed downgrade projection; it does not mutate the
+  connection default, grants, or active provider accounts.
+- Made account-scoped destinations stable across selection changes. Balance, Activity, Connected Apps,
+  Settings, EIP-7702 authorizations, group-aware forgetting, and private-key export now resolve the
+  selected home account, including seed-derived accounts through `WalletAccountResolver`.
+
+### Why
+
+- Gate D makes the existing multi-account registry usable without weakening the separation between
+  containing-app home state and Safari authorization state. Generated wallets must remain seed-backed
+  so sibling derivation does not depend on persisted child keys.
+
+### Verification
+
+- `swift test` passed all 271 tests in 34 suites. New manager coverage proves persisted home selection,
+  fail-closed seed/private-key compatibility projection changes, unavailable-source rejection, and
+  unchanged connection authority.
+- `node --test Tests/JavaScript/*.test.mjs` passed all 11 tests. `stupid-app doctor` completed with zero
+  failures and warnings, and `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+  Accessibility-driven acceptance created a generated seed wallet after confirmation, derived its next
+  account, switched between private-key and seed accounts, proved selection persisted after relaunch,
+  observed empty account-scoped Activity and Connected Apps for the new account, confirmed seed-group
+  `Forget Wallet` wording, and successfully exercised seed-derived private-key reveal without recording
+  secret material.
+- The simulator accessibility audit reported no critical issues; its seven warnings are missing-trait
+  warnings on the current Settings hierarchy.
+
+### Follow-Up
+
+- Complete Gate B's physical-device protected-seed/signing/export/deletion acceptance.
+- Proceed to Gate E account-specific Safari request policy. Gate F popup connect selection and Gate G
+  provider account events remain intentionally separate.
+
+## 2026-08-26 - Gate C Account-Scoped Connections And Activity
+
+### Summary
+
+- Completed the Gate C runtime transition to account-scoped connection authority. Authorization reads
+  now validate registry membership while holding registry then connection locks; multiple accounts can
+  retain grants for one origin/profile while active and default selections remain independent.
+- Split provider disconnect from exact connected-app-row deletion. Provider disconnect removes the
+  effective same-account hostname fallback as well as its exact grant, while exact-row deletion retains
+  separately persisted hostname grants. The JavaScript route now propagates native structured failures
+  instead of resolving failed durable revocation as success. WebExtension manifest `0.1.43` carries the
+  corrected worker.
+- Routed containing-app Forget Account through recoverable group deletion and scoped app activity,
+  connected-app details, authorization reads, and cleanup to the selected account.
+- Serialized activity migration with `BEGIN IMMEDIATE`, retained Dawn versions 1/2 and shipped rebuild
+  versions 3/4/6/7/8/9, and made unknown or malformed schemas fail before mutation. Validation now
+  covers exact canonical columns, type/nullability/primary-key shape, app foreign keys, signature
+  uniqueness by version, and the complete current-version index set.
+- Added deterministic coverage for every shipped activity schema, near-valid malformed current schemas,
+  provider disconnect envelopes, and a real child-process grant update retained by the next mutation.
+  Recorded the native-envelope failure pattern in the wallet debugging skill.
+
+### Why
+
+- Gate C requires account identity to remain consistent across registry, connection, activity, deletion,
+  and provider boundaries. Silent schema repair or a false-success disconnect could expose stale account
+  authority even when the UI or dapp believed it had been removed.
+
+### Verification
+
+- `swift test` passed all 269 tests in 34 suites. The focused `ActivityStoreTests` run passed 12 tests,
+  including eight historical-version migration cases and four malformed-version-9 cases.
+- `node --test Tests/JavaScript/*.test.mjs` passed all 11 tests. `oxfmt`, `oxlint`, and `node --check`
+  passed for the changed extension JavaScript and manifest.
+- `swift format lint --recursive Sources Tests` reported only the three pre-existing block-comment
+  warnings in `SecurityWalletBackend.swift`; `git diff --check` passed.
+- `stupid-app 0.0.8 doctor` completed with zero failures and warnings. `stupid-app build` succeeded,
+  and `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app
+  and extension resources. Accessibility inspection confirmed the retained wallet home rendered.
+
+### Follow-Up
+
+- Complete Gate B's physical protected-seed/signing/deletion acceptance, then proceed to Gate D. Gate E
+  account-specific Safari request policy, Gate F connect account selection, and Gate G provider account
+  lifecycle remain intentionally separate.
+
 ## 2026-08-25 - Private-Key Reveal Lifecycle Fix
 
 ### Summary

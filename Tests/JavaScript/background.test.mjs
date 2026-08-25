@@ -199,6 +199,58 @@ test("plain wallet_connect still short-circuits an existing grant", async () => 
   assert.deepEqual(actions, ["isConnected", "me"]);
 });
 
+test("wallet_disconnect preserves native success and structured errors", async () => {
+  let messageListener;
+  let nativeResponse = { ok: true, data: { ok: true } };
+  const browser = {
+    action: { setBadgeText() {} },
+    runtime: {
+      lastError: null,
+      onMessage: {
+        addListener(listener) {
+          messageListener = listener;
+        },
+      },
+      sendNativeMessage(_applicationID, message, callback) {
+        assert.equal(message.action, "disconnectSite");
+        assert.equal(message.origin, "https://example.com");
+        callback(nativeResponse);
+      },
+    },
+    tabs: {
+      query(_query, callback) {
+        callback([]);
+      },
+      sendMessage() {},
+    },
+  };
+  vm.runInNewContext(backgroundSource, { browser, Map, Promise, Set, URL });
+
+  const disconnect = () =>
+    new Promise((resolve) => {
+      messageListener(
+        { type: "ethereum.request", method: "wallet_disconnect" },
+        { origin: "https://example.com" },
+        resolve,
+      );
+    });
+
+  const success = await disconnect();
+  assert.equal(success.__envelope, true);
+  assert.equal(success.ok, true);
+  assert.equal(success.result, true);
+
+  nativeResponse = {
+    ok: false,
+    error: { code: 4900, message: "Connection state is unavailable" },
+  };
+  const failure = await disconnect();
+  assert.equal(failure.__envelope, true);
+  assert.equal(failure.ok, false);
+  assert.equal(failure.error.code, 4900);
+  assert.equal(failure.error.message, "Connection state is unavailable");
+});
+
 test("EIP-5792 methods use native-authoritative routes and preserve method spelling", async () => {
   let messageListener;
   const messages = [];

@@ -86,7 +86,7 @@ struct EIP5792ServiceTests {
   func delegatedV1() async throws {
     let state = CallsRPCState(accountCode: delegationCode)
     let (service, _) = makeService(state: state)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let id = try await service.prepare(
       method: "wallet_sendCalls", params: v1Params(), origin: origin, profileID: profile)
     let summary = try await service.summarize(request: id, profileID: profile)
@@ -112,7 +112,7 @@ struct EIP5792ServiceTests {
   func automaticDelegationV2() async throws {
     let state = CallsRPCState(accountCode: "0x")
     let (service, signer) = makeService(state: state)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let id = try await service.prepare(
       method: "wallet_sendCalls", params: v2Params(id: appID), origin: origin,
       profileID: profile)
@@ -143,7 +143,7 @@ struct EIP5792ServiceTests {
     let state = CallsRPCState(accountCode: "0x", implementationInitiallyMissing: true)
     let (service, signer) = makeService(
       state: state, runtimeHash: EIP5792.simple7702AccountRuntimeHash)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let id = try await service.prepare(
       method: "wallet_sendCalls", params: v1Params(), origin: origin, profileID: profile)
 
@@ -164,7 +164,7 @@ struct EIP5792ServiceTests {
     let chainID = "31337"
     let state = CallsRPCState(accountCode: "0x", implementationInitiallyMissing: true)
     let (service, signer) = makeService(state: state, chainID: chainID)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let id = try await service.prepare(
       method: "wallet_sendCalls",
       params: v2Params(id: appID, chainID: "0x7a69"),
@@ -190,7 +190,7 @@ struct EIP5792ServiceTests {
     let state = CallsRPCState(accountCode: "0x", implementationInitiallyMissing: true)
     state.receiptError = nodeError
     let (service, _) = makeService(state: state, chainID: "31337")
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let id = try await service.prepare(
       method: "wallet_sendCalls", params: v2Params(id: appID, chainID: "0x7a69"),
       origin: origin, profileID: profile)
@@ -209,7 +209,7 @@ struct EIP5792ServiceTests {
     ] {
       let state = CallsRPCState(accountCode: code)
       let (service, signer) = makeService(state: state)
-      await service.connect(origin: origin, profileID: profile)
+      try await service.connect(origin: origin, profileID: profile)
       let id = try await service.prepare(
         method: "wallet_sendCalls", params: v1Params(), origin: origin, profileID: profile)
       await #expect(
@@ -231,7 +231,7 @@ struct EIP5792ServiceTests {
   func mutation() async throws {
     let state = CallsRPCState(accountCode: delegationCode)
     let (service, _) = makeService(state: state)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let id = try await service.prepare(
       method: "wallet_sendCalls", params: v1Params(), origin: origin, profileID: profile)
     let original = try #require(await service.store.record(id))
@@ -261,7 +261,7 @@ struct EIP5792ServiceTests {
   func appIDRetryIdentity() async throws {
     let state = CallsRPCState(accountCode: delegationCode)
     let (service, _) = makeService(state: state)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let first = try await service.prepare(
       method: "wallet_sendCalls", params: v2Params(id: appID), origin: origin,
       profileID: profile, requestKey: "session:1")
@@ -288,7 +288,7 @@ struct EIP5792ServiceTests {
         params: .array([.string(service.account), .array([.string("0x1")])]),
         origin: origin, profileID: profile)
     }
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let result = try await service.getCapabilities(
       params: .array([.string(service.account), .array([.string("0x1"), .string("0xa")])]),
       origin: origin, profileID: profile)
@@ -302,7 +302,7 @@ struct EIP5792ServiceTests {
   func capabilitiesWithDeployableImplementation() async throws {
     let state = CallsRPCState(accountCode: delegationCode, implementationInitiallyMissing: true)
     let (service, _) = makeService(state: state)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
 
     let result = try await service.getCapabilities(
       params: .array([.string(service.account), .array([.string("0x1")])]),
@@ -315,7 +315,7 @@ struct EIP5792ServiceTests {
   func capabilitiesWithUnsafeImplementation() async throws {
     let state = CallsRPCState(accountCode: delegationCode, unsafeImplementation: true)
     let (service, _) = makeService(state: state)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
 
     let result = try await service.getCapabilities(
       params: .array([.string(service.account), .array([.string("0x1")])]),
@@ -328,7 +328,7 @@ struct EIP5792ServiceTests {
   func statuses() async throws {
     let state = CallsRPCState(accountCode: delegationCode)
     let (service, _) = makeService(state: state)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     let id = try await service.prepare(
       method: "wallet_sendCalls", params: v1Params(), origin: origin, profileID: profile)
     _ = try await service.approve(request: id, profileID: profile)
@@ -370,7 +370,7 @@ struct EIP5792ServiceTests {
   func unsupportedCapability() async throws {
     let state = CallsRPCState(accountCode: delegationCode)
     let (service, _) = makeService(state: state)
-    await service.connect(origin: origin, profileID: profile)
+    try await service.connect(origin: origin, profileID: profile)
     var object = try #require(v1Params().firstObject)
     object["capabilities"] = .object(["paymasterService": .object([:])])
     await #expect(

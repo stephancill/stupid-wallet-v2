@@ -17,87 +17,283 @@ struct ConnectedSitesTests {
     WalletService(store: Self.tmpStore(), signing: StubSigner(), grantsSuite: suite)
   }
 
-  @Test("connect establishes a grant readable by origin and account")
-  func connectGrant() async {
+  @Test("multiple accounts retain grants while one remains active")
+  func connectGrant() async throws {
     let suite = "grants-\(UUID().uuidString)"
     let store = ConnectedSitesStore(suiteName: suite)
-    await store.connect(
+    let first = try address(secret: 1)
+    let second = try address(secret: 2)
+    try await store.connect(
       site: ConnectedSite(
         domain: "dapp.example",
-        address: "0x1234567890abcdef1234567890abcdef12345678",
+        address: first,
         origin: "https://dapp.example",
         profileID: "profile-a"))
-    let sites = await store.all()
-    #expect(sites.count == 1)
-    #expect(sites.first?.domain == "dapp.example")
-    #expect(
-      await store.isConnected(
-        origin: "https://dapp.example",
-        address: "0x1234567890abcdef1234567890abcdef12345678",
+    try await store.connect(
+      site: ConnectedSite(
+        domain: "dapp.example", address: second, origin: "https://dapp.example",
         profileID: "profile-a"))
+
+    let sites = try await store.all()
+    #expect(sites.count == 2)
+    #expect(Set(sites.map(\.address)) == [first, second])
     #expect(
-      !(await store.isConnected(
-        origin: "https://dapp.example:8443",
-        address: "0x1234567890abcdef1234567890abcdef12345678",
-        profileID: "profile-a")))
+      try await store.isConnected(
+        origin: "https://dapp.example", address: second, profileID: "profile-a"))
     #expect(
-      !(await store.isConnected(
-        origin: "https://dapp.example",
-        address: "0x1234567890abcdef1234567890abcdef12345678",
-        profileID: "profile-b")))
+      !(try await store.isConnected(
+        origin: "https://dapp.example", address: first, profileID: "profile-a")))
+    #expect(
+      !(try await store.hasExactGrant(
+        origin: "https://dapp.example", address: first, profileID: "profile-a")))
+    #expect(
+      try await store.hasExactGrant(
+        origin: "https://dapp.example", address: second, profileID: "profile-a"))
   }
 
   @Test("legacy hostname grant remains authorized until a normalized reconnect")
-  func legacyGrantCompatibility() async {
+  func legacyGrantCompatibility() async throws {
     let suite = "grants-\(UUID().uuidString)"
     let store = ConnectedSitesStore(suiteName: suite)
-    await store.connect(site: ConnectedSite(domain: "legacy.example", address: "0x1"))
+    let account = try address(secret: 1)
+    try await store.connect(site: ConnectedSite(domain: "legacy.example", address: account))
 
     #expect(
-      await store.isConnected(
-        origin: "http://legacy.example:8080", address: "0x1", profileID: "profile-a"))
+      try await store.isConnected(
+        origin: "http://legacy.example:8080", address: account, profileID: "profile-a"))
   }
 
-  @Test("disconnect is idempotent and removes only the target origin")
-  func disconnectRemoves() async {
+  @Test("disconnect removes only the selected account grant")
+  func disconnectRemoves() async throws {
     let suite = "grants-\(UUID().uuidString)"
     let store = ConnectedSitesStore(suiteName: suite)
-    await store.connect(site: ConnectedSite(domain: "a.example", address: "0x1"))
-    await store.connect(site: ConnectedSite(domain: "b.example", address: "0x1"))
-    await store.disconnect(origin: "https://a.example")
-    await store.disconnect(origin: "https://a.example")  // idempotent
-    let sites = await store.all()
-    #expect(sites.map(\.domain) == ["b.example"])
+    let first = try address(secret: 1)
+    let second = try address(secret: 2)
+    for account in [first, second] {
+      try await store.connect(
+        site: ConnectedSite(
+          domain: "dapp.example", address: account, origin: "https://dapp.example"))
+    }
+    try await store.disconnect(account: first, origin: "https://dapp.example")
+    let sites = try await store.all()
+    #expect(sites.map(\.address) == [second])
+    #expect(try await store.isConnected(origin: "https://dapp.example", address: second))
+  }
+
+  @Test("exact disconnect preserves a retained hostname grant")
+  func exactDisconnectPreservesLegacy() async throws {
+    let store = ConnectedSitesStore(suiteName: "grants-\(UUID().uuidString)")
+    let account = try address(secret: 1)
+    try await store.connect(site: ConnectedSite(domain: "dapp.example", address: account))
+    try await store.connect(
+      site: ConnectedSite(
+        domain: "dapp.example", address: account, origin: "https://dapp.example"))
+
+    try await store.disconnect(
+      site: ConnectedSite(
+        domain: "dapp.example", address: account, origin: "https://dapp.example"))
+
+    let remaining = try await store.grants(account: account)
+    #expect(remaining.count == 1)
+    #expect(remaining.first?.origin == nil)
+    #expect(
+      try await store.isConnected(
+        origin: "http://dapp.example:8080", address: account, profileID: "profile-a"))
+  }
+
+  @Test("provider disconnect also revokes the effective hostname fallback")
+  func providerDisconnectRevokesLegacyFallback() async throws {
+    let store = ConnectedSitesStore(suiteName: "grants-\(UUID().uuidString)")
+    let account = try address(secret: 1)
+    try await store.connect(site: ConnectedSite(domain: "dapp.example", address: account))
+    try await store.connect(
+      site: ConnectedSite(
+        domain: "dapp.example", address: account, origin: "https://dapp.example"))
+
+    try await store.disconnect(account: account, origin: "https://dapp.example")
+
+    #expect(try await store.grants(account: account).isEmpty)
+    #expect(
+      !(try await store.isConnected(
+        origin: "https://dapp.example", address: account, profileID: nil)))
   }
 
   @Test("forgetting an account revokes only that account's grants")
-  func disconnectAllForAccount() async {
+  func disconnectAllForAccount() async throws {
     let suite = "grants-\(UUID().uuidString)"
     let store = ConnectedSitesStore(suiteName: suite)
-    await store.connect(
+    let first = try address(secret: 1)
+    let second = try address(secret: 2)
+    try await store.connect(
       site: ConnectedSite(
-        domain: "a.example", address: "0xAbC", origin: "https://a.example"))
-    await store.connect(site: ConnectedSite(domain: "legacy.example", address: "0xabc"))
-    await store.connect(
+        domain: "a.example", address: first, origin: "https://a.example"))
+    try await store.connect(site: ConnectedSite(domain: "legacy.example", address: first))
+    try await store.connect(
       site: ConnectedSite(
-        domain: "b.example", address: "0xDef", origin: "https://b.example"))
+        domain: "b.example", address: second, origin: "https://b.example"))
 
-    await store.disconnectAll(address: "0xABC")
+    try await store.disconnectAll(account: first)
 
-    let sites = await store.all()
+    let sites = try await store.all()
     #expect(sites.map(\.domain) == ["b.example"])
   }
 
   @Test("repeat connect refreshes instead of duplicating")
-  func reconnectRefreshes() async {
+  func reconnectRefreshes() async throws {
     let suite = "grants-\(UUID().uuidString)"
     let store = ConnectedSitesStore(suiteName: suite)
-    await store.connect(
-      site: ConnectedSite(domain: "dapp.example", address: "0x1", connectedAt: .distantPast))
-    await store.connect(site: ConnectedSite(domain: "dapp.example", address: "0x1"))
-    let sites = await store.all()
+    let account = try address(secret: 1)
+    try await store.connect(
+      site: ConnectedSite(
+        domain: "dapp.example", address: account, connectedAt: .distantPast,
+        origin: "https://dapp.example"))
+    try await store.connect(
+      site: ConnectedSite(
+        domain: "dapp.example", address: account, origin: "https://dapp.example"))
+    let sites = try await store.all()
     #expect(sites.count == 1)
     #expect(sites.first?.connectedAt ?? .distantPast > .distantPast)
+  }
+
+  @Test("independent stores preserve concurrent grant updates")
+  func concurrentGrantUpdates() async throws {
+    let suite = "grants-\(UUID().uuidString)"
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ConnectedSitesTests-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    _ = try ConnectionStateStore(directory: directory, suiteName: suite)
+      .getOrCreate(ConnectionState(revision: 0))
+    let firstStore = ConnectedSitesStore(suiteName: suite, directory: directory)
+    let secondStore = ConnectedSitesStore(suiteName: suite, directory: directory)
+    let first = try address(secret: 1)
+    let second = try address(secret: 2)
+
+    async let firstWrite: Void = firstStore.connect(
+      site: ConnectedSite(
+        domain: "one.example", address: first, origin: "https://one.example"))
+    async let secondWrite: Void = secondStore.connect(
+      site: ConnectedSite(
+        domain: "two.example", address: second, origin: "https://two.example"))
+    _ = try await (firstWrite, secondWrite)
+
+    let sites = try await firstStore.all()
+    #expect(Set(sites.map(\.address)) == [first, second])
+    #expect(Set(sites.map(\.domain)) == ["one.example", "two.example"])
+  }
+
+  #if os(macOS)
+    @Test("a separate-process grant update is retained by the next mutation")
+    func crossProcessGrantUpdate() async throws {
+      let suite = "grants-\(UUID().uuidString)"
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "ConnectedSitesTests-\(UUID().uuidString)")
+      defer { try? FileManager.default.removeItem(at: directory) }
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      _ = try ConnectionStateStore(directory: directory, suiteName: suite)
+        .getOrCreate(ConnectionState(revision: 0))
+      let first = try address(secret: 1)
+      let second = try address(secret: 2)
+      let child = Process()
+      let output = Pipe()
+      let input = Pipe()
+      child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+      child.arguments = [
+        "-c",
+        """
+        import fcntl,json,os,sys,tempfile
+        lock=open(sys.argv[1],'a+'); fcntl.flock(lock,fcntl.LOCK_EX)
+        with open(sys.argv[2]) as source: state=json.load(source)
+        state['revision'] += 1
+        state['grants'].append({'account':sys.argv[3],'legacyDomain':'one.example','connectedAt':1000,'precision':'hostname'})
+        fd,temp=tempfile.mkstemp(dir=os.path.dirname(sys.argv[2]))
+        with os.fdopen(fd,'w') as target: json.dump(state,target,separators=(',',':')); target.flush(); os.fsync(target.fileno())
+        os.replace(temp,sys.argv[2]); print('written',flush=True); sys.stdin.buffer.read(1)
+        """,
+        directory.appendingPathComponent("connection-state.lock").path,
+        directory.appendingPathComponent("connection-state.json").path,
+        first,
+      ]
+      child.standardOutput = output
+      child.standardInput = input
+      try child.run()
+      #expect(
+        String(decoding: output.fileHandleForReading.readData(ofLength: 8), as: UTF8.self)
+          == "written\n")
+
+      let store = ConnectedSitesStore(suiteName: suite, directory: directory)
+      async let secondWrite: Void = store.connect(
+        site: ConnectedSite(
+          domain: "two.example", address: second, origin: "https://two.example"))
+      try await Task.sleep(for: .milliseconds(100))
+      try input.fileHandleForWriting.write(contentsOf: Data([0x01]))
+      input.fileHandleForWriting.closeFile()
+      try await secondWrite
+      child.waitUntilExit()
+
+      #expect(child.terminationStatus == 0)
+      let sites = try await store.all()
+      #expect(Set(sites.map(\.address)) == [first, second])
+      #expect(Set(sites.map(\.domain)) == ["one.example", "two.example"])
+    }
+  #endif
+
+  @Test("connection mutation rejects an account after its group becomes inactive")
+  func rejectsDeletingGroup() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ConnectedSitesTests-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let suite = "grants-\(UUID().uuidString)"
+    let account = try address(secret: 1)
+    let group = WalletGroup(
+      id: UUID(), kind: .privateKey, createdAt: Date(timeIntervalSince1970: 1),
+      nextDerivationIndex: nil,
+      accounts: [
+        WalletAccount(
+          address: account, derivationIndex: nil, createdAt: Date(timeIntervalSince1970: 1))
+      ], lifecycle: .active)
+    let registry = WalletRegistryStore(directory: directory, appGroup: suite)
+    try registry.create(
+      WalletRegistry(
+        revision: 0, adoptionState: .migrating, groups: [group],
+        homeSelectedAddress: account, legacyWalletAddressFallbackRemoved: false))
+    _ = try registry.update(expectedRevision: 0) { current in
+      WalletRegistry(
+        revision: 1, adoptionState: .migrating, groups: current.groups,
+        homeSelectedAddress: account, legacyWalletAddressFallbackRemoved: true)
+    }
+    _ = try registry.update(expectedRevision: 1) { current in
+      WalletRegistry(
+        revision: 2, adoptionState: .complete, groups: current.groups,
+        homeSelectedAddress: account, legacyWalletAddressFallbackRemoved: true)
+    }
+    _ = try ConnectionStateStore(directory: directory, suiteName: suite)
+      .getOrCreate(ConnectionState(revision: 0, defaultAccount: account))
+    let store = ConnectedSitesStore(appGroupID: suite, directory: directory)
+
+    _ = try registry.update(expectedRevision: 2) { current in
+      var deleting = current.groups
+      deleting[0].lifecycle = .deleting
+      return WalletRegistry(
+        revision: 3, adoptionState: .complete, groups: deleting,
+        homeSelectedAddress: nil, legacyWalletAddressFallbackRemoved: true)
+    }
+
+    await #expect(throws: ConnectionStateError.invalid(.unregisteredDefault)) {
+      try await store.isConnected(origin: "https://dapp.example", address: account)
+    }
+    await #expect(throws: ConnectionStateError.invalid(.unregisteredDefault)) {
+      try await store.hasExactGrant(origin: "https://dapp.example", address: account)
+    }
+    await #expect(throws: ConnectionStateError.invalid(.unregisteredDefault)) {
+      try await store.connect(
+        site: ConnectedSite(
+          domain: "dapp.example", address: account, origin: "https://dapp.example"))
+    }
+    #expect(
+      try ConnectionStateStore(directory: directory, suiteName: suite).load()?.grants.isEmpty
+        == true)
   }
 
   @Test("approving eth_requestAccounts persists the connection grant")
@@ -107,7 +303,7 @@ struct ConnectedSitesTests {
     let id = try await svc.prepare(
       method: "eth_requestAccounts", params: .array([]), origin: "https://dapp.example")
     _ = try await svc.approve(request: id)
-    #expect(await svc.isConnected(origin: "https://dapp.example"))
+    #expect(try await svc.isConnected(origin: "https://dapp.example"))
   }
 
   @Test("re-sent identical request converges to one pending record")
@@ -205,8 +401,8 @@ struct ConnectedSitesTests {
       try await svc.approve(request: id, profileID: "profile-b")
     }
     _ = try await svc.approve(request: id, profileID: "profile-a")
-    #expect(await svc.isConnected(origin: "https://dapp.example", profileID: "profile-a"))
-    #expect(!(await svc.isConnected(origin: "https://dapp.example", profileID: "profile-b")))
+    #expect(try await svc.isConnected(origin: "https://dapp.example", profileID: "profile-a"))
+    #expect(!(try await svc.isConnected(origin: "https://dapp.example", profileID: "profile-b")))
   }
 
   @Test("approving a message does not create a connection grant")
@@ -218,16 +414,22 @@ struct ConnectedSitesTests {
       params: .array([.string("0x1234"), .string("0x6869")]),
       origin: "https://dapp.example")
     _ = try await svc.approve(request: id)
-    #expect(!(await svc.isConnected(origin: "https://dapp.example")))
+    #expect(!(try await svc.isConnected(origin: "https://dapp.example")))
   }
 
   @Test("disconnect via WalletService revokes the grant")
   func serviceDisconnect() async throws {
     let suite = "grants-\(UUID().uuidString)"
     let svc = svc(suite)
-    await svc.connect(origin: "https://dapp.example")
-    #expect(await svc.isConnected(origin: "https://dapp.example"))
-    await svc.disconnect(origin: "https://dapp.example")
-    #expect(!(await svc.isConnected(origin: "https://dapp.example")))
+    try await svc.connect(origin: "https://dapp.example")
+    #expect(try await svc.isConnected(origin: "https://dapp.example"))
+    try await svc.disconnect(origin: "https://dapp.example")
+    #expect(!(try await svc.isConnected(origin: "https://dapp.example")))
+  }
+
+  private func address(secret value: UInt8) throws -> String {
+    var secret = [UInt8](repeating: 0, count: 32)
+    secret[31] = value
+    return try EthereumKeypair.from(secret: secret).address
   }
 }
