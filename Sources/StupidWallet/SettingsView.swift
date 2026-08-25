@@ -135,7 +135,7 @@ import SwiftUI
       .navigationBarTitleDisplayMode(.inline)
       .onDisappear(perform: clear)
       .onChange(of: scenePhase) { _, phase in
-        if phase != .active { clear() }
+        if phase == .background { clear() }
       }
     }
 

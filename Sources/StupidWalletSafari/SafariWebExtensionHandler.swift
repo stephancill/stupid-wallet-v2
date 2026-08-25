@@ -15,10 +15,9 @@ public final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandli
   /// (or migrated) after the extension process was launched is picked up, and so the
   /// `.keychain` `.usePresence` item is never touched for an existence probe.
   private static func makeSigning(registry: WalletRegistry) -> any Signing {
-    let store = KeychainKeyStore()
     let address = registry.homeSelectedAddress
-    if let address {
-      return KeychainSigner(account: address, store: store)
+    if let address, let signer = try? WalletAccountResolver().signer(address: address) {
+      return signer
     }
     return UnavailableSigner()
   }

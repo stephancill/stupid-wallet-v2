@@ -62,6 +62,27 @@ criteria are specified in
 `docs/multi-account-implementation-plan.md`. Until those gates pass, user-visible behavior remains the
 single-account system described below.
 
+Gate B is now hermetically implemented and remains open for physical-device acceptance.
+`EthereumSeedPhrase` generates canonical entropy, round-trips every supported English BIP-39 size, and
+derives arbitrary accounts under `m/44'/60'/0'/0/{index}` while returning the actual valid index if
+BIP-32 child derivation must skip. `KeychainSeedStore` stores one protected entropy item per lowercase
+group UUID under the dedicated seed service, with the same user-presence, ThisDeviceOnly,
+fresh-context, and noninteractive existence-probe policy as private keys. Empty installations now
+bootstrap an empty complete registry plus revision-zero connection state under the adoption claim;
+unsupported rebuild registration still remains untouched and is not adopted. A suspension-safe
+`WalletGroupLifecycleCoordinator` serializes secret-bearing operations through `NSFileCoordinator`.
+`WalletGroupManager` adds verified seed or private-key groups, rejects duplicate identities, derives
+and atomically appends monotonic seed accounts, rolls back newly inserted secrets before registration,
+and deletes a complete group through a persisted `.deleting` barrier. Deletion terminalizes matching
+pending requests, removes the protected source, grants/active mappings, account caches, exact migration
+material, and the registry group, and adoption resumes interrupted deletion before exposing state.
+`WalletAccountResolver` resolves active registry accounts under the same group claim, derives seed
+children transiently for signing or export, verifies the derived address, and never persists a child
+key. The Safari home-account signer and Settings private-key export now use this resolver. Future Gate F
+connect-commit markers are preserved and make deletion fail loudly until Gate F adds the approved
+marker reconciliation protocol. Gate D still owns setup/account-picker integration, and physical-device
+seed protection, derivation, signing, export, and deletion proof remain before Gate B is complete.
+
 The macOS direction is the same iOS build running through Apple Silicon's iPhone/iPad-app
 compatibility environment, not a native macOS or Mac Catalyst target. Distribution uses
 the iOS TestFlight build. The current `stupid-app run --mac` rejects extension-bearing projects
@@ -316,7 +337,8 @@ retain their Include choices. Manual network addition validates the entered RPC'
 chain identity before saving it as a deliberate override. Raw private-key import
 strictly validates a 32-byte secp256k1 scalar. Private-key reveal uses a fresh
 operation-specific authentication prompt, is privacy-sensitive, clears after 60 seconds,
-on backgrounding, and on navigation away, and copies only to a local expiring pasteboard.
+on actual backgrounding, and on navigation away, and copies only to a local expiring pasteboard.
+The LocalAuthentication prompt's temporary `.inactive` scene phase does not clear a successful reveal.
 Automatic old-format migration is attempted only when old material exists and no active
 new-format wallet is registered. New wallet creation, raw private-key import, and BIP-39
 English seed-phrase import all use one provisioning path: derive the EIP-55 account, save
@@ -1291,8 +1313,11 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Begin Gate B from `docs/multi-account-implementation-plan.md`: implement protected seed-group
-   storage, deterministic derivation, serialized account creation, and recoverable group lifecycle.
+1. Complete Gate B physical-device acceptance from `docs/multi-account-implementation-plan.md`: prove
+   seed entropy user-presence/ThisDeviceOnly protection, generated/imported derivation, seed-backed
+   signing and private-key export, and complete resumable group deletion. The hermetic implementation
+   and simulator build are complete. Keep future connect-marker reconciliation coupled to Gate F before
+   connect commits become writable at runtime.
 2. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
    reveal/cancellation/timeout, Forget Account, automatic migration launch, and Safari
    signing with each newly provisioned key. Raw private-key import, including recovery of a

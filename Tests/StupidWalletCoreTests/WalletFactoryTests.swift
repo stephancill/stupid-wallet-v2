@@ -96,7 +96,7 @@ struct WalletFactoryTests {
   }
 }
 
-private final class StubWalletKeyStore: WalletKeyStoring {
+private final class StubWalletKeyStore: WalletKeyStoring, @unchecked Sendable {
   private let existingKey: [UInt8]
   private(set) var loadCount = 0
   private(set) var deleteCount = 0

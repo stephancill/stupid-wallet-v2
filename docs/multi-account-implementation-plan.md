@@ -1062,6 +1062,15 @@ Exit conditions:
 
 ### Gate B: Seed groups and account lifecycle
 
+Status: in progress on 2026-08-25. Hermetic implementation is complete: canonical BIP-39 entropy and
+arbitrary account derivation, protected seed storage by group UUID, empty-install authority bootstrap,
+suspension-safe group lifecycle coordination, additive seed/private-key registration, serialized
+monotonic derivation, duplicate rejection, rollback before registration, registry-resolved seed
+signing/export, and resumable `.deleting` cleanup. Deletion currently preserves and fails loudly on a
+future Gate F connect-commit marker; Gate F must add its approved marker reconciliation before markers
+become writable at runtime. Physical-device entropy protection, signing/export, and deletion proof
+remain before Gate B is complete.
+
 Exit conditions:
 
 - Generated and imported BIP-39 entropy produces independent known addresses for indexes zero and one.

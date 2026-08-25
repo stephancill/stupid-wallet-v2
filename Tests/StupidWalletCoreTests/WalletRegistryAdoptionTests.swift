@@ -10,6 +10,11 @@ private struct StubSecretProbe: ProtectedSecretProbing {
   }
 }
 
+private struct StubSeedProbe: ProtectedSeedProbing {
+  let groupIDs: Set<UUID>
+  func seedExists(groupID: UUID) -> Bool { groupIDs.contains(groupID) }
+}
+
 /// Deterministic in-memory `OldWalletBackend` for the Dawn adoption path.
 private final class AdoptionFakeBackend: OldWalletBackend, @unchecked Sendable {
   var oldAddressValue: String?
@@ -71,6 +76,47 @@ private struct AdoptionEnv {
 }
 
 struct WalletRegistryAdoptionTests {
+  @Test("active seed groups require their exact protected entropy item")
+  func seedSourceReadiness() async throws {
+    let env = try AdoptionEnv.make()
+    defer { try? FileManager.default.removeItem(at: env.directory) }
+    let privateAccount = try address(secret: 1)
+    let seedAccount = try address(secret: 2)
+    try completeRegistry(in: env.directory, account: privateAccount)
+    let store = WalletRegistryStore(directory: env.directory)
+    let loaded = try store.loadReady()
+    let current = try #require(loaded)
+    let createdAt = Date(timeIntervalSince1970: 2)
+    let seedGroup = WalletGroup(
+      id: UUID(), kind: .seed, createdAt: createdAt, nextDerivationIndex: 1,
+      accounts: [WalletAccount(address: seedAccount, derivationIndex: 0, createdAt: createdAt)],
+      lifecycle: .active)
+    _ = try store.update(expectedRevision: current.revision) { registry in
+      WalletRegistry(
+        revision: registry.revision + 1, adoptionState: .complete,
+        groups: registry.groups + [seedGroup], homeSelectedAddress: registry.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: true)
+    }
+
+    let missing = WalletRegistryAdoption(
+      directory: env.directory,
+      appGroup: env.suite,
+      probe: StubSecretProbe(addresses: [privateAccount]),
+      seedProbe: StubSeedProbe(groupIDs: []),
+      migrationBackend: AdoptionFakeBackend(oldAddress: nil, decryptResult: .success([])))
+    await #expect(throws: WalletRegistryAdoptionError.noSeedForGroup(seedGroup.id)) {
+      try await missing.ensureAdopted()
+    }
+
+    let available = WalletRegistryAdoption(
+      directory: env.directory,
+      appGroup: env.suite,
+      probe: StubSecretProbe(addresses: [privateAccount]),
+      seedProbe: StubSeedProbe(groupIDs: [seedGroup.id]),
+      migrationBackend: AdoptionFakeBackend(oldAddress: nil, decryptResult: .success([])))
+    #expect(try await available.ensureAdopted().kind == .alreadyAdopted)
+  }
+
   @Test("current-rebuild registration is not a registry migration source")
   func rebuildIsUnsupported() async throws {
     let env = try AdoptionEnv.make()
@@ -97,7 +143,7 @@ struct WalletRegistryAdoptionTests {
         atPath: env.directory.appendingPathComponent("wallet-registry.json").path))
   }
 
-  @Test("empty installation returns noWallet and creates nothing")
+  @Test("empty installation bootstraps ready empty authority")
   func noWallet() async throws {
     let env = try AdoptionEnv.make()
     defer { try? FileManager.default.removeItem(at: env.directory) }
@@ -106,14 +152,20 @@ struct WalletRegistryAdoptionTests {
       probe: StubSecretProbe(addresses: []))
     let result = try await adoption.ensureAdopted()
     #expect(result.kind == .noWallet)
-    #expect(result.registry == nil)
+    #expect(result.registry?.adoptionState == .complete)
+    #expect(result.registry?.groups.isEmpty == true)
+    #expect(result.registry?.homeSelectedAddress == nil)
+    #expect(result.registry?.legacyWalletAddressFallbackRemoved == true)
     #expect(WalletStore.activeAddress(directory: env.directory) == nil)
     #expect(
-      !FileManager.default.fileExists(
+      FileManager.default.fileExists(
         atPath: env.directory.appendingPathComponent("wallet-registry.json").path))
     #expect(
-      !FileManager.default.fileExists(
+      FileManager.default.fileExists(
         atPath: env.directory.appendingPathComponent("connection-state.json").path))
+    #expect(
+      try ConnectionStateStore(directory: env.directory, suiteName: env.suite).load()?.revision == 0
+    )
   }
 
   @Test("old Dawn wallet migrates then adopts the proven address")
@@ -201,7 +253,7 @@ struct WalletRegistryAdoptionTests {
     }
   }
 
-  @Test("a waiting wallet stays in setup and no authority files are created")
+  @Test("a waiting wallet stays in setup with empty authority files")
   func noWalletFiles() async throws {
     let env = try AdoptionEnv.make()
     defer { try? FileManager.default.removeItem(at: env.directory) }
@@ -211,8 +263,8 @@ struct WalletRegistryAdoptionTests {
     let result = try await adoption.ensureAdopted()
     #expect(result.kind == .noWallet)
     let contents = try FileManager.default.contentsOfDirectory(atPath: env.directory.path)
-    #expect(contents.filter { $0 == "wallet-registry.json" }.isEmpty)
-    #expect(contents.filter { $0 == "connection-state.json" }.isEmpty)
+    #expect(contents.filter { $0 == "wallet-registry.json" }.count == 1)
+    #expect(contents.filter { $0 == "connection-state.json" }.count == 1)
   }
 
   @Test("adoption recovers an interrupted projection-first transition and completes")
@@ -613,6 +665,48 @@ struct WalletRegistryAdoptionTests {
       !FileManager.default.fileExists(
         atPath: env.directory.appendingPathComponent("wallet-registry-transition.json").path))
     #expect(try await recovered.ensureAdopted().kind == .alreadyAdopted)
+  }
+
+  @Test(
+    "every empty bootstrap interruption resumes to ready setup state",
+    arguments: [
+      PersistenceFaultPoint.adoptionClaimBefore,
+      .journalAfterWrite,
+      .projectionBeforeWrite,
+      .projectionAfterWrite,
+      .registryBeforeWrite,
+      .registryAfterWrite,
+      .connectionBeforeWrite,
+      .connectionAfterWrite,
+      .fallbackBeforeRemove,
+      .fallbackAfterRemove,
+      .fallbackStateBeforeCommit,
+      .completionStateBeforeCommit,
+    ])
+  func emptyBootstrapFaultRecovery(point: PersistenceFaultPoint) async throws {
+    let env = try AdoptionEnv.make()
+    defer { try? FileManager.default.removeItem(at: env.directory) }
+    let interrupted = WalletRegistryAdoption(
+      directory: env.directory,
+      appGroup: env.suite,
+      probe: StubSecretProbe(addresses: []),
+      faultInjector: OneShotPersistenceFaultInjector(point))
+    await #expect(throws: PersistenceFaultSimulationError.interruption(point)) {
+      try await interrupted.ensureAdopted()
+    }
+
+    let recovered = WalletRegistryAdoption(
+      directory: env.directory, appGroup: env.suite, probe: StubSecretProbe(addresses: []))
+    let result = try await recovered.ensureAdopted()
+    let registry = try #require(result.registry)
+    #expect(registry.adoptionState == .complete)
+    #expect(registry.groups.isEmpty)
+    #expect(registry.homeSelectedAddress == nil)
+    #expect(registry.legacyWalletAddressFallbackRemoved)
+    #expect(
+      try ConnectionStateStore(directory: env.directory, suiteName: env.suite).load()?.revision == 0
+    )
+    #expect(WalletStore.activeAddress(directory: env.directory) == nil)
   }
 
   private func completeRegistry(in directory: URL, account: String) throws {

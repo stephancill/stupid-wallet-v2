@@ -146,10 +146,15 @@ public final class KeychainKeyStore: Sendable {
   }
 }
 
-protocol WalletKeyStoring {
+protocol WalletKeyStoring: Sendable {
   func save(key: [UInt8], account: String) throws
   func load(account: String, reason: String) throws -> [UInt8]
+  func contains(account: String) -> Bool
   func delete(account: String) throws
+}
+
+extension WalletKeyStoring {
+  func contains(account: String) -> Bool { false }
 }
 
 extension KeychainKeyStore: WalletKeyStoring {}

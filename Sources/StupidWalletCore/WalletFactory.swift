@@ -75,19 +75,12 @@ public enum WalletFactory {
 
   public static func exportPrivateKey(
     account: String,
+    appGroup: String = PendingRequestStore.defaultAppGroup,
     keychainService: String = "co.za.stephancill.stupid-wallet.keys"
   ) throws -> String {
-    var secret = try KeychainKeyStore(service: keychainService).load(
-      account: account,
-      reason: "Unlock your wallet to reveal your private key"
-    )
-    defer {
-      for index in secret.indices { secret[index] = 0 }
-    }
-    guard secret.count == 32, (try? EthereumKeypair.from(secret: secret)) != nil else {
-      throw CreateError.invalidPrivateKey
-    }
-    return "0x" + Hex.encode(secret)
+    try WalletAccountResolver(
+      appGroup: appGroup, keyStore: KeychainKeyStore(service: keychainService)
+    ).exportPrivateKey(address: account)
   }
 
   /// Removes the active new-format signing key and its shared registration. If keychain

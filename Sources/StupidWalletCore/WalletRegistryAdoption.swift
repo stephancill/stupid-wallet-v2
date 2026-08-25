@@ -5,6 +5,7 @@ public enum WalletRegistryAdoptionError: Error, Sendable, Equatable {
   case unavailable
   case corrupt
   case noSecretForAddress
+  case noSeedForGroup(UUID)
   case migrationFailed(WalletMigrationFailure)
   case fallbackNotRemoved
   case invalidConnectionState
@@ -14,6 +15,16 @@ public enum WalletRegistryAdoptionError: Error, Sendable, Equatable {
 /// Existence probe over a registered protected secret without releasing key bytes.
 public protocol ProtectedSecretProbing: Sendable {
   func secretExists(account: String) -> Bool
+}
+
+public protocol ProtectedSeedProbing: Sendable {
+  func seedExists(groupID: UUID) -> Bool
+}
+
+extension KeychainSeedStore: ProtectedSeedProbing {
+  public func seedExists(groupID: UUID) -> Bool {
+    contains(groupID: groupID)
+  }
 }
 
 extension KeychainKeyStore: ProtectedSecretProbing {
@@ -59,6 +70,7 @@ public struct WalletRegistryAdoption: Sendable {
   private let connectionStore: ConnectionStateStore
   private let balanceCache: BalanceCache
   private let probe: any ProtectedSecretProbing
+  private let seedProbe: any ProtectedSeedProbing
   private let migrationBackend: any OldWalletBackend
   private let claimURL: URL?
   private let faultInjector: any PersistenceFaultInjecting
@@ -67,12 +79,14 @@ public struct WalletRegistryAdoption: Sendable {
     directory: URL? = nil,
     appGroup: String = PendingRequestStore.defaultAppGroup,
     probe: any ProtectedSecretProbing = KeychainKeyStore(),
+    seedProbe: any ProtectedSeedProbing = KeychainSeedStore(),
     migrationBackend: any OldWalletBackend = SecurityWalletBackend()
   ) {
     self.init(
       directory: directory,
       appGroup: appGroup,
       probe: probe,
+      seedProbe: seedProbe,
       migrationBackend: migrationBackend,
       faultInjector: NoPersistenceFaults())
   }
@@ -81,6 +95,7 @@ public struct WalletRegistryAdoption: Sendable {
     directory: URL? = nil,
     appGroup: String = PendingRequestStore.defaultAppGroup,
     probe: any ProtectedSecretProbing = KeychainKeyStore(),
+    seedProbe: any ProtectedSeedProbing = KeychainSeedStore(),
     migrationBackend: any OldWalletBackend = SecurityWalletBackend(),
     faultInjector: any PersistenceFaultInjecting
   ) {
@@ -93,6 +108,7 @@ public struct WalletRegistryAdoption: Sendable {
     balanceCache = BalanceCache(
       directory: directory, appGroup: appGroup, faultInjector: faultInjector)
     self.probe = probe
+    self.seedProbe = seedProbe
     self.migrationBackend = migrationBackend
     let container =
       directory ?? WalletStore.containerURL(appGroup: appGroup) ?? FileManager.default.urls(
@@ -112,11 +128,20 @@ public struct WalletRegistryAdoption: Sendable {
   private func adoptUnlocked() throws -> WalletRegistryAdoptionResult {
     let loaded = try registryStore.load()
     if let loaded, loaded.adoptionState == .complete {
+      try WalletGroupManager(
+        directory: directory, appGroup: suiteName
+      ).resumeDeletingGroups()
+      guard let ready = try registryStore.loadReady() else {
+        throw WalletRegistryAdoptionError.corrupt
+      }
       // A downgraded build may have reintroduced the rebuild fallback; remove and verify
       // its absence on every entry, not only during first adoption.
       try removeFallback()
-      try validateReadyState(registry: loaded)
-      return WalletRegistryAdoptionResult(kind: .alreadyAdopted, registry: loaded)
+      try validateReadyState(registry: ready)
+      return WalletRegistryAdoptionResult(kind: .alreadyAdopted, registry: ready)
+    }
+    if let loaded, loaded.groups.isEmpty, loaded.homeSelectedAddress == nil {
+      return try resumeEmptyBootstrap(loaded)
     }
 
     let proven: String
@@ -125,7 +150,10 @@ public struct WalletRegistryAdoption: Sendable {
       proven = home
     } else {
       guard let resolved = try resolveProvenAddress() else {
-        return WalletRegistryAdoptionResult(kind: .noWallet, registry: nil)
+        if hasUnsupportedRebuildRegistration() {
+          return WalletRegistryAdoptionResult(kind: .noWallet, registry: nil)
+        }
+        return try bootstrapEmptyRegistry()
       }
       proven = resolved
     }
@@ -150,7 +178,7 @@ public struct WalletRegistryAdoption: Sendable {
     guard let registry = current, registry.adoptionState == .migrating else {
       throw WalletRegistryAdoptionError.corrupt
     }
-    try validatePrivateKeySource(registry: registry)
+    try validateSecretSources(registry: registry)
 
     // Dawn grants have hostname precision. Current-rebuild normalized grants are not inputs.
     let initialConnectionState = try connectionStore.initialMigratedState(
@@ -205,10 +233,7 @@ public struct WalletRegistryAdoption: Sendable {
 
     // Rebuild registrations are exclusion signals, never identity inputs. In particular,
     // retained Dawn material must not silently turn an installed rebuild into a supported source.
-    let defaults = UserDefaults(suiteName: suiteName) ?? .standard
-    if nonempty(WalletStore.activeAddress(directory: directory)) != nil
-      || nonempty(defaults.string(forKey: WalletFactory.walletAddressKey)) != nil
-    {
+    if hasUnsupportedRebuildRegistration() {
       return nil
     }
 
@@ -233,6 +258,62 @@ public struct WalletRegistryAdoption: Sendable {
     return nil
   }
 
+  private func hasUnsupportedRebuildRegistration() -> Bool {
+    let nonempty = { (value: String?) -> Bool in
+      guard let value else { return false }
+      return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    let defaults = UserDefaults(suiteName: suiteName) ?? .standard
+    return nonempty(WalletStore.activeAddress(directory: directory))
+      || nonempty(defaults.string(forKey: WalletFactory.walletAddressKey))
+  }
+
+  private func bootstrapEmptyRegistry() throws -> WalletRegistryAdoptionResult {
+    let migrating = WalletRegistry(
+      revision: 0,
+      adoptionState: .migrating,
+      groups: [],
+      homeSelectedAddress: nil,
+      legacyWalletAddressFallbackRemoved: false)
+    try registryStore.create(migrating)
+    return try resumeEmptyBootstrap(migrating)
+  }
+
+  private func resumeEmptyBootstrap(_ registry: WalletRegistry) throws
+    -> WalletRegistryAdoptionResult
+  {
+    guard registry.adoptionState == .migrating, registry.groups.isEmpty,
+      registry.homeSelectedAddress == nil
+    else { throw WalletRegistryAdoptionError.corrupt }
+    _ = try connectionStore.getOrCreate(ConnectionState(revision: 0))
+    try removeFallback()
+    let withoutFallback: WalletRegistry
+    if registry.legacyWalletAddressFallbackRemoved {
+      withoutFallback = registry
+    } else {
+      try faultInjector.hit(.fallbackStateBeforeCommit)
+      withoutFallback = try registryStore.update(expectedRevision: registry.revision) { current in
+        WalletRegistry(
+          revision: current.revision + 1,
+          adoptionState: .migrating,
+          groups: current.groups,
+          homeSelectedAddress: current.homeSelectedAddress,
+          legacyWalletAddressFallbackRemoved: true)
+      }
+    }
+    try faultInjector.hit(.completionStateBeforeCommit)
+    let complete = try registryStore.update(expectedRevision: withoutFallback.revision) { current in
+      WalletRegistry(
+        revision: current.revision + 1,
+        adoptionState: .complete,
+        groups: current.groups,
+        homeSelectedAddress: current.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: true)
+    }
+    try validateReadyState(registry: complete)
+    return WalletRegistryAdoptionResult(kind: .noWallet, registry: complete)
+  }
+
   private func removeFallback() throws {
     try faultInjector.hit(.fallbackBeforeRemove)
     let defaults = UserDefaults(suiteName: suiteName) ?? .standard
@@ -250,7 +331,7 @@ public struct WalletRegistryAdoption: Sendable {
     guard registry.adoptionState == .complete,
       registry.legacyWalletAddressFallbackRemoved
     else { throw WalletRegistryAdoptionError.corrupt }
-    try validatePrivateKeySource(registry: registry)
+    try validateSecretSources(registry: registry)
     try registryStore.validateProjection(for: registry)
     guard let connection = try connectionStore.load() else {
       throw WalletRegistryAdoptionError.invalidConnectionState
@@ -260,10 +341,18 @@ public struct WalletRegistryAdoption: Sendable {
     try validateBalanceCache(registry: registry)
   }
 
-  private func validatePrivateKeySource(registry: WalletRegistry) throws {
-    for group in registry.groups where group.lifecycle == .active && group.kind == .privateKey {
-      guard let account = group.accounts.first?.address, probe.secretExists(account: account) else {
-        throw WalletRegistryAdoptionError.noSecretForAddress
+  private func validateSecretSources(registry: WalletRegistry) throws {
+    for group in registry.groups where group.lifecycle == .active {
+      switch group.kind {
+      case .privateKey:
+        guard let account = group.accounts.first?.address, probe.secretExists(account: account)
+        else {
+          throw WalletRegistryAdoptionError.noSecretForAddress
+        }
+      case .seed:
+        guard seedProbe.seedExists(groupID: group.id) else {
+          throw WalletRegistryAdoptionError.noSeedForGroup(group.id)
+        }
       }
     }
   }

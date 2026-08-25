@@ -1,0 +1,473 @@
+import Foundation
+import Security
+
+public enum WalletGroupManagerError: Error, Sendable, Equatable {
+  case registryNotReady
+  case groupNotFound
+  case groupNotActive
+  case wrongGroupKind
+  case duplicateAccount
+  case secureStorage
+  case verificationFailed
+  case derivationExhausted
+  case registryChanged
+  case pendingRequestBusy
+  case corruptState
+}
+
+/// Gate B wallet-group provisioning over the authoritative registry.
+public struct WalletGroupManager: Sendable {
+  private let registryStore: WalletRegistryStore
+  private let keyStore: any WalletKeyStoring
+  private let seedStore: any WalletSeedStoring
+  private let lifecycle: WalletGroupLifecycleCoordinator
+  private let connectionStore: ConnectionStateStore
+  private let balanceCache: BalanceCache
+  private let pendingStore: PendingRequestStore
+  private let migrationBackend: SecurityWalletBackend
+
+  public init(
+    directory: URL? = nil,
+    appGroup: String = PendingRequestStore.defaultAppGroup,
+    keyStore: KeychainKeyStore = KeychainKeyStore(),
+    seedStore: KeychainSeedStore = KeychainSeedStore()
+  ) {
+    registryStore = WalletRegistryStore(directory: directory, appGroup: appGroup)
+    self.keyStore = keyStore
+    self.seedStore = seedStore
+    lifecycle = WalletGroupLifecycleCoordinator(directory: directory, appGroup: appGroup)
+    connectionStore = ConnectionStateStore(directory: directory, suiteName: appGroup)
+    balanceCache = BalanceCache(directory: directory, appGroup: appGroup)
+    pendingStore = PendingRequestStore(
+      directory: directory?.appendingPathComponent("PendingRequests", isDirectory: true),
+      appGroupID: appGroup)
+    migrationBackend = SecurityWalletBackend(appGroup: appGroup)
+  }
+
+  init(
+    registryStore: WalletRegistryStore,
+    keyStore: any WalletKeyStoring,
+    seedStore: any WalletSeedStoring,
+    lifecycle: WalletGroupLifecycleCoordinator,
+    connectionStore: ConnectionStateStore,
+    balanceCache: BalanceCache,
+    pendingStore: PendingRequestStore,
+    migrationBackend: SecurityWalletBackend
+  ) {
+    self.registryStore = registryStore
+    self.keyStore = keyStore
+    self.seedStore = seedStore
+    self.lifecycle = lifecycle
+    self.connectionStore = connectionStore
+    self.balanceCache = balanceCache
+    self.pendingStore = pendingStore
+    self.migrationBackend = migrationBackend
+  }
+
+  @discardableResult
+  public func importPrivateKey(privateKey: String) throws -> WalletGroup {
+    guard var secret = Hex.data(privateKey), secret.count == 32,
+      let pair = try? EthereumKeypair.from(secret: secret)
+    else {
+      throw WalletGroupManagerError.verificationFailed
+    }
+    defer { secret = [UInt8](repeating: 0, count: secret.count) }
+    guard let registry = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    guard !Self.contains(account: pair.address, in: registry) else {
+      throw WalletGroupManagerError.duplicateAccount
+    }
+
+    let groupID = UUID()
+    return try lifecycle.withClaim(groupID: groupID) {
+      let inserted: Bool
+      do {
+        try keyStore.save(key: secret, account: pair.address)
+        inserted = true
+      } catch KeychainKeyStore.StorageError.saveFailed(let status)
+        where status == errSecDuplicateItem
+      {
+        inserted = false
+      } catch {
+        throw WalletGroupManagerError.secureStorage
+      }
+
+      var registered = false
+      defer {
+        if inserted && !registered { try? keyStore.delete(account: pair.address) }
+      }
+      var loaded: [UInt8]
+      do {
+        loaded = try keyStore.load(
+          account: pair.address, reason: "Unlock your wallet to verify the imported key")
+      } catch {
+        throw WalletGroupManagerError.verificationFailed
+      }
+      defer { loaded = [UInt8](repeating: 0, count: loaded.count) }
+      guard loaded == secret else { throw WalletGroupManagerError.verificationFailed }
+      try Self.verify(privateKey: loaded, expectedAccount: pair.address)
+
+      guard let current = try registryStore.loadReady() else {
+        throw WalletGroupManagerError.registryNotReady
+      }
+      guard !Self.contains(account: pair.address, in: current) else {
+        throw WalletGroupManagerError.duplicateAccount
+      }
+      let createdAt = Date()
+      let group = WalletGroup(
+        id: groupID,
+        kind: .privateKey,
+        createdAt: createdAt,
+        nextDerivationIndex: nil,
+        accounts: [
+          WalletAccount(address: pair.address, derivationIndex: nil, createdAt: createdAt)
+        ],
+        lifecycle: .active)
+      let updated = try registryStore.update(expectedRevision: current.revision) { registry in
+        WalletRegistry(
+          revision: registry.revision + 1,
+          adoptionState: registry.adoptionState,
+          groups: registry.groups + [group],
+          homeSelectedAddress: registry.homeSelectedAddress,
+          legacyWalletAddressFallbackRemoved: registry.legacyWalletAddressFallbackRemoved)
+      }
+      registered = true
+      guard let persisted = updated.groups.first(where: { $0.id == groupID }) else {
+        throw WalletGroupManagerError.registryChanged
+      }
+      return persisted
+    }
+  }
+
+  @discardableResult
+  public func importSeedGroup(mnemonic: String) throws -> WalletGroup {
+    var entropy = try EthereumSeedPhrase.entropy(mnemonic: mnemonic)
+    defer { entropy = [UInt8](repeating: 0, count: entropy.count) }
+    return try registerSeedGroup(entropy: entropy)
+  }
+
+  @discardableResult
+  public func registerSeedGroup(entropy: [UInt8]) throws -> WalletGroup {
+    guard let registry = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    let candidate = try EthereumSeedPhrase.derivePrivateKey(entropy: entropy, index: 0)
+    var candidateKey = candidate.privateKey
+    defer { candidateKey = [UInt8](repeating: 0, count: candidateKey.count) }
+    let account = try EthereumKeypair.from(secret: candidateKey).address
+    guard !Self.contains(account: account, in: registry) else {
+      throw WalletGroupManagerError.duplicateAccount
+    }
+
+    let groupID = UUID()
+    return try lifecycle.withClaim(groupID: groupID) {
+      do {
+        try seedStore.save(entropy: entropy, groupID: groupID)
+      } catch {
+        throw WalletGroupManagerError.secureStorage
+      }
+
+      var registered = false
+      defer {
+        if !registered { try? seedStore.delete(groupID: groupID) }
+      }
+
+      var loaded: [UInt8]
+      do {
+        loaded = try seedStore.load(
+          groupID: groupID, reason: "Unlock your wallet to verify the imported seed")
+      } catch {
+        throw WalletGroupManagerError.verificationFailed
+      }
+      defer { loaded = [UInt8](repeating: 0, count: loaded.count) }
+      guard loaded == entropy else { throw WalletGroupManagerError.verificationFailed }
+
+      var verified = try EthereumSeedPhrase.privateKey(entropy: loaded, index: 0)
+      defer { verified = [UInt8](repeating: 0, count: verified.count) }
+      try Self.verify(privateKey: verified, expectedAccount: account)
+
+      guard let current = try registryStore.loadReady() else {
+        throw WalletGroupManagerError.registryNotReady
+      }
+      guard !Self.contains(account: account, in: current) else {
+        throw WalletGroupManagerError.duplicateAccount
+      }
+      let createdAt = Date()
+      let group = WalletGroup(
+        id: groupID,
+        kind: .seed,
+        createdAt: createdAt,
+        nextDerivationIndex: 1,
+        accounts: [
+          WalletAccount(address: account, derivationIndex: 0, createdAt: createdAt)
+        ],
+        lifecycle: .active)
+      let updated = try registryStore.update(expectedRevision: current.revision) { registry in
+        var groups = registry.groups
+        groups.append(group)
+        return WalletRegistry(
+          revision: registry.revision + 1,
+          adoptionState: registry.adoptionState,
+          groups: groups,
+          homeSelectedAddress: registry.homeSelectedAddress,
+          legacyWalletAddressFallbackRemoved: registry.legacyWalletAddressFallbackRemoved)
+      }
+      registered = true
+      guard let persisted = updated.groups.first(where: { $0.id == groupID }) else {
+        throw WalletGroupManagerError.registryChanged
+      }
+      return persisted
+    }
+  }
+
+  @discardableResult
+  public func deriveAccount(groupID: UUID) throws -> WalletAccount {
+    try lifecycle.withClaim(groupID: groupID) {
+      guard let initial = try registryStore.loadReady() else {
+        throw WalletGroupManagerError.registryNotReady
+      }
+      guard let group = initial.groups.first(where: { $0.id == groupID }) else {
+        throw WalletGroupManagerError.groupNotFound
+      }
+      guard group.lifecycle == .active else { throw WalletGroupManagerError.groupNotActive }
+      guard group.kind == .seed, let requestedIndex = group.nextDerivationIndex else {
+        throw WalletGroupManagerError.wrongGroupKind
+      }
+      guard requestedIndex < 0x8000_0000 else {
+        throw WalletGroupManagerError.derivationExhausted
+      }
+
+      var entropy: [UInt8]
+      do {
+        entropy = try seedStore.load(
+          groupID: groupID, reason: "Unlock your wallet to add an account")
+      } catch {
+        throw WalletGroupManagerError.secureStorage
+      }
+      defer { entropy = [UInt8](repeating: 0, count: entropy.count) }
+      var derived = try EthereumSeedPhrase.derivePrivateKey(
+        entropy: entropy, index: requestedIndex)
+      defer { derived.privateKey = [UInt8](repeating: 0, count: derived.privateKey.count) }
+      let account = try EthereumKeypair.from(secret: derived.privateKey).address
+      try Self.verify(privateKey: derived.privateKey, expectedAccount: account)
+
+      guard let current = try registryStore.loadReady(),
+        let currentGroup = current.groups.first(where: { $0.id == groupID })
+      else {
+        throw WalletGroupManagerError.registryChanged
+      }
+      guard currentGroup.lifecycle == .active, currentGroup.kind == .seed,
+        currentGroup.nextDerivationIndex == requestedIndex
+      else {
+        throw WalletGroupManagerError.registryChanged
+      }
+      guard !Self.contains(account: account, in: current) else {
+        throw WalletGroupManagerError.duplicateAccount
+      }
+
+      let walletAccount = WalletAccount(
+        address: account, derivationIndex: derived.derivationIndex, createdAt: Date())
+      _ = try registryStore.update(expectedRevision: current.revision) { registry in
+        var groups = registry.groups
+        guard let index = groups.firstIndex(where: { $0.id == groupID }) else {
+          throw WalletGroupManagerError.registryChanged
+        }
+        groups[index].accounts.append(walletAccount)
+        groups[index].nextDerivationIndex = derived.derivationIndex + 1
+        return WalletRegistry(
+          revision: registry.revision + 1,
+          adoptionState: registry.adoptionState,
+          groups: groups,
+          homeSelectedAddress: registry.homeSelectedAddress,
+          legacyWalletAddressFallbackRemoved: registry.legacyWalletAddressFallbackRemoved)
+      }
+      return walletAccount
+    }
+  }
+
+  /// Marks the group inactive before deleting any secret, then commits each cleanup phase
+  /// forward. A later adoption entry resumes any group left in `.deleting`.
+  public func deleteGroup(groupID: UUID) throws {
+    try lifecycle.withClaim(groupID: groupID) {
+      try deleteClaimedGroup(groupID: groupID)
+    }
+  }
+
+  public func resumeDeletingGroups() throws {
+    guard let registry = try registryStore.loadReady() else { return }
+    for group in registry.groups where group.lifecycle == .deleting {
+      try lifecycle.withClaim(groupID: group.id) {
+        try deleteClaimedGroup(groupID: group.id)
+      }
+    }
+  }
+
+  private func deleteClaimedGroup(groupID: UUID) throws {
+    guard var registry = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    guard var group = registry.groups.first(where: { $0.id == groupID }) else { return }
+
+    if group.lifecycle == .active {
+      let removed = Set(group.accounts.map { $0.address.lowercased() })
+      let survivingHome: String?
+      if let home = registry.homeSelectedAddress, removed.contains(home.lowercased()) {
+        survivingHome =
+          registry.groups
+          .filter { $0.id != groupID && $0.lifecycle == .active }
+          .flatMap(\.accounts)
+          .first?.address
+      } else {
+        survivingHome = registry.homeSelectedAddress
+      }
+      registry = try registryStore.update(expectedRevision: registry.revision) { current in
+        var groups = current.groups
+        guard let index = groups.firstIndex(where: { $0.id == groupID }),
+          groups[index].lifecycle == .active
+        else { throw WalletGroupManagerError.registryChanged }
+        groups[index].lifecycle = .deleting
+        return WalletRegistry(
+          revision: current.revision + 1,
+          adoptionState: current.adoptionState,
+          groups: groups,
+          homeSelectedAddress: survivingHome,
+          legacyWalletAddressFallbackRemoved: current.legacyWalletAddressFallbackRemoved)
+      }
+      guard let updated = registry.groups.first(where: { $0.id == groupID }) else {
+        throw WalletGroupManagerError.registryChanged
+      }
+      group = updated
+    }
+
+    let removedAccounts = Set(group.accounts.map { $0.address.lowercased() })
+    try terminalizePendingRequests(accounts: removedAccounts)
+    try deleteSecret(for: group)
+    try removeConnections(accounts: removedAccounts, registry: registry)
+    for account in group.accounts {
+      try balanceCache.remove(account: account.address)
+      if migrationBackend.oldAddress()?.caseInsensitiveCompare(account.address) == .orderedSame {
+        migrationBackend.forgetMigrationMaterial(address: account.address)
+      }
+    }
+
+    guard let current = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    guard let currentGroup = current.groups.first(where: { $0.id == groupID }) else { return }
+    guard currentGroup.lifecycle == .deleting else {
+      throw WalletGroupManagerError.registryChanged
+    }
+    _ = try registryStore.update(expectedRevision: current.revision) { value in
+      WalletRegistry(
+        revision: value.revision + 1,
+        adoptionState: value.adoptionState,
+        groups: value.groups.filter { $0.id != groupID },
+        homeSelectedAddress: value.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: value.legacyWalletAddressFallbackRemoved)
+    }
+  }
+
+  private func terminalizePendingRequests(accounts: Set<String>) throws {
+    let records = try pendingStore.retainedRecordsForLifecycleCleanup()
+    let connection = try connectionStore.load()
+    if connection?.connectCommits.contains(where: {
+      accounts.contains($0.account.lowercased())
+    }) == true {
+      // Gate F marker reconciliation must preserve the already-committed result.
+      throw WalletGroupManagerError.corruptState
+    }
+    for record in records
+    where accounts.contains(record.account.lowercased()) && record.status == .pending {
+      guard let claim = pendingStore.claim(record.id) else {
+        throw WalletGroupManagerError.pendingRequestBusy
+      }
+      defer { pendingStore.releaseClaim(claim) }
+      guard
+        var current = try pendingStore.retainedRecordsForLifecycleCleanup().first(where: {
+          $0.id == record.id
+        })
+      else { throw WalletGroupManagerError.corruptState }
+      guard current.status == .pending else { continue }
+      current.status = .failed
+      current.error = .object([
+        "code": .number(4100),
+        "message": .string("The wallet account was removed before approval"),
+      ])
+      try pendingStore.persistForLifecycleCleanup(current)
+    }
+  }
+
+  private func deleteSecret(for group: WalletGroup) throws {
+    do {
+      switch group.kind {
+      case .privateKey:
+        guard let account = group.accounts.first?.address else {
+          throw WalletGroupManagerError.corruptState
+        }
+        try keyStore.delete(account: account)
+        guard !keyStore.contains(account: account) else {
+          throw WalletGroupManagerError.secureStorage
+        }
+      case .seed:
+        try seedStore.delete(groupID: group.id)
+        guard !seedStore.contains(groupID: group.id) else {
+          throw WalletGroupManagerError.secureStorage
+        }
+      }
+    } catch let error as WalletGroupManagerError {
+      throw error
+    } catch {
+      throw WalletGroupManagerError.secureStorage
+    }
+  }
+
+  private func removeConnections(accounts: Set<String>, registry: WalletRegistry) throws {
+    guard let state = try connectionStore.load() else {
+      throw WalletGroupManagerError.corruptState
+    }
+    if state.connectCommits.contains(where: { accounts.contains($0.account.lowercased()) }) {
+      throw WalletGroupManagerError.corruptState
+    }
+    let survivingDefault =
+      registry.homeSelectedAddress
+      ?? registry.groups
+      .filter { $0.lifecycle == .active }
+      .flatMap(\.accounts)
+      .first?.address
+    let updated = try connectionStore.update(expectedRevision: state.revision) { current in
+      ConnectionState(
+        revision: current.revision + 1,
+        defaultAccount: current.defaultAccount.map { accounts.contains($0.lowercased()) }
+          == true ? survivingDefault : current.defaultAccount,
+        grants: current.grants.filter { !accounts.contains($0.account.lowercased()) },
+        activeConnections: current.activeConnections.filter {
+          !accounts.contains($0.account.lowercased())
+        },
+        connectCommits: current.connectCommits)
+    }
+    try updated.validate(against: registry)
+  }
+
+  private static func contains(account: String, in registry: WalletRegistry) -> Bool {
+    registry.groups.flatMap(\.accounts).contains {
+      $0.address.caseInsensitiveCompare(account) == .orderedSame
+    }
+  }
+
+  private static func verify(privateKey: [UInt8], expectedAccount: String) throws {
+    do {
+      let pair = try EthereumKeypair.from(secret: privateKey)
+      let digest = Keccak.keccak256(Array("stupid-wallet provisioning proof".utf8))
+      let signature = try EthereumSigner.sign(digest: digest, keypair: pair)
+      let recovered = try EthereumSigner.recoverAddress(digest: digest, signature: signature)
+      guard recovered?.caseInsensitiveCompare(expectedAccount) == .orderedSame else {
+        throw WalletGroupManagerError.verificationFailed
+      }
+    } catch let error as WalletGroupManagerError {
+      throw error
+    } catch {
+      throw WalletGroupManagerError.verificationFailed
+    }
+  }
+}

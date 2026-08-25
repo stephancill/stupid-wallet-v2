@@ -50,6 +50,143 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-25 - Private-Key Reveal Lifecycle Fix
+
+### Summary
+
+- Changed private-key reveal clearing to react to the SwiftUI `.background` scene phase rather than
+  every phase other than `.active`. Navigation away and the 60-second timeout still clear the value.
+- Recorded the LocalAuthentication scene-phase behavior in the wallet debugging skill.
+
+### Why
+
+- On a physical iPhone, the system user-presence prompt temporarily moved the app to `.inactive`.
+  Authentication succeeded and the key briefly rendered, but the broad lifecycle handler immediately
+  erased it and restored the Reveal button.
+
+### Verification
+
+- `swift test` passed all 256 tests in 34 suites. `stupid-app doctor` completed with zero failures and
+  warnings, and `git diff --check` passed.
+- `stupid-app run --usb --udid <connected-device> --sudo /usr/bin/sudo` rebuilt, signed, installed,
+  and launched the app and nested extension on the connected iPhone. Physical-device verification
+  confirmed the key remains visible after authentication, while navigation away and actual app
+  backgrounding still clear it.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-25 - Gate B Bootstrap, Signing, And Deletion
+
+### Summary
+
+- Added idempotent empty-install bootstrap under the registry-adoption claim. A fresh installation now
+  persists an empty complete registry and revision-zero connection state while keeping the compatibility
+  projection absent. Current-rebuild registration remains an unsupported exclusion signal and is not
+  adopted.
+- Added `WalletAccountResolver` and registry-backed signers. Private-key groups load their address-keyed
+  item; seed groups load one protected entropy item and derive the registered child only in memory under
+  the group lifecycle claim. Signing and private-key export revalidate active membership and the derived
+  address, then clear transient buffers. Safari home-account signing and Settings export now use this
+  resolver.
+- Added recoverable group deletion. The registry first commits `.deleting` and a deterministic surviving
+  home selection through the projection journal. Cleanup then terminalizes matching pending requests,
+  deletes and verifies absence of the protected source, removes matching connection grants/active state,
+  repairs the connection default, removes account caches and exact migration material, and finally
+  removes the group. Adoption resumes retained `.deleting` groups before publishing ready state.
+- Future connect-commit markers are deliberately preserved and make deletion fail loudly. Their
+  reconcile-to-consumed protocol remains coupled to Gate F, before runtime code can create markers.
+
+### Why
+
+- Empty authority must exist before the first seed group can register without reviving unsupported
+  singleton state. Protected operations and deletion must share one cross-process group claim so a
+  signature already holding the claim may finish, while no operation beginning after `.deleting`
+  commits can release the removed group's secret.
+
+### Verification
+
+- `swift test` passed all 256 tests in 34 suites. New coverage proves interruption-safe empty bootstrap
+  at every existing persistence fault point, seed account-one sign/recover and export from one entropy
+  item without child-key persistence, private-key-group derivation rejection, complete account-state
+  cleanup, and recovery after secret deletion fails with the group already marked `.deleting`.
+- `swift format lint --recursive Sources Tests` reported only the three pre-existing block-comment
+  warnings in `SecurityWalletBackend.swift`. `git diff --check` passed before this documentation update.
+- `stupid-app 0.0.8` doctor completed with zero failures and warnings, and `stupid-app build` succeeded
+  against the iOS 26.1 SDK.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched on the
+  preferred iOS 26.3 simulator. Accessibility inspection confirmed the retained wallet home screen
+  rendered after launch.
+- `stupid-app run --usb --udid <connected-device> --sudo /usr/bin/sudo` rebuilt, development-signed,
+  installed, and launched the containing app and nested Safari extension on the connected iPhone. The
+  first unprivileged attempt installed successfully but could not create the CoreDevice TUN needed for
+  launch. This proves current artifact installation and launch, not the remaining seed-keychain flows.
+
+### Follow-Up
+
+- Complete Gate B on a physical device by proving protected seed creation/import, derivation,
+  seed-backed signing and export, authentication cancellation/device-lock behavior, and complete group
+  deletion.
+- Gate D must replace the singleton setup/forget UI with generated-seed backup confirmation and group
+  operations. Gate F must reconcile connect markers during deletion before enabling marker writes.
+
+## 2026-08-25 - Gate B Seed And Derivation Foundation
+
+### Summary
+
+- Began Gate B with canonical BIP-39 entropy generation and entropy/mnemonic round trips for every
+  supported English word count. Generalized BIP-32 derivation from account zero to
+  `m/44'/60'/0'/0/{index}` and return the actual valid index when an invalid child must be skipped.
+- Added `KeychainSeedStore`, storing one entropy item per lowercase wallet-group UUID under the
+  dedicated seed service with user-presence access control, ThisDeviceOnly accessibility, a fresh
+  authentication context per release, a noninteractive existence probe, and no child-key persistence.
+- Added suspension-safe group lifecycle coordination through synchronous `NSFileCoordinator` claims.
+  This avoids retaining an App Group `flock` while a containing app may be suspended.
+- Added `WalletGroupManager` operations that import verified seed and private-key groups into an
+  already complete registry and derive the next seed account under the group claim. Registration
+  rejects duplicate addresses, advances indexes monotonically, preserves home selection, and removes
+  a newly inserted secret when authenticated verification fails before registration.
+- Extended registry readiness validation so every active seed group must have its exact protected
+  entropy item, just as each active private-key group must have its address-keyed item.
+- Kept these APIs out of the current singleton setup and Safari paths. Fresh-install bootstrap,
+  seed-backed signing/export, recoverable group deletion, and account UI remain separate work.
+
+### Why
+
+- Seed provenance and serialized derivation must exist before account UI or Safari account selection
+  can safely expose additional accounts. Persisting only account-zero child keys would make sibling
+  derivation impossible and violate the approved one-entropy-item model.
+- Secret-bearing derivation may span interactive authentication, so it needs the same suspension-safe
+  coordination lesson proven during Gate A rather than a long-lived App Group advisory lock.
+
+### Verification
+
+- `swift test --filter SeedPhraseTests` passed 6 tests, including independent Hardhat account-zero and
+  account-one vectors, all supported entropy sizes, generation, checksum, vocabulary, and boundary
+  rejection.
+- `swift test --filter WalletGroupManagerTests` passed 6 tests covering seed/private-key registration,
+  duplicate seed rejection, authenticated rollback, account-one derivation, no child-key persistence,
+  and concurrent monotonic allocation of indexes one and two.
+- The seed-source readiness regression proves an active seed group fails closed without its exact
+  entropy item and becomes ready when that group ID is present.
+- `swift test` passed all 252 tests in 34 suites.
+- `swift format lint --recursive Sources Tests` reported only the three pre-existing block-comment
+  warnings in `SecurityWalletBackend.swift`. `git diff --check` passed.
+- `stupid-app 0.0.8` doctor completed with zero failures and warnings, and `stupid-app build` succeeded
+  against the iOS 26.1 SDK.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app on
+  the preferred iOS 26.3 simulator.
+
+### Follow-Up
+
+- Add fresh-install registry and connection-state bootstrap so generated seed creation can become the
+  default setup path only after backup confirmation.
+- Add seed-backed signer and private-key export resolution under the group lifecycle claim, verifying
+  the derived address against the registry before use.
+- Implement and fault-test resumable `.deleting` cleanup before declaring Gate B complete, then prove
+  seed entropy protection and derivation on a physical device.
+
 ## 2026-08-25 - Shared Call Detail Tables
 
 ### Summary

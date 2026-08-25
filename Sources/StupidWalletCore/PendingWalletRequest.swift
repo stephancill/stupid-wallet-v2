@@ -256,6 +256,13 @@ public actor PendingRequestStore {
   /// Every retained canonical record. UUID-named request files fail closed when unreadable
   /// or malformed rather than disappearing from migration and replay handling.
   public func all() throws -> [WalletPendingRequest] {
+    try retainedRecordsForLifecycleCleanup()
+  }
+
+  /// Synchronous lifecycle access used only while a group and each request are claimed.
+  /// Keeping this file operation nonisolated lets registry adoption resume deletion before
+  /// exposing the wallet, without bridging async work through a blocking semaphore.
+  nonisolated func retainedRecordsForLifecycleCleanup() throws -> [WalletPendingRequest] {
     let files =
       try FileManager.default.contentsOfDirectory(
         at: directory, includingPropertiesForKeys: nil)
@@ -275,11 +282,17 @@ public actor PendingRequestStore {
       }
       if request.status == .pending && request.isExpired {
         request.status = .expired
-        try persist(request)
+        try persistForLifecycleCleanup(request)
       }
       result.append(request)
     }
     return result
+  }
+
+  nonisolated func persistForLifecycleCleanup(_ request: WalletPendingRequest) throws {
+    let data = try JSONEncoder().encode(request)
+    try data.write(
+      to: directory.appendingPathComponent(request.id.uuidString + ".json"), options: [.atomic])
   }
 
   private func persist(_ request: WalletPendingRequest) throws {

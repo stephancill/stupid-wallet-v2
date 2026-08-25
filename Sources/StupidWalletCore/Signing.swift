@@ -53,10 +53,139 @@ public struct KeychainSigner: Signing {
   }
 }
 
-public enum SigningError: Error, Sendable {
+public enum SigningError: Error, Sendable, Equatable {
   case missingKey(account: String)
   case invalidDigest
   case authenticationRequired
+  case accountUnavailable
+  case accountMismatch
+}
+
+public protocol AccountResolving: Sendable {
+  func signer(address: String) throws -> any Signing
+  func exportPrivateKey(address: String) throws -> String
+}
+
+/// Resolves a registered account to its protected source. Seed children are derived only
+/// inside the group lifecycle claim and are never persisted as address-keyed keychain items.
+public struct WalletAccountResolver: AccountResolving, Sendable {
+  private let registryStore: WalletRegistryStore
+  private let keyStore: any WalletKeyStoring
+  private let seedStore: any WalletSeedStoring
+  private let lifecycle: WalletGroupLifecycleCoordinator
+
+  public init(
+    directory: URL? = nil,
+    appGroup: String = PendingRequestStore.defaultAppGroup,
+    keyStore: KeychainKeyStore = KeychainKeyStore(),
+    seedStore: KeychainSeedStore = KeychainSeedStore()
+  ) {
+    registryStore = WalletRegistryStore(directory: directory, appGroup: appGroup)
+    self.keyStore = keyStore
+    self.seedStore = seedStore
+    lifecycle = WalletGroupLifecycleCoordinator(directory: directory, appGroup: appGroup)
+  }
+
+  init(
+    registryStore: WalletRegistryStore,
+    keyStore: any WalletKeyStoring,
+    seedStore: any WalletSeedStoring,
+    lifecycle: WalletGroupLifecycleCoordinator
+  ) {
+    self.registryStore = registryStore
+    self.keyStore = keyStore
+    self.seedStore = seedStore
+    self.lifecycle = lifecycle
+  }
+
+  public func signer(address: String) throws -> any Signing {
+    let context = try resolve(address: address)
+    return RegistryAccountSigner(account: context.account.address, resolver: self)
+  }
+
+  public func exportPrivateKey(address: String) throws -> String {
+    var secret = try withPrivateKey(
+      address: address, reason: "Unlock your wallet to reveal your private key"
+    ) { $0 }
+    defer { secret.resetBytes(in: secret.indices) }
+    return "0x" + Hex.encode(secret)
+  }
+
+  fileprivate func hasKey(address: String) -> Bool {
+    guard let context = try? resolve(address: address) else { return false }
+    switch context.group.kind {
+    case .privateKey: return keyStore.contains(account: context.account.address)
+    case .seed: return seedStore.contains(groupID: context.group.id)
+    }
+  }
+
+  fileprivate func sign(address: String, digest: [UInt8]) throws -> [UInt8] {
+    guard digest.count == 32 else { throw SigningError.invalidDigest }
+    return try withPrivateKey(address: address, reason: "Unlock your wallet to sign") { secret in
+      try EthereumSigner.sign(digest: digest, keypair: EthereumKeypair.from(secret: secret))
+    }
+  }
+
+  private struct Context {
+    let group: WalletGroup
+    let account: WalletAccount
+  }
+
+  private func resolve(address: String) throws -> Context {
+    guard let registry = try registryStore.loadReady() else {
+      throw SigningError.accountUnavailable
+    }
+    for group in registry.groups where group.lifecycle == .active {
+      if let account = group.accounts.first(where: {
+        $0.address.caseInsensitiveCompare(address) == .orderedSame
+      }) {
+        return Context(group: group, account: account)
+      }
+    }
+    throw SigningError.accountUnavailable
+  }
+
+  private func withPrivateKey<T>(
+    address: String,
+    reason: String,
+    operation: ([UInt8]) throws -> T
+  ) throws -> T {
+    let initial = try resolve(address: address)
+    return try lifecycle.withClaim(groupID: initial.group.id) {
+      let current = try resolve(address: address)
+      guard current.group.id == initial.group.id else { throw SigningError.accountUnavailable }
+
+      var secret: [UInt8]
+      switch current.group.kind {
+      case .privateKey:
+        secret = try keyStore.load(account: current.account.address, reason: reason)
+      case .seed:
+        guard let index = current.account.derivationIndex else {
+          throw SigningError.accountUnavailable
+        }
+        var entropy = try seedStore.load(groupID: current.group.id, reason: reason)
+        defer { entropy.resetBytes(in: entropy.indices) }
+        secret = try EthereumSeedPhrase.privateKey(entropy: entropy, index: index)
+      }
+      defer { secret.resetBytes(in: secret.indices) }
+      let derived = try EthereumKeypair.from(secret: secret).address
+      guard derived.caseInsensitiveCompare(current.account.address) == .orderedSame else {
+        throw SigningError.accountMismatch
+      }
+      return try operation(secret)
+    }
+  }
+}
+
+private struct RegistryAccountSigner: Signing {
+  let account: String
+  let resolver: WalletAccountResolver
+
+  func hasKey() -> Bool { resolver.hasKey(address: account) }
+
+  func signDigest(_ digest: [UInt8]) throws -> [UInt8] {
+    try resolver.sign(address: account, digest: digest)
+  }
 }
 
 extension Signing {
