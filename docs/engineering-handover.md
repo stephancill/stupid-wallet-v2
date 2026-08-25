@@ -18,6 +18,19 @@ confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
 
+Multiple wallet groups and accounts are approved next-scope, and Gate A is now underway. The shared
+core contains the unused wallet-registry foundation: versioned group/account/home value types, strict
+snapshot and monotonic-transition validation, a dedicated cross-process advisory lock, durable atomic
+file replacement/removal, a `.migrating` readiness barrier, and projection-first commit-forward
+recovery through `wallet-registry-transition.json`. Registry creation and updates maintain the
+fail-closed `wallet-address.conf` compatibility projection, including removing it for a seed-backed
+home account. Production app and extension reads still use the singleton stores; registry adoption,
+connection-state migration, fallback removal, balance-cache migration, and request integration remain
+required before the registry becomes authority. The locked behavior, migration, account-resolution
+boundaries, popup connection picker, ordered implementation gates, and acceptance criteria are
+specified in `docs/multi-account-implementation-plan.md`. Until those gates pass, user-visible behavior
+remains the single-account system described below.
+
 The macOS direction is the same iOS build running through Apple Silicon's iPhone/iPad-app
 compatibility environment, not a native macOS or Mac Catalyst target. Distribution uses
 the iOS TestFlight build. The current `stupid-app run --mac` rejects extension-bearing projects
@@ -403,7 +416,8 @@ gate-proven behavior:
 
 Build a small, auditable iOS wallet distributed with a Safari Web Extension that:
 
-1. Creates or imports one Ethereum account and keeps its private key local.
+1. Creates or imports local wallet groups, including seed-backed groups with multiple derived
+   Ethereum accounts and single-account private-key groups.
 2. Injects a standards-oriented EIP-1193 provider with EIP-6963 discovery.
 3. Keeps Safari in the foreground while the user reviews and authenticates signing.
 4. Uses a Safari-owned toolbar popup for review and a native Face ID or device-passcode
@@ -464,6 +478,19 @@ Mac; using the same account on both requires an explicit user-authorized import 
   chain validation, or key protection.
 - Planning documents use ordered dependencies and acceptance gates, not timeline
   estimates.
+- Wallet groups are either seed-backed with accounts derived at `m/44'/60'/0'/0/{index}` or
+  private-key-backed with exactly one account.
+- Existing installations adopt their proven account as a one-account private-key group. Shipped
+  formats did not retain seed phrases and must not be treated as expandable seed groups.
+- Home account selection is independent from the default account proposed for new dapp connections.
+- Connection grants bind account + normalized origin + Safari profile. Multiple accounts may retain
+  grants for the same origin/profile, while exactly one granted account is active there.
+- The active plain-connect request may select an existing account from the popup sticky bar. The
+  popup never creates accounts and never rebinds SIWE, signing, sending, batch, or chain requests.
+- Future popup approve/reject messages include the native summary revision in addition to request ID
+  and decision, so a stale popup cannot decide a connect request after another popup rebinds it.
+- A popup selection becomes the default for future new connections only after Connect succeeds;
+  rejection and failure leave the prior default unchanged, and existing grants remain intact.
 
 ## Existing App Findings
 
@@ -533,6 +560,57 @@ The first usable milestone includes:
 - Stupidtech default RPC resolution and validated per-chain user overrides.
 - SQLite-backed transaction and signature activity.
 - Receipt polling for submitted transactions.
+
+### Multiple Wallet Groups And Accounts
+
+Approved next-scope, partially underway:
+
+- Gate A foundation now implements `WalletRegistry`, wallet-group/account/lifecycle types, strict
+  schema and EIP-55 validation, monotonic revisions and seed derivation high-water checks, the
+  `.migrating` readiness barrier, cross-process registry locking, and projection-first journaled
+  persistence/recovery. It is deliberately not wired as production authority until the remaining Gate
+  A adoption steps can switch app and extension readers together.
+
+- Add a versioned App Group wallet registry with seed and private-key group invariants, a separately
+  persisted home-selected account, authenticated migration, recoverable group deletion, and a
+  commit-forward journal that updates the fail-closed rebuild projection before registry authority.
+- Keep the registry `.migrating` until wallet, connection, projection, fallback, and cache adoption all
+  validate; app and extension request handling fails closed until it becomes `.complete`.
+- Remove and verify absence of the rebuild-era `sw2.walletAddress` fallback during registry adoption;
+  do not enable seed groups or additional accounts until that monotonic migration completes.
+- Generate and import BIP-39 seed groups, retain only protected entropy, and derive arbitrary
+  unhardened address indexes under `m/44'/60'/0'/0` without persisting child private keys.
+- Migrate every existing installed account to one private-key group without changing its address,
+  keychain identity, activity, grants, or balance cache.
+- Open an account picker from the home account-menu address and support selecting existing accounts,
+  deriving the next seed account, creating a seed group, importing a seed, and importing a private
+  key.
+- Scope containing-app balance, Activity, Connected Apps, Settings, authorizations, and private-key
+  export to the home-selected account.
+- Replace origin/profile-only V2 grants with atomic account + origin + profile connection state that
+  retains multiple account grants, one active account per origin/profile, and a separately persisted
+  default for future connection prompts.
+- Read registration and connection state under registry-then-connection locks whenever both determine
+  account visibility. Group deletion removes grants, active mappings, and repairs the default in one
+  connection-state revision after the group becomes inactive.
+- Resolve every Safari signing/sending account from the requesting origin/profile's active grant,
+  not the containing app's home selection or the future-connection default.
+- Make only the active plain-connect sticky account selectable in the popup. Native code performs a
+  claimed, revision-checked, account-inclusive canonical rebind; successful approval of the reviewed
+  revision atomically commits the grant, active origin account, future default, and request result.
+- Preserve provider `requestKey` plus immutable page-intent digest across a connect rebind while
+  replacing only the account-inclusive approval binding. Pending legacy-binding records fail with an
+  explicit retry error after registry adoption and can never reach authentication or approval.
+- Persist a connect commit marker in the same atomic connection-state revision as grant, active
+  account, and default changes, then reconcile pending consumption from that marker after interruption.
+- Use the plan's fixed cross-process order: registry-adoption claim, sorted group lifecycle claims,
+  request claim, registry lock, connection lock, prepare lock, then account/chain submission claim;
+  state locks never span authentication or network RPC.
+- Implement origin/profile-scoped provider account state and `accountsChanged` without broadcasting
+  another site's account.
+
+The complete design, migration rules, lock domains, file-level work, gates, and verification matrix
+are maintained in `docs/multi-account-implementation-plan.md`.
 
 ### Gate 7 Parity
 
@@ -668,14 +746,18 @@ serializes and persists the switch, and returns `null`; the worker then broadcas
    user to open the wallet extension, but it cannot approve or alter the request.
 5. The user opens the toolbar popup. On macOS it requests the canonical, display-safe list directly
    from native code, with the worker route retained as an iOS-compatible transport fallback.
-6. On approval, the popup sends only the request ID and decision. Native code reloads
-   the canonical record and verifies its origin, chain, payload digest, expiry, and
-   unconsumed state.
+6. On approval, the current popup sends only the request ID and decision. Native code reloads the
+   canonical record and verifies its origin, chain, payload digest, expiry, and unconsumed state.
+   Multi-account Gate F adds the displayed revision and account-inclusive binding checks, but still
+   never accepts canonical params from the popup.
 7. For sends, native code resolves missing nonce, gas limit, and fee values through the
    active RPC immediately before signing while retaining the immutable approved intent.
    It then creates a fresh `LAContext`, requests device-owner authentication, and performs
    signing only after authentication succeeds.
-8. Native code atomically consumes the pending request and returns the result.
+8. Native code durably consumes the pending request and returns the result. Under multi-account Gate F,
+   plain connect first writes its result marker atomically with grant/active/default connection state,
+   so interruption before pending consumption recovers the same result rather than creating a grant
+   that can later be rejected.
 9. The originating isolated bridge observes the consumed or rejected record through native status
    polling and resolves the matching page request. Navigation or tab closure destroys that page
    session, so a result is never delivered to a different page.
@@ -856,7 +938,12 @@ Do not retain Dawn Key Management as a runtime package solely for migration. Rei
 the small Security-framework read/decrypt path against the documented persisted format.
 Before release, test an actual old app installation upgraded in place on a physical
 device. Unit fixtures alone are insufficient proof of Secure Enclave and access-group
-continuity.
+continuity. Prepare that state by installing the old release under the production identities and
+using its UI to create or import a disposable wallet and exercise the grants/activity being migrated.
+Then install the new build over it without uninstalling, clearing Safari, or resetting App Group,
+UserDefaults, keychain, or Secure Enclave state. Separately prepare the latest pre-multi-account
+rebuild on the preferred simulator to prove singleton registry, grant, activity, network, and cache
+migration. Never use a personal or funded wallet for either test.
 
 ## Persistence
 
@@ -1124,29 +1211,42 @@ device identifiers, or sensitive signing payloads.
 - **Transaction preview:** A secure confirmation must display enough canonical detail
   before rich ABI decoding exists. The initial fallback is raw destination, value,
   chain, fees, and calldata hash/size rather than pretending unknown calldata is safe.
+- **Multiple-account state transitions:** wallet registry, connection grants/default/active state,
+  pending requests, protected secrets, and deletion span multiple processes and persistence systems.
+  The implementation must use the lock order and recoverable commit boundaries in
+  `docs/multi-account-implementation-plan.md`; independent actor isolation is insufficient.
+- **Provider account-change delivery:** iOS SafariServices exposes no containing-app equivalent of
+  macOS `SFSafariApplication.dispatchMessage`. Prove focus/visibility refresh after returning to
+  Safari and add bounded visible-page polling only if lifecycle evidence requires it.
 
 Resolve open decisions through focused proof work. Record the result here and the
 investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
+1. Continue Gate A from `docs/multi-account-implementation-plan.md`: add the idempotent registry
+   adoption claim and singleton/Dawn migration orchestration, atomic connection-state authority,
+   verified `sw2.walletAddress` removal, account-bound balance-cache migration, and fault-injected
+   recovery coverage before switching production app/extension readers or beginning protected
+   seed-group lifecycle work.
+2. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
    reveal/cancellation/timeout, Forget Account, automatic migration launch, and Safari
    signing with each newly provisioned key. Raw private-key import, including recovery of a
    protected item retained across uninstall, is proven on the physical iPhone; the remaining
    device-bound flows are not yet gate-proven.
-2. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
+3. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
    supported iOS version. The product owner chose seamless authorization for pre-existing
    hostname grants; consider a later user-visible reconnect campaign before removing that
    compatibility fallback.
-3. Finish parity details that do not weaken the new model: richer activity detail and broader
+4. Finish parity details that do not weaken the new model: richer activity detail and broader
    optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
    inside Gate 6.
-4. Gate 7 and later per the implementation gates.
+5. Gate 7 and later per the implementation gates.
 
 ## Reference Sources
 
 - Existing app and migration source: `../ios-wallet`.
+- Approved multiple-account design: `docs/multi-account-implementation-plan.md`.
 - Repository debugging workflow: `skills/stupid-wallet-debugging/SKILL.md`.
 - `stupid-app` source and extension packaging behavior: `../stupid-ios-dev`.
 - Maintained CLI extension scope:

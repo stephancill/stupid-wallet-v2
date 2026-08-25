@@ -3721,3 +3721,127 @@ Use this entry template:
 ### Follow-Up
 
 - None.
+
+## 2026-08-25 - Multiple-Account Architecture Plan
+
+### Summary
+
+- Added `docs/multi-account-implementation-plan.md` with the approved product behavior, persistence
+  models, migration rules, account and signer resolution, containing-app flows, Safari popup account
+  selection, provider semantics, concurrency boundaries, file-level work, ordered gates, and
+  verification matrix for multiple wallet groups and accounts.
+- Locked seed-backed groups to one protected BIP-39 entropy item with in-memory child derivation at
+  `m/44'/60'/0'/0/{index}`. Private-key groups contain exactly one account, and existing installed
+  wallets migrate to that one-account form because shipped formats did not retain their seed phrase.
+- Separated the home-selected account, the default account proposed for future new connections, and
+  the active granted account for each normalized origin/Safari profile.
+- Scoped the planned home balance, Activity, Connected Apps, Settings, authorizations, and private-key
+  export to the home-selected account.
+- Restricted Safari popup account selection to the active plain-connect sticky bar. The popup lists
+  existing accounts only; native code owns the canonical rebind, and only successful Connect updates
+  the future default while preserving every existing account grant.
+- Completed the consistency audit by separating immutable provider retry identity from the
+  account-inclusive approval binding, specifying an authoritative connect commit marker and recovery
+  path, terminalizing pending legacy-binding requests before they can sign, fixing the cross-process
+  lock order, and defining commit-forward registry/projection recovery.
+- Tightened the final crash/race boundaries with a durable `.migrating` adoption barrier, locked
+  registry-plus-connection snapshots, one-revision connection cleanup during group deletion, marker
+  inspection before any pending mutation, and durable pending retry records with no cleanup race in
+  this scope.
+- Locked registry adoption to remove the rebuild-era `sw2.walletAddress` fallback before any
+  multi-account operation. New code projects only a private-key home account through
+  `wallet-address.conf`; a seed-backed home removes that file so downgraded code fails closed.
+- Updated the maintained engineering handover to mark the design as approved next-scope but not yet
+  implemented.
+- Added a migration-test prerequisite: prepare legacy Dawn-format state through the old app UI on a
+  dedicated physical test device and current singleton-rebuild state on the preferred simulator, then
+  install the new build in place without clearing shared persistence. Synthetic fixtures remain unit
+  coverage rather than acceptance proof.
+
+### Why
+
+- The current one-address registration, signer construction, origin/profile-only grant key, global
+  activity query, singleton balance cache, and noninteractive popup account cannot safely implement
+  multiple accounts as isolated UI changes.
+- Separate home, default-connection, and per-origin active-account state prevents a containing-app
+  selection or another site's connection from silently changing an existing dapp's signing account.
+- A detailed migration and recoverability design is required before writing key, grant, pending-request,
+  or deletion code across the app and Safari extension processes.
+
+### Verification
+
+- Read the maintained handover and implementation history and traced the current wallet store,
+  provisioning, BIP-39/BIP-32, keychain, signing, pending-request, activity, connected-site, app UI,
+  Safari handler, popup, background, bridge, provider, and relevant tests.
+- Inspected the old application and confirmed that it persisted only one derived private key for seed
+  imports, so existing installations cannot be upgraded automatically to expandable seed groups.
+- Inspected the installed iOS 26.1 SafariServices SDK and confirmed it exposes profile/message keys but
+  no containing-app `dispatchMessage` equivalent; macOS exposes that API separately.
+- Repeated the cross-document consistency audit after resolving retry, marker, legacy, projection,
+  deletion, adoption, and lock-order findings; no remaining design blocker was identified. This is
+  documentation verification only and does not claim implementation or device proof.
+- `git diff --check` is run after the final documentation edits.
+
+### Follow-Up
+
+- Implement Gate A from the plan: versioned registry, explicit migration/adoption, connection-state
+  authority, and fault-injected recovery tests before adding account UI or popup selection.
+- Preserve the now-fixed lock order while adapting the current approval, prepare, and
+  transaction-submission paths; add pairwise concurrency tests before protected-secret or
+  pending-request mutation ships.
+
+## 2026-08-25 - Wallet Registry Foundation
+
+### Summary
+
+- Started Gate A on branch `feat/multi-account` with versioned `WalletRegistry`, `WalletGroup`, and
+  `WalletAccount` models for seed-backed and private-key-backed groups, independent home selection,
+  adoption state, lifecycle state, and monotonic revisions.
+- Added strict validation for canonical EIP-55 addresses, global case-insensitive uniqueness,
+  private-key group cardinality, ordered seed derivation indexes below the BIP-32 boundary, active
+  home membership, and the legacy-fallback barrier.
+- Added monotonic transition validation so adoption/fallback state cannot regress, deleting groups
+  cannot reactivate or mutate, active groups cannot disappear before deletion, seed accounts append
+  one registered derivation at a time without index reuse, and multi-account state cannot appear
+  before fallback removal.
+- Added `WalletRegistryStore` with a dedicated advisory lock, revision-checked create/update, durable
+  same-directory temporary writes, file and parent-directory synchronization, and durable removals.
+- Implemented the approved projection-first `wallet-registry-transition.json` protocol. Recovery
+  validates the complete journal relationship, commits an interrupted transition forward, rejects
+  conflicts, repairs stale projections left by a downgraded build, projects only a private-key home
+  account to `wallet-address.conf`, and removes that projection for a seed-backed home account.
+- Kept the registry unused by production app and extension flows in this slice. Existing singleton
+  behavior is unchanged until the rest of Gate A can migrate registry, connection, fallback, and
+  balance state behind one readiness barrier.
+
+### Why
+
+- Multi-account UI or signer changes cannot safely precede a durable cross-process registry. Building
+  the model, lock, revision, projection, and recovery boundary first gives later adoption and account
+  lifecycle work one tested authority without temporarily splitting app and extension state.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWalletCore/WalletRegistry.swift
+  Tests/StupidWalletCoreTests/WalletRegistryTests.swift` and `swift format lint` completed without
+  findings.
+- `swift test --filter WalletRegistryTests` passed all 12 focused tests, covering both group kinds,
+  validation failures, readiness, revisions, independent-store exclusion, projection repair,
+  commit-forward recovery, inconsistent-journal refusal, monotonic transitions, and persisted date
+  precision.
+- `swift test` passed all 193 tests in 29 suites.
+- `stupid-app doctor` completed with zero failures and warnings, and `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app
+  and extension on the preferred simulator. Accessibility inspection found the existing wallet home
+  controls, confirming this unused foundation did not change the current single-account UI.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Complete Gate A adoption rather than wiring this store piecemeal: add the registry-adoption claim,
+  reconcile current rebuild and Dawn migration states, remove and verify `sw2.walletAddress`, migrate
+  connection and balance authority, terminalize legacy pending bindings, and switch every app and
+  extension entry through `ensureRegistryAdopted`.
+- Add exhaustive fault injection around journal, projection, registry, fallback, connection, and cache
+  boundaries plus a real app/extension process-exclusion test. Current independent-store tests prove
+  advisory-lock serialization in one host process but are not device migration acceptance.
