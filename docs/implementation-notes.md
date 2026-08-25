@@ -79,6 +79,8 @@ Use this entry template:
 - `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
   manifest `0.1.41`.
 - `stupid-app doctor` completed with zero failures and warnings.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` assembled, signed,
+  packaged, installed, and launched the app and nested Safari extension on the paired iPhone.
 - Live Safari inspection confirmed the corrected blockie in a transaction To row and sticky footer
   without the prior address baseline padding. The transaction was left unapproved.
 
