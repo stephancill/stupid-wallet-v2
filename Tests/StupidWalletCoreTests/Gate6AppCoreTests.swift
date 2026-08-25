@@ -27,9 +27,34 @@ struct Gate6AppCoreTests {
     try store.record(chainID: "999999", suggestedName: "Suggested Network")
     #expect(try store.network(chainID: "999999")?.name == "Suggested Network")
 
+    try store.remove(chainID: "1")
+    try store.remove(chainID: "7777777")
+    let reloaded = NetworkStore(directory: directory, legacySuiteName: suite)
+    #expect(try reloaded.network(chainID: "1") == nil)
+    #expect(try reloaded.network(chainID: "7777777") == nil)
+    try reloaded.record(chainID: "1")
+    try reloaded.record(chainID: "7777777", suggestedName: "Restored Zora")
+    #expect(try reloaded.network(chainID: "1")?.name == "Ethereum")
+    #expect(try reloaded.network(chainID: "7777777")?.name == "Restored Zora")
+
     try store.setIncluded(false, chainID: "137")
     #expect(try store.network(chainID: "0x89")?.includeInBalance == false)
     #expect(defaults.stringArray(forKey: "excludedFromBalance")?.contains("0x89") == true)
+  }
+
+  @Test("network records ignore obsolete provenance fields")
+  func obsoleteNetworkProvenance() throws {
+    let legacy = Data(
+      #"{"id":"137","name":"Polygon","isDefault":false,"includeInBalance":true}"#.utf8)
+    let network = try JSONDecoder().decode(WalletNetwork.self, from: legacy)
+
+    let encoded = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(network))
+    guard case .object(let object) = encoded else {
+      Issue.record("Expected encoded network object")
+      return
+    }
+    #expect(object["isPreseeded"] == nil)
+    #expect(object["isDefault"] == nil)
   }
 
   @Test("RPC overrides persist by normalized decimal chain ID")
@@ -40,14 +65,47 @@ struct Gate6AppCoreTests {
     defer { try? FileManager.default.removeItem(at: directory) }
 
     let store = RPCOverrideStore(directory: directory)
+    let deployments = Simple7702AccountDeploymentStore(directory: directory)
+    let code: [UInt8] = [0x60, 0x00]
+    let runtimeHash = "0x" + Hex.encode(Keccak.keccak256(code))
+    let firstRPC = URL(string: "https://rpc.example/first")!
+    let secondRPC = URL(string: "https://rpc.example/second")!
+    try deployments.recordVerified(chainID: "8453", code: code, rpcURL: firstRPC)
+    #expect(
+      deployments.verifiedCode(chainID: "8453", runtimeHash: runtimeHash, rpcURL: firstRPC)
+        == code)
+    #expect(
+      deployments.verifiedCode(chainID: "8453", runtimeHash: runtimeHash, rpcURL: secondRPC) == nil)
     let url = try #require(URL(string: "https://rpc.example.test"))
     try store.set(url, forChainID: "0x2105")
 
     #expect(try store.all() == ["8453": url])
     #expect(RPCResolver.persisted(store: store).resolve(chainID: "8453") == url)
+    #expect(
+      deployments.verifiedCode(chainID: "8453", runtimeHash: runtimeHash, rpcURL: firstRPC) == nil)
 
+    try deployments.recordVerified(chainID: "8453", code: code, rpcURL: secondRPC)
     try store.remove(forChainID: "8453")
     #expect(try store.all().isEmpty)
+    #expect(
+      deployments.verifiedCode(chainID: "8453", runtimeHash: runtimeHash, rpcURL: secondRPC) == nil)
+  }
+
+  @Test("transaction submission claims are exclusive per account and chain")
+  func transactionSubmissionClaims() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "TransactionSubmissionLockTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let submissionLock = TransactionSubmissionLock(directory: directory)
+    let account = "0x0000000000000000000000000000000000000001"
+
+    let first = try #require(submissionLock.claim(account: account, chainID: "1"))
+    #expect(submissionLock.claim(account: account.uppercased(), chainID: "0x1") == nil)
+    let otherChain = try #require(submissionLock.claim(account: account, chainID: "8453"))
+    otherChain.release()
+    first.release()
+    #expect(submissionLock.claim(account: account, chainID: "1") != nil)
   }
 
   @Test("native balance formatting supports full-width Ethereum quantities")

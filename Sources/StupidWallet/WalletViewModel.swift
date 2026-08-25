@@ -159,10 +159,10 @@ struct NetworkInfo: Identifiable, Sendable {
   let id: String
   let name: String
 
-  static let defaults = WalletNetwork.defaults.map { NetworkInfo(id: $0.id, name: $0.name) }
+  static let initial = NetworkStore.initialNetworks.map { NetworkInfo(id: $0.id, name: $0.name) }
 
   static func name(for chainID: String) -> String {
     ((try? NetworkStore().all()) ?? []).first { $0.id == chainID }?.name
-      ?? defaults.first { $0.id == chainID }?.name ?? "Chain \(chainID)"
+      ?? initial.first { $0.id == chainID }?.name ?? "Chain \(chainID)"
   }
 }

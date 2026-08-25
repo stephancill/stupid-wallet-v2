@@ -4,6 +4,7 @@ import SwiftUI
 #if os(iOS)
   struct AuthorizationsView: View {
     private enum Action: Equatable {
+      case deploy
       case enable
       case replace(delegate: String)
       case revoke
@@ -19,12 +20,14 @@ import SwiftUI
     private let service: AuthorizationService
     @Environment(\.dismiss) private var dismiss
     @State private var statuses: [AuthorizationStatus] = []
+    @State private var implementationStates: [String: Simple7702AccountImplementationState] = [:]
     @State private var isLoading = true
     @State private var operationChainID: String?
     @State private var submittedChains: Set<String> = []
     @State private var confirmation: Confirmation?
     @State private var errorMessage: String?
     @State private var showingInfo = false
+    @State private var refreshGeneration = 0
 
     init(address: String) {
       service = AuthorizationService(
@@ -84,7 +87,7 @@ import SwiftUI
                 "An EIP-7702 authorization persistently delegates this account on one network. Other networks are unaffected."
               )
               Text(
-                "stupid wallet uses delegation for atomic batched calls and can automatically upgrade the account when an app requests a batch."
+                "stupid wallet uses delegation for atomic batched calls. If needed, an approved batch first deploys the reviewed implementation, then upgrades the account and executes the batch."
               )
               Text(
                 "Enabling or revoking signs both an authorization and its transaction. Each signature uses fresh device-owner authentication, so two Face ID or passcode prompts are expected."
@@ -156,6 +159,8 @@ import SwiftUI
           EmptyView()
         }
 
+        implementationControl(status)
+
         if submittedChains.contains(status.id) {
           Text("Transaction submitted. Pull to refresh if confirmation is still pending.")
             .font(.footnote)
@@ -169,11 +174,15 @@ import SwiftUI
     private func stateControl(_ status: AuthorizationStatus) -> some View {
       switch status.state {
       case .notAuthorized:
-        Toggle(
-          "", isOn: toggleBinding(status: status, isOn: false, enableAction: .enable)
-        )
-        .labelsHidden()
-        .disabled(operationChainID != nil)
+        if implementationStates[status.id] == .verified {
+          Toggle(
+            "", isOn: toggleBinding(status: status, isOn: false, enableAction: .enable)
+          )
+          .labelsHidden()
+          .disabled(operationChainID != nil)
+        } else {
+          Text("Not Ready").foregroundStyle(.secondary)
+        }
       case .authorized(let delegate):
         Toggle(
           "",
@@ -186,6 +195,34 @@ import SwiftUI
         Text("Unrecognized").foregroundStyle(.secondary)
       case .unavailable:
         Text("Unavailable").foregroundStyle(.secondary)
+      }
+    }
+
+    @ViewBuilder
+    private func implementationControl(_ status: AuthorizationStatus) -> some View {
+      switch implementationStates[status.id] {
+      case .missing:
+        Text("Simple7702Account is not deployed on this network.")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+        Button("Deploy Simple7702Account") {
+          confirmation = Confirmation(
+            chainID: status.id, networkName: status.network.name, action: .deploy)
+        }
+        .disabled(operationChainID != nil)
+      case .unsafe:
+        Label(
+          "Simple7702Account address contains unrecognized code",
+          systemImage: "exclamationmark.triangle"
+        )
+        .foregroundStyle(.orange)
+        .font(.footnote)
+      case .unavailable:
+        Text("Implementation status unavailable")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+      case .verified, nil:
+        EmptyView()
       }
     }
 
@@ -208,6 +245,12 @@ import SwiftUI
       let button: String
       let role: ButtonRole?
       switch confirmation.action {
+      case .deploy:
+        title = "Deploy Simple7702Account?"
+        message =
+          "This deploys the wallet's reviewed batching implementation on \(confirmation.networkName). A network transaction and one authentication prompt are required."
+        button = "Deploy"
+        role = nil
       case .enable:
         title = "Upgrade Account?"
         message =
@@ -243,6 +286,8 @@ import SwiftUI
         do {
           let hash: String
           switch confirmation.action {
+          case .deploy:
+            hash = try await service.deployImplementation(chainID: confirmation.chainID)
           case .enable:
             hash = try await service.enable(chainID: confirmation.chainID)
           case .replace:
@@ -279,17 +324,41 @@ import SwiftUI
     }
 
     private func refresh() async {
+      refreshGeneration += 1
+      let generation = refreshGeneration
       isLoading = true
-      statuses = await service.statuses()
+      async let refreshedStatuses = service.statuses()
+      async let implementations = service.implementationStatuses()
+      let nextStatuses = await refreshedStatuses
+      let nextImplementations = Dictionary(
+        uniqueKeysWithValues: await implementations.map { ($0.id, $0.state) })
+      guard generation == refreshGeneration else { return }
+      statuses = nextStatuses
+      implementationStates = nextImplementations
       isLoading = false
     }
 
     private func message(for error: Error) -> String {
       guard let error = error as? AuthorizationOperationError else {
+        if let deployment = error as? Simple7702AccountDeploymentError {
+          switch deployment {
+          case .alreadyDeployed: return "Simple7702Account is already deployed on this network."
+          case .unsafeImplementation:
+            return "The Simple7702Account address contains unrecognized code."
+          case .missingCanonicalFactory:
+            return "The canonical CREATE2 factory is not deployed on this network."
+          case .unsafeCanonicalFactory:
+            return "The canonical CREATE2 factory contains unrecognized code."
+          case .invalidPrimitive:
+            return "The reviewed deployment data failed its integrity check."
+          }
+        }
         return "The authorization could not be updated."
       }
       switch error {
       case .unsupportedChain: return "This network does not support wallet authorizations."
+      case .operationInProgress:
+        return "Another transaction for this account and network is still being submitted."
       case .missingImplementation:
         return "Simple7702Account is not deployed on this network."
       case .alreadyEnabled: return "This account is already upgraded on this network."

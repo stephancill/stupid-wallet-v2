@@ -12,19 +12,19 @@ struct AuthorizationServiceTests {
       "1": ["eth_getCode": [.string("0x")]],
       "8453": ["eth_getCode": [.string("0xef0100\(target)")]],
       "42161": ["eth_getCode": [.string("0x60016000")]],
+      "10": ["eth_getCode": [.string("0x")]],
     ])
     let service = makeService(rpc: rpc)
 
     let statuses = await service.statuses()
 
-    #expect(statuses.map(\.network.id) == ["1", "8453", "42161"])
+    #expect(statuses.map(\.network.id) == ["1", "8453", "42161", "10"])
     #expect(statuses[0].state == .notAuthorized)
     #expect(
       statuses[1].state
         == .authorized(delegate: "0x\(target)"))
     #expect(statuses[2].state == .malformed(code: "0x60016000"))
-    #expect(rpc.chains == ["1", "8453", "42161"])
-    #expect(!rpc.chains.contains("10"))
+    #expect(rpc.chains == ["1", "8453", "42161", "10"])
   }
 
   @Test("status preserves a foreign delegate and structured node errors")
@@ -38,6 +38,7 @@ struct AuthorizationServiceTests {
       "1": ["eth_getCode": [.string("0xef0100\(foreign)")]],
       "8453": ["eth_getCode": [.error(nodeError)]],
       "42161": ["eth_getCode": [.string("0x")]],
+      "10": ["eth_getCode": [.string("0x")]],
     ])
 
     let statuses = await makeService(rpc: rpc).statuses()
@@ -179,7 +180,7 @@ struct AuthorizationServiceTests {
   func unsupportedChains() async {
     let rpc = AuthorizationRPCStub(results: [:])
     await #expect(throws: AuthorizationOperationError.unsupportedChain) {
-      try await makeService(rpc: rpc).enable(chainID: "10")
+      try await makeService(rpc: rpc).enable(chainID: "31337")
     }
     await #expect(throws: AuthorizationOperationError.unsupportedChain) {
       try await makeService(rpc: rpc).revoke(chainID: "137")
@@ -209,22 +210,181 @@ struct AuthorizationServiceTests {
         == .reverted(blockNumber: "0x11"))
   }
 
+  @Test("reviewed deployment primitive has the exact transaction calldata and CREATE2 target")
+  func deploymentPrimitive() throws {
+    let creationCode = try #require(Hex.data(Simple7702AccountDeployment.creationCode))
+    let calldata = try #require(Hex.data(Simple7702AccountDeployment.calldata))
+    #expect(creationCode.count == 3_665)
+    #expect(calldata.count == 3_697)
+    #expect(Array(calldata.prefix(32)) == [UInt8](repeating: 0, count: 32))
+    #expect(Array(calldata.dropFirst(32)) == creationCode)
+    #expect(
+      "0x" + Hex.encode(Keccak.keccak256(calldata))
+        == "0x414122fad5a970579482e95a967d40376305e3e120dad055e75f0821360b679e")
+    #expect(Simple7702AccountDeployment.isValid())
+  }
+
+  @Test("verified implementation status is cached while missing and unsafe results are not")
+  func customChainImplementationStatus() async throws {
+    let chainID = "31337"
+    let rpc = AuthorizationRPCStub(results: [
+      chainID: ["eth_getCode": [.string("0x6000")]]
+    ])
+    let service = makeService(rpc: rpc, customChainID: chainID)
+
+    #expect(try await service.implementationState(chainID: chainID) == .verified)
+    #expect(try await service.implementationState(chainID: chainID) == .verified)
+    #expect(rpc.chains == [chainID])
+
+    let missingRPC = AuthorizationRPCStub(results: [
+      chainID: ["eth_getCode": [.string("0x"), .string("0x")]]
+    ])
+    let missing = makeService(rpc: missingRPC, customChainID: chainID)
+    #expect(try await missing.implementationState(chainID: chainID) == .missing)
+    #expect(try await missing.implementationState(chainID: chainID) == .missing)
+    #expect(missingRPC.chains == [chainID, chainID])
+
+    let unsafeRPC = AuthorizationRPCStub(results: [
+      chainID: ["eth_getCode": [.string("0x6001")]]
+    ])
+    #expect(
+      try await makeService(rpc: unsafeRPC, customChainID: chainID)
+        .implementationState(chainID: chainID) == .unsafe(code: "0x6001"))
+  }
+
+  @Test("loopback implementation status bypasses the persistent cache")
+  func loopbackImplementationStatus() async throws {
+    let chainID = "31337"
+    let rpc = AuthorizationRPCStub(results: [
+      chainID: ["eth_getCode": [.string("0x6000"), .string("0x")]]
+    ])
+    let service = makeService(
+      rpc: rpc, customChainID: chainID,
+      customRPCURL: URL(string: "http://127.0.0.1:8545/31337")!)
+
+    #expect(try await service.implementationState(chainID: chainID) == .verified)
+    #expect(try await service.implementationState(chainID: chainID) == .missing)
+    #expect(rpc.chains == [chainID, chainID])
+  }
+
+  @Test("custom configured chain reports missing and deploys the exact reviewed transaction")
+  func customChainDeployment() async throws {
+    let chainID = "31337"
+    let factoryCode =
+      "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+    #expect(
+      "0x" + Hex.encode(Keccak.keccak256(try #require(Hex.data(factoryCode))))
+        == Simple7702AccountDeployment.factoryRuntimeHash)
+    let rpc = AuthorizationRPCStub(results: [
+      chainID: [
+        "eth_getCode": [.string("0x"), .string("0x"), .string(factoryCode)],
+        "eth_getTransactionCount": [.string("0x7")],
+        "eth_estimateGas": [.string("0x100000")],
+        "eth_maxPriorityFeePerGas": [.string("0x3b9aca00")],
+        "eth_gasPrice": [.string("0x77359400")],
+        "eth_sendRawTransaction": [.rawTransactionHash],
+      ]
+    ])
+    let signer = RecordingAuthorizationSigner()
+    let service = makeService(rpc: rpc, signing: signer, customChainID: chainID)
+
+    #expect(try await service.implementationState(chainID: chainID) == .missing)
+    let hash = try await service.deployImplementation(chainID: chainID)
+
+    #expect(
+      rpc.methods == [
+        "eth_getCode", "eth_getCode", "eth_getCode", "eth_getTransactionCount",
+        "eth_estimateGas", "eth_maxPriorityFeePerGas", "eth_gasPrice",
+        "eth_sendRawTransaction",
+      ])
+    #expect(
+      rpc.params[2]
+        == .array([.string(Simple7702AccountDeployment.factory), .string("latest")]))
+    #expect(
+      rpc.params[4]
+        == .array([
+          .object([
+            "from": .string(signer.account), "to": .string(Simple7702AccountDeployment.factory),
+            "value": .string("0x0"), "data": .string(Simple7702AccountDeployment.calldata),
+          ])
+        ]))
+    #expect(rpc.rawTransaction?.first == 0x02)
+    #expect(hash == rpc.rawTransaction.map { "0x" + Hex.encode(Keccak.keccak256($0)) })
+    #expect(signer.digests.count == 1)
+
+    let expected = EIP1559Transaction(
+      chainId: 31_337, nonce: "0x7", maxPriorityFeePerGas: "0x3b9aca00",
+      maxFeePerGas: "0x77359400", gasLimit: "0x133333",
+      to: Simple7702AccountDeployment.factory, value: "0x0",
+      data: Simple7702AccountDeployment.calldata)
+    let expectedDigest = Keccak.keccak256(try expected.signingPayload())
+    let expectedRaw = try expected.signedPayload(signature: signer.signature(for: expectedDigest))
+    #expect(signer.digests == [expectedDigest])
+    #expect(rpc.rawTransaction == expectedRaw)
+  }
+
+  @Test("deployment refuses wrong implementation and missing or wrong canonical factory")
+  func deploymentRefusals() async {
+    let chainID = "31337"
+    let wrongImplementation = AuthorizationRPCStub(results: [
+      chainID: ["eth_getCode": [.string("0x6001")]]
+    ])
+    await #expect(throws: Simple7702AccountDeploymentError.unsafeImplementation(code: "0x6001")) {
+      try await makeService(rpc: wrongImplementation, customChainID: chainID)
+        .deployImplementation(chainID: chainID)
+    }
+    #expect(wrongImplementation.methods == ["eth_getCode"])
+
+    let missingFactory = AuthorizationRPCStub(results: [
+      chainID: ["eth_getCode": [.string("0x"), .string("0x")]]
+    ])
+    await #expect(throws: Simple7702AccountDeploymentError.missingCanonicalFactory) {
+      try await makeService(rpc: missingFactory, customChainID: chainID)
+        .deployImplementation(chainID: chainID)
+    }
+    #expect(missingFactory.methods == ["eth_getCode", "eth_getCode"])
+
+    let wrongFactory = AuthorizationRPCStub(results: [
+      chainID: ["eth_getCode": [.string("0x"), .string("0x6002")]]
+    ])
+    await #expect(
+      throws: Simple7702AccountDeploymentError.unsafeCanonicalFactory(code: "0x6002")
+    ) {
+      try await makeService(rpc: wrongFactory, customChainID: chainID)
+        .deployImplementation(chainID: chainID)
+    }
+    #expect(wrongFactory.methods == ["eth_getCode", "eth_getCode"])
+  }
+
   private func makeService(
     rpc: AuthorizationRPCStub,
-    signing: RecordingAuthorizationSigner = RecordingAuthorizationSigner()
+    signing: RecordingAuthorizationSigner = RecordingAuthorizationSigner(),
+    customChainID: String? = nil,
+    customRPCURL: URL? = nil
   ) -> AuthorizationService {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "AuthorizationServiceTests-\(UUID().uuidString)")
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let networkStore = NetworkStore(
+      directory: directory, legacySuiteName: "AuthorizationServiceTests.\(UUID().uuidString)")
+    if let customChainID {
+      try? networkStore.add(name: "Custom", chainID: customChainID)
+    }
+    var overrides = [
+      "1": URL(string: "https://rpc.example/1")!,
+      "8453": URL(string: "https://rpc.example/8453")!,
+      "42161": URL(string: "https://rpc.example/42161")!,
+    ]
+    if let customChainID {
+      overrides[customChainID] =
+        customRPCURL ?? URL(string: "https://rpc.example/\(customChainID)")!
+    }
     return AuthorizationService(
       account: signing.account, signing: signing,
-      networkStore: NetworkStore(
-        directory: directory, legacySuiteName: "AuthorizationServiceTests.\(UUID().uuidString)"),
-      resolver: RPCResolver(overrides: [
-        "1": URL(string: "https://rpc.example/1")!,
-        "8453": URL(string: "https://rpc.example/8453")!,
-        "42161": URL(string: "https://rpc.example/42161")!,
-      ]), rpcClient: RPCClient(session: rpc.session),
+      networkStore: networkStore, resolver: RPCResolver(overrides: overrides),
+      rpcClient: RPCClient(session: rpc.session),
+      deploymentStore: Simple7702AccountDeploymentStore(directory: directory),
+      submissionLock: TransactionSubmissionLock(directory: directory),
       simple7702AccountRuntimeHash: "0x" + Hex.encode(Keccak.keccak256([0x60, 0x00])))
   }
 
@@ -372,5 +532,9 @@ private final class RecordingAuthorizationSigner: Signing, @unchecked Sendable {
   func signDigest(_ digest: [UInt8]) throws -> [UInt8] {
     lock.withLock { digests.append(digest) }
     return try EthereumSigner.sign(digest: digest, keypair: signingKeypair)
+  }
+
+  func signature(for digest: [UInt8]) throws -> [UInt8] {
+    try EthereumSigner.sign(digest: digest, keypair: signingKeypair)
   }
 }

@@ -50,6 +50,42 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-25 - Add-Network RPC Fallback
+
+### Summary
+
+- Changed approved `wallet_addEthereumChain` handling to validate the chain-specific Stupidtech
+  endpoint with `eth_chainId`. When that endpoint does not serve the requested chain, the wallet
+  validates and persists the first supplied `rpcUrls` entry as the fallback.
+- Added the fallback candidate to the canonical popup summary and preserved any existing
+  user-selected override instead of replacing it with the dapp suggestion.
+- Kept the existing HTTPS-or-loopback, reachability, and exact-chain validation policy. Invalid,
+  unreachable, insecure, and wrong-chain fallbacks fail loudly.
+
+### Why
+
+- Local development chains such as Anvil are not necessarily available through the universal
+  Stupidtech endpoint, even though the dapp supplies a reachable loopback RPC URL.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWalletCore/WalletService.swift
+  Tests/StupidWalletCoreTests/RPCClientTests.swift` completed.
+- Added hermetic regressions for default-endpoint success and first-URL fallback persistence.
+- `swift test --filter RPCClientTests` passed 17 tests in 2 suites in a clean detached worktree
+  containing only this add-network change.
+- Direct `eth_chainId` probes reproduced the reported boundary: the Stupidtech endpoint for chain
+  31337 returned an HTTP 530 error while the local loopback Anvil endpoint returned `0x7a69`.
+- The targeted `swift test --filter RPCClientTests` build was blocked by a concurrent, unrelated
+  EIP-7702 worktree edit that references an undefined `shouldCacheDeployment(chainID:)`; the new
+  tests did not execute in the shared worktree attempt.
+- `git diff --check` passed before the documentation update.
+
+### Follow-Up
+
+- Run the full shared-worktree verification ladder and exercise the Anvil add-chain flow after the
+  concurrent EIP-7702 edit type-checks.
+
 ## 2026-08-25 - Dedicated Monochrome Safari Toolbar Icon
 
 ### Summary
@@ -3264,3 +3300,170 @@ Use this entry template:
   evidence is required; Base now proves the end-to-end implementation path.
 - Prove physical-device authentication and Safari foreground behavior for the two protected
   signatures used by first-time delegation.
+
+## 2026-08-25 - Arbitrary-Network Atomic Batching And Deployment
+
+### Summary
+
+- Removed the Ethereum/Base/Arbitrum allowlist from EIP-5792 canonicalization, Settings
+  authorizations, and capability reporting. Atomic calls and wallet-owned EIP-7702 operations now
+  apply to every default or manually recorded network.
+- Pinned the original Simple7702Account creation code, zero salt, canonical CREATE2 factory,
+  factory runtime hash, calldata hash, and derived target address. The Authorizations screen now
+  offers deployment when that exact implementation is absent and refuses foreign implementation
+  or factory code.
+- An approved batch now deploys a missing implementation first, waits for a successful receipt,
+  verifies the resulting runtime, and only then obtains a fresh nonce and signs the authorization
+  batch. A dapp still cannot select deployment code or a delegate.
+- Added a positive-only deployment cache containing the verified runtime. RPC override changes
+  invalidate the chain entry. Loopback endpoints bypass persistent caching so a reset local chain
+  cannot inherit stale deployment state.
+- Extended the protocol fixture with explicit `wallet_addEthereumChain` and switch controls for a
+  local Anvil chain.
+
+### Verification
+
+- `swift test -q` passed 171 tests across 28 suites, including custom-chain deployment-before-
+  batch ordering, fresh nonces, exact type-2/type-4 serialization, cache behavior, RPC-override
+  invalidation, and refusal of missing or mismatched deterministic factories.
+- Prototype `oxfmt`, `oxlint`, TypeScript compilation, and Vite production build passed.
+- `stupid-app doctor` completed with zero failures and warnings. `stupid-app build` succeeded, and
+  `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension.
+- Started Anvil with chain ID 31337 and Prague rules, installed the canonical CREATE2 factory
+  runtime, and funded the simulator wallet through `anvil_setBalance`. The dapp added Anvil via
+  `wallet_addEthereumChain`; the containing app deliberately selected the loopback RPC override;
+  and the provider switched to the new chain.
+- The first approved `wallet_sendCalls` produced a successful type-2 implementation deployment,
+  then a successful type-4 authorization batch. Runtime code matched the pinned hash, account code
+  became the canonical delegation designator, and the account nonce advanced by three. A second
+  approved batch used type 2 at the next nonce and also produced a successful receipt.
+
+### Follow-Up
+
+- Settings deployment and Safari sends still need one cross-process account/chain nonce allocation
+  boundary so two independently initiated operations cannot reserve the same pending nonce.
+- Physical-device proof is still required for the three protected signatures in the fresh-chain
+  deployment plus authorization-batch path while Safari remains foregrounded.
+
+## 2026-08-25 - Deployment And Submission Race Hardening
+
+### Summary
+
+- Bound every positive Simple7702Account deployment-cache entry to both decimal chain ID and the
+  exact resolved RPC URL. An entry written concurrently with an RPC override change is therefore
+  ignored by services resolving the new endpoint even before explicit invalidation is observed.
+- Applied the existing loopback cache bypass to the Settings authorization service as well as the
+  Safari batch path, preventing reset local chains from displaying stale verified status.
+- Added a nonblocking App Group file claim per normalized account and chain. Safari sends and
+  batches and Settings deployment, enable, and revoke actions hold that claim from preparation
+  through broadcast, so a competing operation fails as busy instead of signing a duplicate nonce.
+- Approved add-chain handling now fails before recording network metadata when the default endpoint
+  is unusable, no existing override exists, and the request has no valid fallback RPC URL; the
+  canonical request is persisted as failed so provider polling receives a terminal error.
+- Prevented an older overlapping Authorizations refresh from replacing newer on-screen state.
+- Capability reporting now treats a missing implementation as supported only when the pinned
+  canonical factory is present, allowing capable dapps to reach just-in-time deployment. Settings
+  continues to expose revocation when implementation status is missing, unsafe, or unavailable.
+- The just-in-time batch deployment path reuses the outer Safari submission claim instead of
+  reacquiring the non-reentrant lock.
+- Deployment receipt RPC failures are translated into wallet errors and terminalize the canonical
+  batch instead of leaving a retryable pending request after the deployment broadcast.
+
+### Why
+
+- Cache invalidation alone had a race where an in-flight verification against the old endpoint
+  could repopulate the chain entry after removal. Endpoint identity makes the cache safe regardless
+  of operation ordering.
+- Settings and Safari previously fetched pending nonces independently, allowing concurrent
+  user-approved operations to sign the same account nonce.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` completed.
+- `swift test -q` passed 179 tests across 28 suites, including endpoint-bound cache behavior,
+  loopback cache bypass, terminal add-chain fallback refusal, deployable capability reporting,
+  unsafe-code capability omission, deployment receipt failure terminalization, first-batch
+  deployment ordering, and account/chain submission exclusivity.
+- Prototype `oxfmt`, `oxlint`, TypeScript compilation, and Vite production build passed.
+- `stupid-app doctor` completed with zero failures and warnings. `stupid-app build` succeeded, and
+  `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+- The repository debugging skill passed `quick_validate.py`; `git diff --check` passed.
+
+### Follow-Up
+
+- Physical-device proof remains required for the protected fresh-chain deployment and authorization
+  signatures while Safari remains foregrounded.
+
+## 2026-08-25 - Pre-Seeded Network Terminology
+
+### Summary
+
+- Removed the runtime and UI notion of default networks. The four bundled entries are now modeled
+  as pre-seeded networks; user- or dapp-added entries remain equally configured networks.
+- Renamed `WalletNetwork.defaults` and `isDefault` to `preseeded` and `isPreseeded`, and changed the
+  Networks screen sections to `Pre-seeded Networks` and `Added Networks`.
+- Preserved installed data compatibility by decoding the old persisted `isDefault` field while
+  encoding all subsequently written records with `isPreseeded`.
+- Updated current architecture documentation and internal name lookup to use pre-seeded terminology.
+
+### Why
+
+- The bundled list describes initial data, not privileged or exclusive network behavior. Atomic
+  calls, authorizations, balances, switching, and RPC configuration apply to every configured
+  network regardless of how it entered the store.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` completed.
+- `swift test -q` passed 180 tests across 28 suites, including legacy provenance decoding and
+  current-key encoding.
+- `stupid-app build` succeeded. `stupid-app run --simulator --udid <preferred-simulator>` rebuilt,
+  installed, and launched the app; accessibility-driven navigation opened Settings > Networks and
+  exposed the four pre-seeded entries plus added Anvil and Polygon entries.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-25 - Unified Network Model
+
+### Summary
+
+- Superseded the preceding provenance rename by removing network provenance entirely from
+  `WalletNetwork`. A network now contains only its chain ID, display name, and balance-inclusion
+  preference.
+- Moved the four initial records to `NetworkStore.initialNetworks`, where they are used only to
+  seed the configured list. Returned records are not marked or treated differently based on origin.
+- Replaced the separate pre-seeded and added UI sections with one unified Networks list.
+- Existing persisted records containing obsolete `isDefault` or `isPreseeded` keys remain readable
+  because those unknown JSON fields are ignored, and new writes contain neither key.
+- Added persistent deletion for every configured network. Removed chain IDs suppress initial and
+  legacy records until an explicit add or successful switch records the chain again.
+- Added a destructive Delete Network action to network details. Successful deletion clears its
+  custom RPC override and deployment verification cache. If the deleted network was selected, the
+  app selects the first remaining configured network instead of blocking deletion.
+- Removed the conditional `Use Default RPC` action from network details. The effective endpoint
+  remains visible and can be replaced through the existing validated Change flow.
+
+### Why
+
+- Initial seeding is a store construction detail, not persistent network identity or behavior.
+  Every configured network should follow the same capability, balance, switching, and RPC paths.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` completed.
+- `swift test -q` passed 180 tests across 28 suites, including decoding records with obsolete
+  provenance fields, confirming new records encode without either field, persistent removal of
+  initial and added networks, and explicit restoration.
+- `stupid-app build` succeeded. `stupid-app run --simulator --udid <preferred-simulator>` rebuilt,
+  installed, and launched the app. Accessibility-driven testing confirmed one unified list, a
+  detail screen with Change and Delete Network but no Use Default RPC action, successful deletion
+  of an ordinary network, and successful deletion of the currently selected local Anvil network.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- None.

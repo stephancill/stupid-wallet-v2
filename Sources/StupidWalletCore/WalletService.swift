@@ -118,6 +118,9 @@ public enum ApprovalSummary {
     case .chain:
       if let id = Self.addedChainID(request.params) { rows.append(("Chain ID", id)) }
       if let name = Self.addedChainName(request.params) { rows.append(("Name", name)) }
+      if let url = Self.addedChainRPCURL(request.params) {
+        rows.append(("Fallback RPC URL", url))
+      }
       rows.append(("From", request.origin))
     case .denied:
       rows.append(("Method", request.method))
@@ -231,6 +234,13 @@ public enum ApprovalSummary {
     return object["chainName"]?.stringValue
   }
 
+  private static func addedChainRPCURL(_ params: JSONValue) -> String? {
+    guard let object = firstObjectAny(params), case .array(let urls)? = object["rpcUrls"] else {
+      return nil
+    }
+    return urls.first?.stringValue
+  }
+
   /// First object in either a bare object or a single-element array, matching both the
   /// canonical record form and standard EIP-1193 `[object]` params.
   private static func firstObjectAny(_ params: JSONValue) -> [String: JSONValue]? {
@@ -261,6 +271,9 @@ public actor WalletService {
   public nonisolated let activityStore: ActivityStore
   nonisolated let resolver: RPCResolver
   nonisolated let rpcClient: RPCClient
+  nonisolated let rpcOverrideStore: RPCOverrideStore
+  nonisolated let deploymentStore: Simple7702AccountDeploymentStore
+  nonisolated let submissionLock: TransactionSubmissionLock
   nonisolated let simple7702AccountRuntimeHash: String
 
   public init(
@@ -272,16 +285,24 @@ public actor WalletService {
     activityStore: ActivityStore = ActivityStore(),
     resolver: RPCResolver = RPCResolver(),
     rpcClient: RPCClient = RPCClient(),
+    rpcOverrideStore: RPCOverrideStore = RPCOverrideStore(),
+    deploymentStore: Simple7702AccountDeploymentStore = Simple7702AccountDeploymentStore(),
+    submissionLock: TransactionSubmissionLock? = nil,
     simple7702AccountRuntimeHash: String = EIP5792.simple7702AccountRuntimeHash
   ) {
     self.signing = signing
-    self.store = store ?? PendingRequestStore()
+    let resolvedStore = store ?? PendingRequestStore()
+    self.store = resolvedStore
     self.connectedSites = connectedSites ?? ConnectedSitesStore()
     self.chainStore = chainStore
     self.networkStore = networkStore
     self.activityStore = activityStore
     self.resolver = resolver
     self.rpcClient = rpcClient
+    self.rpcOverrideStore = rpcOverrideStore
+    self.deploymentStore = deploymentStore
+    self.submissionLock =
+      submissionLock ?? TransactionSubmissionLock(directory: resolvedStore.directory)
     self.simple7702AccountRuntimeHash = simple7702AccountRuntimeHash
   }
 
@@ -305,6 +326,9 @@ public actor WalletService {
       databaseURL: chainDirectory.appendingPathComponent("Activity.sqlite"))
     self.resolver = RPCResolver()
     self.rpcClient = RPCClient()
+    self.rpcOverrideStore = RPCOverrideStore(directory: chainDirectory)
+    self.deploymentStore = Simple7702AccountDeploymentStore(directory: chainDirectory)
+    self.submissionLock = TransactionSubmissionLock(directory: chainDirectory)
     self.simple7702AccountRuntimeHash = EIP5792.simple7702AccountRuntimeHash
   }
 
@@ -441,6 +465,9 @@ public actor WalletService {
         await connectedSites.hasExactGrant(
           origin: origin, address: signing.account, profileID: profileID)
       else { throw WalletError.unauthorized }
+      guard (try? networkStore.network(chainID: chainId)) != nil else {
+        throw Self.walletError(.unsupportedChain)
+      }
       do {
         canonicalParams = try EIP5792.prepare(
           params: params, account: signing.account, activeChainID: chainId
@@ -557,14 +584,9 @@ public actor WalletService {
         return "Unable to estimate"
       }
       do {
-        let implementation = try await rpcData(
-          method: "eth_getCode",
-          params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
-          chainID: record.chainId)
-        guard
-          EIP5792.isVerifiedImplementation(
-            implementation, expectedRuntimeHash: simple7702AccountRuntimeHash)
-        else { return "Unable to estimate" }
+        guard try await verifiedImplementationCode(chainID: record.chainId) != nil else {
+          return "Unable to estimate"
+        }
         let code = try await rpcData(
           method: "eth_getCode", params: .array([.string(record.account), .string("latest")]),
           chainID: record.chainId)
@@ -758,6 +780,15 @@ public actor WalletService {
     }
 
     let result: JSONValue
+    var submissionClaim: TransactionSubmissionClaim?
+    if record.kind == .send || record.kind == .batch {
+      guard let claim = submissionLock.claim(account: record.account, chainID: record.chainId)
+      else {
+        throw WalletError.queued
+      }
+      submissionClaim = claim
+    }
+    defer { submissionClaim?.release() }
     if requiresSignature {
       if record.kind == .batch {
         do {
@@ -852,6 +883,22 @@ public actor WalletService {
       guard let target = Self.requestedChainID(record.params) else {
         throw WalletError.invalidParams
       }
+      do {
+        try await configureRPCForAddedNetwork(chainID: target, params: record.params)
+      } catch {
+        let rpcError: JSONValue
+        if case WalletError.rpc(let value) = error {
+          rpcError = value
+        } else {
+          rpcError = .object([
+            "code": .number(-32603), "message": .string("The network could not be configured"),
+          ])
+        }
+        record.status = .failed
+        record.error = rpcError
+        try? await store.insert(record)
+        throw WalletError.rpc(rpcError)
+      }
       try networkStore.record(
         chainID: target, suggestedName: Self.requestedChainName(record.params))
     }
@@ -936,6 +983,62 @@ public actor WalletService {
       object = nil
     }
     return object?["chainName"]?.stringValue
+  }
+
+  private func configureRPCForAddedNetwork(chainID: String, params: JSONValue) async throws {
+    let defaultResult = await RPCOverrideValidator.validate(
+      url: RPCResolver.defaultURL(forChainID: chainID), expectedChainID: chainID,
+      client: rpcClient)
+    if case .success = defaultResult { return }
+
+    let existingOverrides: [String: URL]
+    do {
+      existingOverrides = try rpcOverrideStore.all()
+    } catch {
+      throw WalletError.notReady
+    }
+    guard existingOverrides[chainID] == nil else { return }
+    guard let fallbackURL = Self.firstRequestedRPCURL(params) else {
+      throw Self.addNetworkRPCError("A valid fallback RPC URL is required for this network")
+    }
+
+    switch await RPCOverrideValidator.validate(
+      url: fallbackURL, expectedChainID: chainID, client: rpcClient)
+    {
+    case .success:
+      do {
+        try rpcOverrideStore.set(fallbackURL, forChainID: chainID)
+      } catch {
+        throw WalletError.notReady
+      }
+    case .failure(.chainMismatch):
+      throw Self.addNetworkRPCError("The fallback RPC URL serves a different network")
+    case .failure(.insecure):
+      throw Self.addNetworkRPCError("The fallback RPC URL must use HTTPS or loopback HTTP")
+    case .failure(.invalidURL):
+      throw Self.addNetworkRPCError("The fallback RPC URL is invalid")
+    case .failure(.unreachable):
+      throw Self.addNetworkRPCError("The fallback RPC URL could not be reached")
+    }
+  }
+
+  private static func firstRequestedRPCURL(_ params: JSONValue) -> URL? {
+    let object: [String: JSONValue]?
+    if case .array(let values) = params, case .object(let value)? = values.first {
+      object = value
+    } else if case .object(let value) = params {
+      object = value
+    } else {
+      object = nil
+    }
+    guard case .array(let urls)? = object?["rpcUrls"],
+      let value = urls.first?.stringValue
+    else { return nil }
+    return URL(string: value)
+  }
+
+  private static func addNetworkRPCError(_ message: String) -> WalletError {
+    .rpc(.object(["code": .number(4900), "message": .string(message)]))
   }
 
   private func canonicalizeTransaction(params: JSONValue, chainID: String) throws -> JSONValue {
@@ -1054,20 +1157,7 @@ public actor WalletService {
       let version = batch["version"]?.stringValue
     else { throw WalletError.invalidParams }
     let calldata = try EIP5792.executeBatchCalldata(record.params)
-    let implementationCode = try await rpcData(
-      method: "eth_getCode",
-      params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
-      chainID: record.chainId)
-    guard
-      EIP5792.isVerifiedImplementation(
-        implementationCode, expectedRuntimeHash: simple7702AccountRuntimeHash)
-    else {
-      throw WalletError.rpc(
-        .object([
-          "code": .number(5710),
-          "message": .string("Verified Simple7702Account is not deployed on this chain"),
-        ]))
-    }
+    let implementationCode = try await ensureBatchImplementation(chainID: record.chainId)
     let accountCode = try await rpcData(
       method: "eth_getCode", params: .array([.string(record.account), .string("latest")]),
       chainID: record.chainId)
@@ -1193,6 +1283,157 @@ public actor WalletService {
     return .string(hash)
   }
 
+  private func ensureBatchImplementation(chainID: String) async throws -> [UInt8] {
+    if shouldCacheDeployment(chainID: chainID),
+      let cached = deploymentStore.verifiedCode(
+        chainID: chainID, runtimeHash: simple7702AccountRuntimeHash,
+        rpcURL: resolver.resolve(chainID: chainID))
+    {
+      return cached
+    }
+    let currentCode = try await rpcData(
+      method: "eth_getCode",
+      params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
+      chainID: chainID)
+    if EIP5792.isVerifiedImplementation(
+      currentCode, expectedRuntimeHash: simple7702AccountRuntimeHash)
+    {
+      if shouldCacheDeployment(chainID: chainID) {
+        try? deploymentStore.recordVerified(
+          chainID: chainID, code: currentCode, rpcURL: resolver.resolve(chainID: chainID))
+      }
+      return currentCode
+    }
+    guard currentCode.isEmpty else {
+      throw WalletError.rpc(
+        .object([
+          "code": .number(5710),
+          "message": .string("Simple7702Account has unrecognized code on this chain"),
+        ]))
+    }
+
+    let authorizations = AuthorizationService(
+      account: signing.account, signing: signing, networkStore: networkStore,
+      resolver: resolver, rpcClient: rpcClient,
+      deploymentStore: deploymentStore,
+      simple7702AccountRuntimeHash: simple7702AccountRuntimeHash)
+    let transactionHash: String
+    do {
+      transactionHash = try await authorizations.deployImplementationWhileClaimed(chainID: chainID)
+    } catch let error as AuthorizationOperationError {
+      throw Self.batchDeploymentError(error)
+    } catch let error as Simple7702AccountDeploymentError {
+      throw Self.batchDeploymentError(error)
+    } catch {
+      throw WalletError.authCancelled
+    }
+
+    for _ in 0..<30 {
+      let receiptStatus: AuthorizationReceiptStatus
+      do {
+        receiptStatus = try await authorizations.receiptStatus(
+          transactionHash: transactionHash, chainID: chainID)
+      } catch let error as AuthorizationOperationError {
+        throw Self.batchDeploymentError(error)
+      }
+      switch receiptStatus {
+      case .pending:
+        try await Task.sleep(for: .seconds(2))
+      case .reverted:
+        throw WalletError.rpc(
+          .object([
+            "code": .number(5710),
+            "message": .string("Simple7702Account deployment reverted"),
+          ]))
+      case .confirmed:
+        let deployedCode = try await rpcData(
+          method: "eth_getCode",
+          params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
+          chainID: chainID)
+        guard
+          EIP5792.isVerifiedImplementation(
+            deployedCode, expectedRuntimeHash: simple7702AccountRuntimeHash)
+        else {
+          throw WalletError.rpc(
+            .object([
+              "code": .number(5710),
+              "message": .string("Deployed Simple7702Account runtime did not match"),
+            ]))
+        }
+        if shouldCacheDeployment(chainID: chainID) {
+          try? deploymentStore.recordVerified(
+            chainID: chainID, code: deployedCode, rpcURL: resolver.resolve(chainID: chainID))
+        }
+        return deployedCode
+      }
+    }
+    throw WalletError.rpc(
+      .object([
+        "code": .number(5710),
+        "message": .string("Simple7702Account deployment confirmation timed out"),
+      ]))
+  }
+
+  private static func batchDeploymentError(_ error: Error) -> WalletError {
+    let message: String
+    switch error {
+    case Simple7702AccountDeploymentError.missingCanonicalFactory:
+      message = "Canonical CREATE2 factory is not deployed on this chain"
+    case Simple7702AccountDeploymentError.unsafeCanonicalFactory:
+      message = "Canonical CREATE2 factory has unrecognized code on this chain"
+    case Simple7702AccountDeploymentError.unsafeImplementation:
+      message = "Simple7702Account has unrecognized code on this chain"
+    case Simple7702AccountDeploymentError.invalidPrimitive:
+      message = "Simple7702Account deployment primitive is invalid"
+    case Simple7702AccountDeploymentError.alreadyDeployed:
+      message = "Simple7702Account deployment changed while preparing the batch"
+    case AuthorizationOperationError.rpc(.node(let value)):
+      return .rpc(value)
+    case AuthorizationOperationError.rpc(.transport):
+      return .rpc(transportError)
+    case AuthorizationOperationError.rpc(.invalidResponse(let detail)):
+      message = detail
+    default:
+      message = "Simple7702Account could not be deployed on this chain"
+    }
+    return .rpc(.object(["code": .number(5710), "message": .string(message)]))
+  }
+
+  private func verifiedImplementationCode(chainID: String) async throws -> [UInt8]? {
+    if shouldCacheDeployment(chainID: chainID),
+      let cached = deploymentStore.verifiedCode(
+        chainID: chainID, runtimeHash: simple7702AccountRuntimeHash,
+        rpcURL: resolver.resolve(chainID: chainID))
+    {
+      return cached
+    }
+    let code = try await rpcData(
+      method: "eth_getCode",
+      params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
+      chainID: chainID)
+    if code.isEmpty { return nil }
+    guard
+      EIP5792.isVerifiedImplementation(
+        code, expectedRuntimeHash: simple7702AccountRuntimeHash)
+    else {
+      throw WalletError.rpc(
+        .object([
+          "code": .number(5710),
+          "message": .string("Simple7702Account has unrecognized code on this chain"),
+        ]))
+    }
+    if shouldCacheDeployment(chainID: chainID) {
+      try? deploymentStore.recordVerified(
+        chainID: chainID, code: code, rpcURL: resolver.resolve(chainID: chainID))
+    }
+    return code
+  }
+
+  private func shouldCacheDeployment(chainID: String) -> Bool {
+    guard let host = resolver.resolve(chainID: chainID).host?.lowercased() else { return false }
+    return host != "localhost" && host != "127.0.0.1" && host != "::1"
+  }
+
   public func getCapabilities(
     params: JSONValue, origin: String, profileID: String? = nil
   ) async throws -> JSONValue {
@@ -1221,20 +1462,10 @@ public actor WalletService {
     }
 
     var result: [String: JSONValue] = [:]
-    for chainID in requestedChains
-    where configured.contains(chainID)
-      && EIP5792.verifiedChains.contains(chainID)
-    {
+    for chainID in requestedChains where configured.contains(chainID) {
       guard let chainQuantity = ChainStore.hexChainID(chainID) else { continue }
       do {
-        let code = try await rpcData(
-          method: "eth_getCode",
-          params: .array([.string(EIP5792.simple7702Account), .string("latest")]),
-          chainID: chainID)
-        guard
-          EIP5792.isVerifiedImplementation(
-            code, expectedRuntimeHash: simple7702AccountRuntimeHash)
-        else { continue }
+        guard try await supportsAtomicBatch(chainID: chainID) else { continue }
         result[chainQuantity] = .object([
           "atomic": .object(["status": .string("supported"), "supported": .bool(true)])
         ])
@@ -1243,6 +1474,18 @@ public actor WalletService {
       }
     }
     return .object(result)
+  }
+
+  private func supportsAtomicBatch(chainID: String) async throws -> Bool {
+    if try await verifiedImplementationCode(chainID: chainID) != nil { return true }
+    guard Simple7702AccountDeployment.isValid() else { return false }
+    let factoryCode = try await rpcData(
+      method: "eth_getCode",
+      params: .array([.string(Simple7702AccountDeployment.factory), .string("latest")]),
+      chainID: chainID)
+    guard !factoryCode.isEmpty else { return false }
+    return ("0x" + Hex.encode(Keccak.keccak256(factoryCode))).caseInsensitiveCompare(
+      Simple7702AccountDeployment.factoryRuntimeHash) == .orderedSame
   }
 
   public func getCallsStatus(

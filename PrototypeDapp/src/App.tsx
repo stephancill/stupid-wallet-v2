@@ -245,6 +245,39 @@ export default function App() {
         <button
           disabled={!isConnected || busy}
           onClick={() =>
+            run("wallet_addEthereumChain (Anvil)", () =>
+              rawRequest({
+                method: "wallet_addEthereumChain",
+                params: [
+                  {
+                    chainId: "0x7a69",
+                    chainName: "Anvil",
+                    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+                    rpcUrls: ["http://127.0.0.1:8545"],
+                  },
+                ],
+              }),
+            )
+          }
+        >
+          wallet_addEthereumChain (Anvil)
+        </button>
+        <button
+          disabled={!isConnected || busy}
+          onClick={() =>
+            run("wallet_switchEthereumChain (Anvil)", () =>
+              rawRequest({
+                method: "wallet_switchEthereumChain",
+                params: [{ chainId: "0x7a69" }],
+              }),
+            )
+          }
+        >
+          wallet_switchEthereumChain (Anvil)
+        </button>
+        <button
+          disabled={!isConnected || busy}
+          onClick={() =>
             run("wallet_switchEthereumChain", () =>
               switchChainAsync({ chainId: switchTargetChainId }),
             )

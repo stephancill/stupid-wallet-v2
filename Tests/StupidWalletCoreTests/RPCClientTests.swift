@@ -5,6 +5,13 @@ import Testing
 
 @Suite(.serialized)
 struct RPCClientTests {
+  private func directory() -> URL {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "AddNetworkRPCTests-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
   private func stubValidation(returning chainID: String) -> RPCClient {
     StubURLProtocol.handler = { _ in
       (httpResponse(), jsonObject(["jsonrpc": "2.0", "id": 1, "result": chainID]))
@@ -83,6 +90,94 @@ struct RPCClientTests {
     }
     #expect(error == .unreachable)
   }
+
+  @Test("add network saves the first provided RPC when the default does not serve the chain")
+  func addNetworkFallback() async throws {
+    let directory = directory()
+    let fallback = URL(string: "http://127.0.0.1:8545")!
+    StubURLProtocol.handler = { request in
+      let result = request.url == fallback ? "0x7a69" : "0x1"
+      return (httpResponse(), jsonObject(["jsonrpc": "2.0", "id": 1, "result": result]))
+    }
+    let overrideStore = RPCOverrideStore(directory: directory)
+    let service = WalletService(
+      store: PendingRequestStore(directory: directory), signing: StubSigner(),
+      connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
+      chainStore: ChainStore(directory: directory),
+      networkStore: NetworkStore(directory: directory, legacySuiteName: UUID().uuidString),
+      rpcClient: RPCClient(session: URLSession.stubSession), rpcOverrideStore: overrideStore)
+    await service.connect(origin: "https://dapp.example")
+
+    let id = try await service.prepare(
+      method: "wallet_addEthereumChain",
+      params: .array([
+        .object([
+          "chainId": .string("0x7a69"), "chainName": .string("Anvil"),
+          "rpcUrls": .array([.string(fallback.absoluteString)]),
+        ])
+      ]), origin: "https://dapp.example")
+    let summary = try await service.summarize(request: id)
+    #expect(
+      summary?.rows.contains {
+        $0.label == "Fallback RPC URL" && $0.value == fallback.absoluteString
+      } == true)
+    #expect(try await service.approve(request: id) == .null)
+    #expect(try overrideStore.all()["31337"] == fallback)
+  }
+
+  @Test("add network keeps the default when it serves the requested chain")
+  func addNetworkDefault() async throws {
+    let directory = directory()
+    StubURLProtocol.handler = { _ in
+      (httpResponse(), jsonObject(["jsonrpc": "2.0", "id": 1, "result": "0x7a69"]))
+    }
+    let overrideStore = RPCOverrideStore(directory: directory)
+    let service = WalletService(
+      store: PendingRequestStore(directory: directory), signing: StubSigner(),
+      connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
+      chainStore: ChainStore(directory: directory),
+      networkStore: NetworkStore(directory: directory, legacySuiteName: UUID().uuidString),
+      rpcClient: RPCClient(session: URLSession.stubSession), rpcOverrideStore: overrideStore)
+    await service.connect(origin: "https://dapp.example")
+
+    let id = try await service.prepare(
+      method: "wallet_addEthereumChain",
+      params: .array([
+        .object([
+          "chainId": .string("0x7a69"),
+          "rpcUrls": .array([.string("http://127.0.0.1:8545")]),
+        ])
+      ]), origin: "https://dapp.example")
+    #expect(try await service.approve(request: id) == .null)
+    #expect(try overrideStore.all().isEmpty)
+  }
+
+  @Test("add network fails when neither the default nor a valid fallback serves the chain")
+  func addNetworkRequiresFallback() async throws {
+    let directory = directory()
+    StubURLProtocol.handler = { _ in
+      (httpResponse(), jsonObject(["jsonrpc": "2.0", "id": 1, "result": "0x1"]))
+    }
+    let networkStore = NetworkStore(directory: directory, legacySuiteName: UUID().uuidString)
+    let service = WalletService(
+      store: PendingRequestStore(directory: directory), signing: StubSigner(),
+      connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
+      chainStore: ChainStore(directory: directory), networkStore: networkStore,
+      rpcClient: RPCClient(session: URLSession.stubSession),
+      rpcOverrideStore: RPCOverrideStore(directory: directory))
+    await service.connect(origin: "https://dapp.example")
+
+    let id = try await service.prepare(
+      method: "wallet_addEthereumChain",
+      params: .array([.object(["chainId": .string("0x7a69")])]),
+      origin: "https://dapp.example")
+    await #expect(throws: WalletError.self) {
+      try await service.approve(request: id)
+    }
+    #expect(try networkStore.network(chainID: "31337") == nil)
+    #expect(await service.status(for: id)?.status == "failed")
+  }
+
   @Test("a successful result is preserved")
   func resultPreserved() async throws {
     StubURLProtocol.shouldFail = false

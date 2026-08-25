@@ -9,15 +9,8 @@ import SwiftUI
 
     var body: some View {
       List {
-        Section("Default Networks") {
-          ForEach(networks.filter(\.isDefault)) { networkRow($0) }
-        }
-
-        let custom = networks.filter { !$0.isDefault }
-        if !custom.isEmpty {
-          Section("Custom Networks") {
-            ForEach(custom) { networkRow($0) }
-          }
+        Section {
+          ForEach(networks) { networkRow($0) }
         }
 
         Section {
@@ -56,10 +49,13 @@ import SwiftUI
   struct NetworkDetailView: View {
     let network: WalletNetwork
     let onChange: () -> Void
+    @Environment(\.dismiss) private var dismiss
     @State private var overrideURL: URL?
     @State private var includeInBalance: Bool
     @State private var showEditRPCSheet = false
     @State private var showChainIDAsHex = false
+    @State private var showDeleteConfirmation = false
+    @State private var deleteError: String?
 
     init(network: WalletNetwork, onChange: @escaping () -> Void = {}) {
       self.network = network
@@ -109,11 +105,12 @@ import SwiftUI
             .lineLimit(1)
             .truncationMode(.middle)
           Button("Change") { showEditRPCSheet = true }
-          if overrideURL != nil {
-            Button("Use Default RPC", role: .destructive) { removeOverride() }
-          }
         } header: {
           Text("RPC URL")
+        }
+
+        Section {
+          Button("Delete Network", role: .destructive) { showDeleteConfirmation = true }
         }
       }
       .navigationTitle(network.name)
@@ -127,6 +124,20 @@ import SwiftUI
           }
         }
       }
+      .confirmationDialog(
+        "Delete \(network.name)?", isPresented: $showDeleteConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Delete Network", role: .destructive, action: deleteNetwork)
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("This removes the network and its custom RPC URL from your wallet.")
+      }
+      .alert("Network Not Deleted", isPresented: deleteErrorIsPresented) {
+        Button("OK", role: .cancel) {}
+      } message: {
+        Text(deleteError ?? "The network could not be deleted.")
+      }
     }
 
     private func load() {
@@ -136,9 +147,27 @@ import SwiftUI
         ?? network.includeInBalance
     }
 
-    private func removeOverride() {
-      try? RPCOverrideStore().remove(forChainID: network.id)
-      overrideURL = nil
+    private func deleteNetwork() {
+      do {
+        let chainStore = ChainStore()
+        let wasSelected = try? chainStore.currentChainID() == network.id
+        let networkStore = NetworkStore()
+        try networkStore.remove(chainID: network.id)
+        try? RPCOverrideStore().remove(forChainID: network.id)
+        if wasSelected == true, let replacement = try networkStore.all().first {
+          try? chainStore.setChainID(replacement.id)
+        }
+        onChange()
+        dismiss()
+      } catch {
+        deleteError = "The network could not be deleted."
+      }
+    }
+
+    private var deleteErrorIsPresented: Binding<Bool> {
+      Binding(
+        get: { deleteError != nil },
+        set: { if !$0 { deleteError = nil } })
     }
   }
 

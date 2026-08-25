@@ -90,7 +90,7 @@ public actor PendingRequestStore {
   public static let defaultAppGroup = "group.co.za.stephancill.stupid-wallet"
   private static let fallbackAppGroup = defaultAppGroup
 
-  private let directory: URL
+  nonisolated let directory: URL
 
   public init(directory: URL? = nil, appGroupID: String = PendingRequestStore.defaultAppGroup) {
     if let directory {

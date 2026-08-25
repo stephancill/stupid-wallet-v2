@@ -247,6 +247,9 @@ curl -sS -X POST -H 'content-type: application/json' \
 
 - A dapp may issue unsupported wallet probes such as `wallet_getCapabilities`; do not add
   fake success responses. Confirm whether the dapp tolerates the error and falls back.
+- For `wallet_addEthereumChain`, inspect both `eth_chainId` probes when the Stupidtech default
+  does not serve a development chain such as Anvil. Approval may persist only the displayed first
+  `rpcUrls` entry after exact-chain and transport validation; an existing user override still wins.
 - Do not retry state-changing RPC methods casually. Same-endpoint retries for reads require
   a concrete failure and regression coverage.
 - For first-time EIP-7702 batch estimation, never send a valid signed authorization to an
@@ -257,6 +260,15 @@ curl -sS -X POST -H 'content-type: application/json' \
 - Capability reporting and authorization must compare the full implementation runtime hash,
   not merely check for nonempty code. Foreign delegation designators and malformed account code
   must never be replaced by a dapp-triggered `wallet_sendCalls` request.
+- Atomic batching is eligible on every chain recorded in `NetworkStore`, not a hardcoded chain
+  list. If the pinned implementation is missing, approval deploys the reviewed creation code
+  through the hash-pinned canonical CREATE2 factory, waits for its successful receipt, verifies
+  the runtime, and only then reads the nonce for the authorization batch. Expect one type-2
+  deployment followed by one type-4 batch on a fresh chain.
+- A positive implementation verification is cached by chain. RPC override changes invalidate it;
+  loopback RPCs deliberately bypass persistent deployment caching because Anvil or another local
+  chain can reset at the same URL. If a non-loopback chain unexpectedly appears stale, inspect
+  `simple-7702-deployments.json` and the selected RPC before weakening runtime checks.
 - For a self-sponsored first-time type-4 batch, the outer transaction uses the current pending
   nonce and the authorization uses that nonce plus one. When the authority is also the sender,
   successful processing advances the account nonce twice; the next ordinary type-2 batch should

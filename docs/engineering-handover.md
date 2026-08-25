@@ -166,8 +166,9 @@ Stale queued approvals fail terminally with `4901`, and the worker broadcasts th
 native chain to every tab after a switch or recovery. Every successful switch also records
 the target in the shared `NetworkStore`; known chain 137 is displayed as Polygon and an
 otherwise unknown switched chain receives a `Chain N` name. Confirmed
-`wallet_addEthereumChain` metadata records its supplied name but never adopts its RPC URL
-suggestions.
+`wallet_addEthereumChain` metadata records its supplied name. If the Stupidtech default does
+not return the requested `eth_chainId`, approval validates and saves the first supplied RPC URL
+as the fallback unless the user already selected an override.
 
 Gate 6 activity persistence is implemented. `ActivityStore` extends the existing shared
 App Group `Activity.sqlite` schema in place so installed transaction and signature history
@@ -195,11 +196,13 @@ which begins with a non-interactive blockie and shortened-address row followed b
 Connected Apps, and Settings actions; Settings sheet; Connected Apps list/detail/disconnect
 with origin/profile-filtered activity; reciprocal navigation from an activity detail to its
 currently connected app detail;
-default Networks list and RPC detail/editor; authenticated
+Networks list and RPC detail/editor; authenticated
 Private Key reveal; and Activity list/detail. The implementation keeps the old native
 labels, spacing, forms, inset-grouped lists, typography, and SF Symbols while using the new
-core boundaries. Networks now has separate default and custom sections, a manually populated
-Add Network sheet, and a per-network Include in Total Balance setting. The home balance is
+core boundaries. Networks now has one unified configured-network list, a manually populated
+Add Network sheet, per-network deletion, and a per-network Include in Total Balance setting.
+Deletion clears the network's custom RPC state; deleting the selected network selects the first
+remaining configured network when one exists. The home balance is
 the full-width sum of native wei balances from every included network; individual RPC
 failures do not discard successful balances, while a complete included-network outage is
 shown as unavailable. Expanding the aggregate balance lists every included network with a
@@ -239,8 +242,14 @@ the matching account removes its cached total.
 `RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
 App Group. Both the app and Safari handler construct their resolver from this store, and
 the editor displays exactly one effective endpoint per chain. The user may replace it or
-restore the Stupidtech default; the editor requires HTTPS (except explicit loopback
-development), reachability, and an exact `eth_chainId` match before saving.
+enter the Stupidtech endpoint explicitly; the editor requires HTTPS (except explicit loopback
+development), reachability, and an exact `eth_chainId` match before saving. Network details do
+not expose a separate restore-default action.
+An approved add-chain request may also save its displayed first `rpcUrls` entry only when
+the Stupidtech endpoint fails exact-chain validation and no existing override is present;
+the suggestion must pass the same endpoint validation. If neither the default, an existing
+override, nor a valid supplied fallback can serve the requested chain, approval fails before
+the network metadata is recorded.
 `NativeBalanceService` uses that same resolver and
 formats and adds full-width 256-bit quantities without a BigInt dependency. `NetworkStore`
 atomically persists custom metadata, imports legacy `customChains` names for visibility, and
@@ -517,15 +526,29 @@ Implemented after the Secure Wallet Core gates passed:
   strict origin/domain/URI/date validation, HTTPS except loopback HTTP, and rejection of
   unsupported `wallet_connect` capabilities.
 - EIP-5792 `wallet_sendCalls`, `wallet_getCallsStatus`, and capability reporting for
-  atomic batches on Ethereum, Base, and Arbitrum. Shipped v1 request compatibility and
-  canonical v2 requests share one native validation and approval path.
+  atomic batches on every configured network. Shipped v1 request
+  compatibility and canonical v2 requests share one native validation and approval path.
 - Wallet-owned EIP-7702 authorization management. Dapps cannot request arbitrary
   authorization signatures or replace foreign/malformed account code through
   `wallet_sendCalls`.
 - Delegation is restricted to the reviewed eth-infinitism `Simple7702Account` at
   `0xe6Cae83BdE06E4c305530e199D7217f42808555B`. The runtime hash is pinned to
   `0xcc7b633aef4b2543cb8f37522adf1a401f910f0f6b2430c1eecc11f401ccfcf3` and must match
-  before capability reporting, estimation, or authorization on chains 1, 8453, and 42161.
+  before estimation or authorization on every configured chain. Capability reporting accepts
+  either that verified runtime or a missing implementation with the hash-verified canonical
+  deployment factory available; foreign implementation code is never reported as supported.
+- If the implementation is absent, an approved atomic batch first deploys the exact reviewed
+  creation code through the hash-pinned canonical CREATE2 factory, waits for a successful
+  receipt, verifies the resulting runtime, and only then fetches a fresh nonce for the type-4
+  authorization batch. Settings exposes the same deployment as an explicit Authorizations action.
+- Positive runtime verification is persisted by chain and exact RPC endpoint to avoid repeated
+  `eth_getCode` checks without carrying verification across endpoint changes. Changing or restoring
+  that chain's RPC endpoint also invalidates the entry. Loopback RPCs are never persisted because a
+  local chain can reset while retaining the same URL, including in the Settings status path.
+- Safari sends and batches plus Settings deployment, enable, and revoke operations acquire one
+  cross-process submission claim per account and chain before RPC preparation and retain it through
+  broadcast. The batch's nested just-in-time deployment reuses the already-held boundary rather
+  than reacquiring it. A competing operation fails as busy instead of signing the same pending nonce.
 - First-delegation estimation uses the hash-verified runtime through an RPC state override.
   A signed authorization is never disclosed for estimation; the two protected signatures
   are created only after RPC preparation succeeds.
@@ -705,15 +728,17 @@ https://evm.stupidtech.net/v1/N
 Metadata such as display name, native currency, and explorer URL is optional and may come
 from confirmed dapp suggestions or user settings.
 
-`NetworkStore` merges the four bundled default networks with custom metadata from confirmed
+`NetworkStore` initially seeds four bundled networks and merges metadata from confirmed
 add-chain requests, successful switches, manual additions, and legacy `customChains` names.
 Switching to a chain is sufficient to make it visible in Settings. The Include in Total
 Balance preference defaults on, preserves the legacy `excludedFromBalance` values, and gates
 both fetching and home-screen aggregation. Manual additions require a name, chain ID, and an
 RPC URL that passes the same HTTPS, reachability, and exact-chain validation as an edited
-override.
+override. Any configured network can be deleted. Removal persists by chain ID so an initial seed or
+legacy entry does not reappear; a later explicit add-chain approval, successful switch, or manual
+addition restores it. Selection does not make a network undeletable.
 
-Each chain may have one user-selected override. Saving an override requires:
+Each chain may have one validated override. Saving an override requires:
 
 - A syntactically valid URL.
 - HTTPS, except for an explicit development-only loopback HTTP path.
@@ -724,10 +749,13 @@ All app and extension operations use the same resolver. Balance reads, signing-t
 transaction resolution, fee data, simulation, ENS work, receipt polling, and generic
 passthrough must not create independent RPC hierarchies.
 
-`wallet_addEthereumChain` may record confirmed metadata, but a dapp-provided `rpcUrls`
-array is a suggestion, not an automatic user override. `wallet_switchEthereumChain`
-requires an authorized origin/profile grant but changes the active chain immediately without
-popup confirmation or biometric authentication. It never saves dapp-supplied RPC URLs.
+`wallet_addEthereumChain` displays the first dapp-provided `rpcUrls` entry as its fallback
+candidate. During approval it validates the Stupidtech default with `eth_chainId`; if that
+endpoint does not serve the requested chain and no user override already exists, it validates
+and saves the first candidate. Invalid, insecure, unreachable, and wrong-chain candidates fail
+loudly. `wallet_switchEthereumChain` requires an authorized origin/profile grant but changes
+the active chain immediately without popup confirmation or biometric authentication. It never
+saves dapp-supplied RPC URLs.
 
 ## Signing Security Model
 
@@ -958,21 +986,24 @@ keychain-authentication, and RPC-resolution boundaries. Simulation, ENS, ABI met
 and clear signing remain separate later work.
 
 Current acceptance status (2026-08-25): deterministic vectors, native policy, Safari
-routing, popup summaries, SIWE signing, capability reporting, runtime hash checks, safe
-foreign-code refusal, state-override estimation, and rejection without broadcast are
-proven. The prototype fixture cycles Ethereum, Base, and Arbitrum and wraps JSON results
-for complete simulator OCR. A funded Base end-to-end run also proved first-time type-4
+routing, popup summaries, SIWE signing, all-configured-network capability reporting, runtime
+hash checks and caching, safe foreign-code refusal, deterministic implementation deployment,
+state-override estimation, and rejection without broadcast are proven. The prototype fixture
+includes Ethereum, Base, Arbitrum, and an explicit local Anvil add/switch flow and wraps JSON
+results for complete simulator OCR. A funded Base end-to-end run also proved first-time type-4
 delegation and atomic execution, the canonical delegation designator, a subsequent type-2
 atomic execution, successful receipts, and `wallet_getCallsStatus` status `200` with receipt
-data. Raw RPC responses were retained outside the repository for local audit.
+data. A funded simulator Anvil run added chain 31337 through `wallet_addEthereumChain`, applied
+its deliberate loopback RPC override, deployed the missing implementation, completed the
+  type-4 authorization batch, then completed a type-2 delegated batch; all three receipts
+succeeded and the resulting runtime/designator matched. Raw RPC responses were retained
+outside the repository for local audit.
 
 Remaining exit conditions:
 
-- Coordinate Settings authorization operations and Safari sends under one account/chain
-  nonce allocation boundary.
 - Make successful call-bundle status lookup survive an activity-database write failure.
-- Extend the proven Base first-time type-4, already-delegated type-2, status, and receipt
-  flows to Ethereum and Arbitrum when cross-network release evidence is required.
+- Extend the proven Base and local-custom-chain flows to other production networks when
+  cross-network release evidence is required.
 - Prove physical-device authentication and Safari-foreground behavior for both protected
   signatures used by first-time delegation.
 

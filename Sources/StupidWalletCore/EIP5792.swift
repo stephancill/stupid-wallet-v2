@@ -12,7 +12,6 @@ public enum EIP5792 {
   public static let simple7702Account = "0xe6Cae83BdE06E4c305530e199D7217f42808555B"
   public static let simple7702AccountRuntimeHash =
     "0xcc7b633aef4b2543cb8f37522adf1a401f910f0f6b2430c1eecc11f401ccfcf3"
-  public static let verifiedChains: Set<String> = ["1", "8453", "42161"]
   public static let maximumCalls = 32
 
   public static func isVerifiedImplementation(
@@ -74,8 +73,6 @@ public enum EIP5792 {
       }
       chainID = activeQuantity
     }
-    guard verifiedChains.contains(activeChainID) else { throw EIP5792Error.unsupportedChain }
-
     let atomicRequired: Bool
     if let value = supplied["atomicRequired"] {
       guard case .bool(let required) = value else { throw EIP5792Error.invalidParams }

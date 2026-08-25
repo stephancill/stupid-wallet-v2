@@ -8,6 +8,7 @@ public enum RPCOverrideStoreError: Error, Sendable, Equatable {
 /// Atomic App Group persistence for user-selected, pre-validated RPC endpoints.
 public struct RPCOverrideStore: Sendable {
   private let fileURL: URL?
+  private let deploymentStore: Simple7702AccountDeploymentStore
 
   public init(
     directory: URL? = nil,
@@ -15,6 +16,7 @@ public struct RPCOverrideStore: Sendable {
   ) {
     let container = directory ?? WalletStore.containerURL(appGroup: appGroup)
     fileURL = container?.appendingPathComponent("rpc-overrides.json", isDirectory: false)
+    deploymentStore = Simple7702AccountDeploymentStore(directory: directory, appGroup: appGroup)
   }
 
   public func all() throws -> [String: URL] {
@@ -41,6 +43,11 @@ public struct RPCOverrideStore: Sendable {
     guard let normalized = ChainStore.normalize(chainID), let fileURL else {
       throw RPCOverrideStoreError.invalidChainID
     }
+    do {
+      try deploymentStore.remove(chainID: normalized)
+    } catch {
+      throw RPCOverrideStoreError.unavailable
+    }
     var values = try all().mapValues(\.absoluteString)
     values[normalized] = url.absoluteString
     do {
@@ -53,6 +60,11 @@ public struct RPCOverrideStore: Sendable {
   public func remove(forChainID chainID: String) throws {
     guard let normalized = ChainStore.normalize(chainID), let fileURL else {
       throw RPCOverrideStoreError.invalidChainID
+    }
+    do {
+      try deploymentStore.remove(chainID: normalized)
+    } catch {
+      throw RPCOverrideStoreError.unavailable
     }
     var values = try all().mapValues(\.absoluteString)
     values.removeValue(forKey: normalized)

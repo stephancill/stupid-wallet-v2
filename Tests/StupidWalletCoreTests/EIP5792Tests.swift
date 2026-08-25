@@ -124,6 +124,48 @@ struct EIP5792ServiceTests {
     #expect(status.nestedString(at: ["id"]) == state.transactionHash)
   }
 
+  @Test("custom chain deploys implementation before authorization and atomic batch")
+  func customChainDeploymentAndBatch() async throws {
+    let chainID = "31337"
+    let state = CallsRPCState(accountCode: "0x", implementationInitiallyMissing: true)
+    let (service, signer) = makeService(state: state, chainID: chainID)
+    await service.connect(origin: origin, profileID: profile)
+    let id = try await service.prepare(
+      method: "wallet_sendCalls",
+      params: v2Params(id: appID, chainID: "0x7a69"),
+      origin: origin, profileID: profile)
+
+    let result = try await service.approve(request: id, profileID: profile)
+
+    #expect(result.nestedString(at: ["id"]) == appID)
+    #expect(state.rawTransactions.map(\.first) == [0x02, 0x04])
+    #expect(state.methods.filter { $0 == "eth_sendRawTransaction" }.count == 2)
+    #expect(state.methods.contains("eth_getTransactionReceipt"))
+    let expectedAuthorization = try EIP7702Authorization(
+      chainID: "0x7a69", delegate: EIP5792.simple7702Account, nonce: 9)
+    #expect(signer.digests.count == 3)
+    #expect(signer.digests[1] == expectedAuthorization.digest())
+  }
+
+  @Test("deployment receipt RPC failure terminalizes the pending batch")
+  func deploymentReceiptFailure() async throws {
+    let nodeError = JSONValue.object([
+      "code": .number(-32001), "message": .string("receipt unavailable"),
+    ])
+    let state = CallsRPCState(accountCode: "0x", implementationInitiallyMissing: true)
+    state.receiptError = nodeError
+    let (service, _) = makeService(state: state, chainID: "31337")
+    await service.connect(origin: origin, profileID: profile)
+    let id = try await service.prepare(
+      method: "wallet_sendCalls", params: v2Params(id: appID, chainID: "0x7a69"),
+      origin: origin, profileID: profile)
+
+    await #expect(throws: WalletError.rpc(nodeError)) {
+      try await service.approve(request: id, profileID: profile)
+    }
+    #expect(await service.status(for: id, profileID: profile)?.status == "failed")
+  }
+
   @Test("wallet_sendCalls never replaces foreign or malformed account code")
   func rejectsUnsafeAccountCode() async throws {
     for code in [
@@ -217,8 +259,34 @@ struct EIP5792ServiceTests {
       origin: origin, profileID: profile)
     #expect(result.nestedString(at: ["0x1", "atomic", "status"]) == "supported")
     #expect(result.nestedBool(at: ["0x1", "atomic", "supported"]) == true)
-    #expect(result.value(at: ["0xa"]) == nil)
+    #expect(result.nestedBool(at: ["0xa", "atomic", "supported"]) == true)
     #expect(result.value(at: ["0x0"]) == nil)
+  }
+
+  @Test("capabilities include a missing implementation when canonical deployment is available")
+  func capabilitiesWithDeployableImplementation() async throws {
+    let state = CallsRPCState(accountCode: delegationCode, implementationInitiallyMissing: true)
+    let (service, _) = makeService(state: state)
+    await service.connect(origin: origin, profileID: profile)
+
+    let result = try await service.getCapabilities(
+      params: .array([.string(service.account), .array([.string("0x1")])]),
+      origin: origin, profileID: profile)
+
+    #expect(result.nestedBool(at: ["0x1", "atomic", "supported"]) == true)
+  }
+
+  @Test("capabilities omit an implementation address containing unsafe code")
+  func capabilitiesWithUnsafeImplementation() async throws {
+    let state = CallsRPCState(accountCode: delegationCode, unsafeImplementation: true)
+    let (service, _) = makeService(state: state)
+    await service.connect(origin: origin, profileID: profile)
+
+    let result = try await service.getCapabilities(
+      params: .array([.string(service.account), .array([.string("0x1")])]),
+      origin: origin, profileID: profile)
+
+    #expect(result.value(at: ["0x1"]) == nil)
   }
 
   @Test("status maps pending, reverted, offchain failure, unknown ID, and node errors")
@@ -303,10 +371,10 @@ struct EIP5792ServiceTests {
     ])
   }
 
-  private func v2Params(id: String) -> JSONValue {
+  private func v2Params(id: String, chainID: String = "0x1") -> JSONValue {
     .array([
       .object([
-        "version": .string("2.0.0"), "chainId": .string("0x1"),
+        "version": .string("2.0.0"), "chainId": .string(chainID),
         "atomicRequired": .bool(true), "id": .string(id),
         "calls": .array([
           .object([
@@ -318,7 +386,9 @@ struct EIP5792ServiceTests {
     ])
   }
 
-  private func makeService(state: CallsRPCState) -> (WalletService, RecordingSigner) {
+  private func makeService(
+    state: CallsRPCState, chainID: String = "1"
+  ) -> (WalletService, RecordingSigner) {
     let signer = RecordingSigner()
     CallsURLProtocol.handler = { request in state.response(request: request) }
     let configuration = URLSessionConfiguration.ephemeral
@@ -326,16 +396,23 @@ struct EIP5792ServiceTests {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "EIP5792Tests-\(UUID().uuidString)")
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let chainStore = ChainStore(directory: directory)
+    try? chainStore.setChainID(chainID)
+    let networkStore = NetworkStore(directory: directory, legacySuiteName: UUID().uuidString)
+    if (try? networkStore.network(chainID: chainID)) == nil {
+      try? networkStore.add(name: "Custom", chainID: chainID)
+    }
     return (
       WalletService(
         store: PendingRequestStore(directory: directory), signing: signer,
         connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
-        chainStore: ChainStore(directory: directory),
-        networkStore: NetworkStore(directory: directory, legacySuiteName: UUID().uuidString),
+        chainStore: chainStore,
+        networkStore: networkStore,
         activityStore: ActivityStore(
           databaseURL: directory.appendingPathComponent("Activity.sqlite")),
-        resolver: RPCResolver(overrides: ["1": URL(string: "https://rpc.example")!]),
+        resolver: RPCResolver(overrides: [chainID: URL(string: "https://rpc.example")!]),
         rpcClient: RPCClient(session: URLSession(configuration: configuration)),
+        deploymentStore: Simple7702AccountDeploymentStore(directory: directory),
         simple7702AccountRuntimeHash: "0x" + Hex.encode(Keccak.keccak256([0x60, 0x01]))),
       signer
     )
@@ -358,6 +435,10 @@ struct EIP5792ServiceTests {
 private final class CallsRPCState: @unchecked Sendable {
   private let lock = NSLock()
   let accountCode: String
+  let implementationInitiallyMissing: Bool
+  let unsafeImplementation: Bool
+  private var implementationDeployed = false
+  private var nonceCalls = 0
   private(set) var transactionHash = "0x" + String(repeating: "ab", count: 32)
   var receipt: JSONValue = .object([
     "status": .string("0x1"), "blockHash": .string("0x" + String(repeating: "cd", count: 32)),
@@ -365,10 +446,18 @@ private final class CallsRPCState: @unchecked Sendable {
   ])
   var receiptError: JSONValue?
   private(set) var rawTransaction: [UInt8]?
+  private(set) var rawTransactions: [[UInt8]] = []
   private(set) var methods: [String] = []
   private(set) var estimateParams: JSONValue?
 
-  init(accountCode: String) { self.accountCode = accountCode }
+  init(
+    accountCode: String, implementationInitiallyMissing: Bool = false,
+    unsafeImplementation: Bool = false
+  ) {
+    self.accountCode = accountCode
+    self.implementationInitiallyMissing = implementationInitiallyMissing
+    self.unsafeImplementation = unsafeImplementation
+  }
 
   func response(request: URLRequest) -> (HTTPURLResponse, Data) {
     let object = try! JSONDecoder().decode(JSONValue.self, from: callsRequestBody(request))
@@ -378,10 +467,21 @@ private final class CallsRPCState: @unchecked Sendable {
       switch method {
       case "eth_getCode":
         let address = object.value(at: ["params", "0"])?.stringValue ?? ""
+        if address.caseInsensitiveCompare(Simple7702AccountDeployment.factory) == .orderedSame {
+          return callsRPCResponse(
+            result: .string(
+              "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"
+            ))
+        }
         return callsRPCResponse(
           result: address.caseInsensitiveCompare(EIP5792.simple7702Account) == .orderedSame
-            ? .string("0x6001") : .string(accountCode))
-      case "eth_getTransactionCount": return callsRPCResponse(result: .string("0x7"))
+            ? .string(
+              implementationInitiallyMissing && !implementationDeployed
+                ? "0x" : (unsafeImplementation ? "0x6002" : "0x6001"))
+            : .string(accountCode))
+      case "eth_getTransactionCount":
+        defer { nonceCalls += 1 }
+        return callsRPCResponse(result: .string(nonceCalls == 0 ? "0x7" : "0x8"))
       case "eth_estimateGas":
         estimateParams = object.value(at: ["params"])
         return callsRPCResponse(result: .string("0x10000"))
@@ -389,6 +489,10 @@ private final class CallsRPCState: @unchecked Sendable {
       case "eth_gasPrice": return callsRPCResponse(result: .string("0x2"))
       case "eth_sendRawTransaction":
         rawTransaction = object.value(at: ["params", "0"])?.stringValue.flatMap(Hex.data)
+        if let rawTransaction { rawTransactions.append(rawTransaction) }
+        if implementationInitiallyMissing && rawTransactions.count == 1 {
+          implementationDeployed = true
+        }
         transactionHash =
           rawTransaction.map { "0x" + Hex.encode(Keccak.keccak256($0)) } ?? transactionHash
         return callsRPCResponse(result: .string(transactionHash))
