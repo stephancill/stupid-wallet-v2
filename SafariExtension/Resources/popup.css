@@ -197,41 +197,6 @@ body {
   gap: 12px;
 }
 
-.call-card {
-  padding: 8px 12px;
-  overflow: hidden;
-  border-radius: 8px;
-  background: var(--secondary);
-}
-
-.call-summary {
-  display: grid;
-  gap: 12px;
-}
-
-.call-field {
-  min-width: 0;
-}
-
-.call-label {
-  margin-bottom: 3px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.call-field-content {
-  overflow-wrap: anywhere;
-  line-height: 1.25;
-}
-
-.call-field-content > .address-value {
-  display: flex;
-}
-
 .calldata-toggle {
   display: block;
   width: 100%;
@@ -261,10 +226,6 @@ body {
 
 .calldata-toggle.expanded .calldata-value {
   display: block;
-}
-
-.call-data {
-  margin-top: 12px;
 }
 
 .account {

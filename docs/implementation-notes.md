@@ -50,6 +50,36 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-25 - Shared Call Detail Tables
+
+### Summary
+
+- Extracted the popup's bordered request-detail table into one reusable renderer.
+- Changed each `wallet_sendCalls` call from a filled card to the same detail-table presentation used
+  by `eth_sendTransaction`, retaining optional Value and Data rows and expandable calldata.
+- Removed the obsolete batch-card styles and bumped the WebExtension manifest to `0.1.42`.
+
+### Why
+
+- Single transactions and atomic calls should present the same canonical call fields with one visual
+  language and one DOM implementation.
+
+### Verification
+
+- Extension `oxfmt`, `oxlint`, `node --check`, manifest JSON validation, and `git diff --check`
+  passed. `node --test Tests/JavaScript/*.test.mjs` passed all 10 tests, including two batch calls
+  rendered through the shared bordered detail table with omitted zero/empty fields.
+- `swift test` passed all 181 tests in 28 suites.
+- `stupid-app doctor` completed with zero failures and warnings, and `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app
+  and extension resources with manifest `0.1.42`.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` assembled, signed,
+  packaged, installed, and launched the app and nested Safari extension on the paired iPhone.
+
+### Follow-Up
+
+- Confirm the shared table layout in a live multi-call Safari popup.
+
 ## 2026-08-25 - Compatible Request Blockies
 
 ### Summary

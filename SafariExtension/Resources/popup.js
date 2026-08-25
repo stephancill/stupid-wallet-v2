@@ -243,6 +243,11 @@
     section.className = "section";
     const title = document.createElement("h2");
     title.textContent = titleText;
+    section.append(title, detailTable(rows));
+    container.appendChild(section);
+  }
+
+  function detailTable(rows) {
     const list = document.createElement("div");
     list.className = "section-list";
     for (const row of rows) {
@@ -261,8 +266,7 @@
       item.appendChild(value);
       list.appendChild(item);
     }
-    section.append(title, list);
-    container.appendChild(section);
+    return list;
   }
 
   function isBatchCallRow(row) {
@@ -289,35 +293,17 @@
     const list = document.createElement("div");
     list.className = "call-list";
     for (const call of calls) {
-      const card = document.createElement("div");
-      card.className = "call-card";
-      const summary = document.createElement("div");
-      summary.className = "call-summary";
-      summary.appendChild(callField("To", call.target, "call-target"));
+      const rows = [{ label: "To", value: call.target }];
       if (call.value && !call.value.startsWith("0 ")) {
-        summary.appendChild(callField("Value", call.value, "call-value"));
+        rows.push({ label: "Value", value: call.value });
       }
-      card.appendChild(summary);
       if (call.data && call.data !== "0x") {
-        card.appendChild(callField("Data", call.data, "call-data", { calldata: true }));
+        rows.push({ label: "Data", value: call.data });
       }
-      list.appendChild(card);
+      list.appendChild(detailTable(rows));
     }
     section.append(title, list);
     container.appendChild(section);
-  }
-
-  function callField(labelText, value, className, options) {
-    const field = document.createElement("div");
-    field.className = `call-field ${className}`;
-    const label = document.createElement("div");
-    label.className = "call-label";
-    label.textContent = labelText;
-    const content = document.createElement("div");
-    content.className = "call-field-content";
-    appendDisplayValue(content, value, options);
-    field.append(label, content);
-    return field;
   }
 
   function appendDisplayValue(container, value, { calldata = false } = {}) {

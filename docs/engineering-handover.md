@@ -106,10 +106,11 @@ standard-params work:
   fee fields are not exposed in the popup, while simulation and calldata decoding remain
   deferred. Generic chain rows resolve through the shared `NetworkStore` and display the
   persisted network name, falling back to `Chain N` for unknown metadata; explicit add-network
-  Chain ID fields remain numeric. Atomic batches use a compact per-call card hierarchy
-  without ABI decoding, while retaining canonical target, formatted value, and raw calldata. The
-  batch summary omits redundant Execution and Authorization rows. Each card stacks a compact To
-  field plus Value and Data only when they are non-zero/non-empty, with labels above their values
+  Chain ID fields remain numeric. Atomic batches use the same bordered per-call detail table as
+  single transactions, without ABI decoding, while retaining canonical target, formatted value,
+  and raw calldata. The batch summary omits redundant Execution and Authorization rows. Each table
+  stacks a compact To field plus Value and Data only when they are non-zero/non-empty, with labels
+  above their values
   and clear spacing between fields. Target, value, and data use the same regular foreground
   typography. Popup values use regular system typography rather than
   switching hexadecimal fields to monospace. `WalletService.Summary` carries `kind`, `title`,
@@ -316,7 +317,7 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.41`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.42`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet.
 - One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
@@ -1051,7 +1052,7 @@ current registration; the stale row selected old web resources. Keep only the cu
 The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
 the background worker cannot delay the review surface, while retaining the background route as a
 transport fallback for Safari environments where direct native messaging is unavailable. Manifest
-`0.1.41` contains the dedicated monochrome toolbar action icons, current request-review layout, and
+`0.1.42` contains the dedicated monochrome toolbar action icons, current request-review layout, and
 the direct-popup synchronization
 introduced in `0.1.23`: after a successful
 decision it notifies the worker before the popup closes,

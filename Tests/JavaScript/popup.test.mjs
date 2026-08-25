@@ -221,10 +221,11 @@ test("popup renders addresses, collapses queued requests, and expands raw callda
   assert.equal(heading.getAttribute("aria-expanded"), "true");
 
   const calldataToggle = activeBatch.querySelector(".calldata-toggle");
-  assert.equal(activeBatch.querySelectorAll(".call-card").length, 2);
+  assert.equal(activeBatch.querySelectorAll(".section-list").length, 2);
+  assert.equal(activeBatch.querySelectorAll(".section-row").length, 3);
   assert.equal(activeBatch.querySelectorAll(".calldata-toggle").length, 1);
   assert.deepEqual(
-    tray.querySelectorAll(".call-label").map((label) => label.textContent),
+    activeBatch.querySelectorAll(".section-label").map((label) => label.textContent),
     ["To", "Data", "To"],
   );
   assert.equal(calldataToggle.textContent, calldata);
