@@ -14,15 +14,9 @@ public final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandli
   /// The active account is resolved lazily from the App Group default so a wallet created
   /// (or migrated) after the extension process was launched is picked up, and so the
   /// `.keychain` `.usePresence` item is never touched for an existence probe.
-  private static func makeSigning() -> any Signing {
+  private static func makeSigning(registry: WalletRegistry) -> any Signing {
     let store = KeychainKeyStore()
-    // The active address is read from the shared App Group file first (works reliably
-    // across app and extension processes), with a UserDefaults fallback for pre-existing
-    // wallets written before the file store existed.
-    let address =
-      WalletStore.activeAddress()
-      ?? UserDefaults(suiteName: PendingRequestStore.defaultAppGroup)?
-      .string(forKey: WalletFactory.walletAddressKey)
+    let address = registry.homeSelectedAddress
     if let address {
       return KeychainSigner(account: address, store: store)
     }
@@ -47,16 +41,35 @@ public final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandli
     } else {
       profileID = userInfo[SFExtensionProfileKey] as? String
     }
-    // A fresh service per native message resolves the current wallet account lazily.
-    let service = WalletService(signing: Self.makeSigning(), resolver: .persisted())
     let box = ContextBox(context)
-    Task {
-      let response = await Server.dispatch(
-        service: service, envelope: envelope, profileID: profileID)
+    Task { @Sendable in
+      let response = await Self.dispatchAdoptedIfReady(
+        envelope: envelope, profileID: profileID)
       let responseItem = NSExtensionItem()
       responseItem.userInfo = [SFExtensionMessageKey: response.unwrapped]
       box.context.completeRequest(returningItems: [responseItem], completionHandler: nil)
     }
+  }
+
+  /// Runs the idempotent adoption barrier; a throwing barrier fails closed with a
+  /// structured not-ready response, otherwise request handling proceeds through a
+  /// registry-gated service.
+  private static nonisolated func dispatchAdoptedIfReady(
+    envelope: Envelope, profileID: String?
+  ) async -> JSONValue {
+    let service: WalletService
+    do {
+      let adopted = try await WalletRegistryAdoption().ensureAdopted()
+      guard let registry = adopted.registry else {
+        return Server.errorJSON(4900, "Wallet is not ready yet")
+      }
+      service = WalletService(
+        signing: makeSigning(registry: registry), resolver: .persisted(),
+        registryStore: WalletRegistryStore())
+    } catch {
+      return Server.errorJSON(4900, "Wallet is not ready yet")
+    }
+    return await Server.dispatch(service: service, envelope: envelope, profileID: profileID)
   }
 }
 

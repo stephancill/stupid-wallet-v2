@@ -16,25 +16,31 @@ final class WalletViewModel: ObservableObject {
   var chainName: String { NetworkInfo.name(for: chainID) }
 
   init() {
-    if let address = WalletStore.activeAddress() {
-      addressHex = address
-    } else {
-      let backend = SecurityWalletBackend()
-      if backend.oldAddress() != nil {
-        switch WalletMigration.migrate(backend: backend) {
-        case .success(.migrated(let address)):
-          addressHex = address
-        case .success(.alreadyMigrated):
-          addressHex = WalletStore.activeAddress() ?? ""
-        case .success:
-          break
-        case .failure:
-          errorMessage = "Your existing wallet could not be migrated. Please try again."
-        }
+    Task { await adoptAndLoad() }
+  }
+
+  /// Idempotent Gate A barrier. The app runs `ensureAdopted()` at every entry so a
+  /// `.migrating` registry cannot be skipped; the projection file the registry maintains
+  /// continues to drive the visible account.
+  @MainActor
+  private func adoptAndLoad() async {
+    do {
+      let result = try await WalletRegistryAdoption().ensureAdopted()
+      guard let registry = result.registry,
+        let address = registry.homeSelectedAddress
+      else {
+        addressHex = ""
+        balance = nil
+        return
       }
-    }
-    if hasWallet {
-      balance = try? balanceCache.balance(account: addressHex)
+      addressHex = address
+      balance = try balanceCache.balance(account: address)
+      errorMessage = nil
+    } catch {
+      addressHex = ""
+      balance = nil
+      errorMessage = "Your existing wallet could not be loaded. Please try again."
+      return
     }
   }
 
@@ -42,8 +48,11 @@ final class WalletViewModel: ObservableObject {
     isSaving = true
     errorMessage = nil
     do {
-      addressHex = try WalletFactory.create()
-      Task { await refreshBalance() }
+      _ = try WalletFactory.create()
+      Task {
+        await adoptAndLoad()
+        await refreshBalance()
+      }
     } catch {
       errorMessage = message(for: error)
     }
@@ -57,11 +66,14 @@ final class WalletViewModel: ObservableObject {
     let words = trimmed.split(whereSeparator: \.isWhitespace)
     do {
       if words.count == 1 {
-        addressHex = try WalletFactory.importPrivateKey(trimmed)
+        _ = try WalletFactory.importPrivateKey(trimmed)
       } else {
-        addressHex = try WalletFactory.importSeedPhrase(trimmed)
+        _ = try WalletFactory.importSeedPhrase(trimmed)
       }
-      Task { await refreshBalance() }
+      Task {
+        await adoptAndLoad()
+        await refreshBalance()
+      }
     } catch {
       errorMessage = message(for: error)
     }

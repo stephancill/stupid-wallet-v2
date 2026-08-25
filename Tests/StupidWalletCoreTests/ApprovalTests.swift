@@ -112,18 +112,25 @@ struct ApprovalTests {
     let chainStore = Self.tmpChainStore()
     let svc = WalletService(store: store, signing: StubSigner(), chainStore: chainStore)
     let id = UUID()
+    let createdAt = Date().addingTimeInterval(-1000)
+    let expiresAt = Date().addingTimeInterval(-100)
+    let account = "0x1234567890abcdef1234567890abcdef12345678"
+    let params: JSONValue = .array([.string("0x1234"), .string("0x6869")])
     let record = WalletPendingRequest(
       id: id,
       kind: .message,
       method: "personal_sign",
       origin: "https://dapp.example",
       chainId: "1",
-      account: "0x1234",
-      params: .array([.string("0x1234"), .string("0x6869")]),
-      payloadDigest: CanonicalRequest.digest(
-        of: .array([.string("0x1234"), .string("0x6869")]), keyedBy: id),
-      createdAt: Date().addingTimeInterval(-1000),
-      expiresAt: Date().addingTimeInterval(-100)
+      account: account,
+      params: params,
+      payloadDigest: CanonicalRequest.bindingDigestV2(
+        requestID: id, kind: .message, method: "personal_sign",
+        origin: "https://dapp.example", profileID: nil, chainId: "1", account: account,
+        params: params, createdAt: createdAt, expiresAt: expiresAt),
+      bindingVersion: 2,
+      createdAt: createdAt,
+      expiresAt: expiresAt
     )
     try await store.insert(record)
     await #expect(throws: WalletError.expired) {
@@ -299,5 +306,168 @@ struct ApprovalTests {
       try await replacement.approve(request: id)
     }
     #expect(await replacement.status(for: id)?.status == "pending")
+  }
+
+  @Test("prepare records carry the account-inclusive binding version 2 and revision zero")
+  func bindingVersionTwoRecord() async throws {
+    let svc = service()
+    let id = try await prepareMessage(svc)
+    let record = try #require(await svc.store.record(id))
+    #expect(record.bindingVersion == 2)
+    #expect(record.revision == 0)
+    #expect(record.intentDigest != nil)
+    // The persisted digest equals the recomputed account-inclusive canonical digest.
+    let recomputed = CanonicalRequest.bindingDigestV2(
+      requestID: record.id,
+      kind: record.kind,
+      method: record.method,
+      origin: record.origin,
+      profileID: record.profileID,
+      chainId: record.chainId,
+      account: record.account,
+      params: record.params,
+      createdAt: record.createdAt,
+      expiresAt: record.expiresAt)
+    #expect(recomputed == record.payloadDigest)
+    _ = try await svc.approve(request: id)
+  }
+
+  @Test("mutating the persisted account invalidates the v2 binding")
+  func accountMutationRejected() async throws {
+    let svc = service()
+    let id = try await prepareMessage(svc)
+    let store = svc.store
+    let original = try #require(await store.record(id))
+    let mutated = WalletPendingRequest(
+      id: original.id,
+      kind: original.kind,
+      method: original.method,
+      origin: original.origin,
+      profileID: original.profileID,
+      chainId: original.chainId,
+      account: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      params: original.params,
+      payloadDigest: original.payloadDigest,
+      intentDigest: original.intentDigest,
+      requestKey: original.requestKey,
+      bindingVersion: original.bindingVersion,
+      revision: original.revision,
+      createdAt: original.createdAt,
+      expiresAt: original.expiresAt
+    )
+    try await store.insert(mutated)
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await svc.approve(request: id)
+    }
+  }
+
+  @Test("mutating origin or timestamps invalidates the v2 binding")
+  func originMutationRejected() async throws {
+    let svc = service()
+    let id = try await prepareMessage(svc)
+    let store = svc.store
+    let original = try #require(await store.record(id))
+
+    let originMutated = WalletPendingRequest(
+      id: original.id,
+      kind: original.kind,
+      method: original.method,
+      origin: "https://evil.example",
+      profileID: original.profileID,
+      chainId: original.chainId,
+      account: original.account,
+      params: original.params,
+      payloadDigest: original.payloadDigest,
+      intentDigest: original.intentDigest,
+      requestKey: original.requestKey,
+      bindingVersion: original.bindingVersion,
+      revision: original.revision,
+      createdAt: original.createdAt,
+      expiresAt: original.expiresAt
+    )
+    try await store.insert(originMutated)
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await svc.approve(request: id)
+    }
+
+    let expiredMutated = WalletPendingRequest(
+      id: original.id,
+      kind: original.kind,
+      method: original.method,
+      origin: original.origin,
+      profileID: original.profileID,
+      chainId: original.chainId,
+      account: original.account,
+      params: original.params,
+      payloadDigest: original.payloadDigest,
+      intentDigest: original.intentDigest,
+      requestKey: original.requestKey,
+      bindingVersion: original.bindingVersion,
+      revision: original.revision,
+      createdAt: original.createdAt,
+      expiresAt: original.expiresAt.addingTimeInterval(60)
+    )
+    try await store.insert(expiredMutated)
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await svc.approve(request: id)
+    }
+  }
+
+  @Test("records missing the required revision fail closed")
+  func missingRevisionRejected() async throws {
+    let store = Self.tmpStore()
+    let id = UUID()
+    let legacy = WalletPendingRequest(
+      id: id,
+      kind: .message,
+      method: "personal_sign",
+      origin: "https://dapp.example",
+      chainId: "1",
+      account: "0x1234567890abcdef1234567890abcdef12345678",
+      params: .array([.string("0x1234"), .string("0x6869")]),
+      payloadDigest: CanonicalRequest.digest(
+        of: .array([.string("0x1234"), .string("0x6869")]), keyedBy: id),
+      createdAt: Date(),
+      expiresAt: Date().addingTimeInterval(600)
+    )
+    let encoded = try JSONEncoder().encode(legacy)
+    guard case .object(var object) = try JSONDecoder().decode(JSONValue.self, from: encoded) else {
+      Issue.record("Expected an encoded request object")
+      return
+    }
+    object.removeValue(forKey: "profileID")
+    object.removeValue(forKey: "bindingVersion")
+    object.removeValue(forKey: "revision")
+    object.removeValue(forKey: "resolvedParams")
+    object.removeValue(forKey: "error")
+    try JSONEncoder().encode(JSONValue.object(object)).write(
+      to: store.directory.appendingPathComponent("\(id.uuidString).json"), options: [.atomic])
+    await #expect(throws: DecodingError.self) {
+      try await store.record(id)
+    }
+  }
+
+  @Test("intent digest v2 excludes the wallet-selected account and request identity")
+  func intentDigestVersionTwo() throws {
+    let origin = "https://dapp.example"
+    let params: JSONValue = .array([.string("0x1234"), .string("0x6869")])
+    let digestA = CanonicalRequest.intentDigestV2(
+      method: "personal_sign", origin: origin, chainId: "8453", profileID: "profile-a",
+      params: params)
+    let digestB = CanonicalRequest.intentDigestV2(
+      method: "personal_sign", origin: origin, chainId: "8453", profileID: "profile-a",
+      params: params)
+    #expect(digestA == digestB)
+    // Changing any canonical intent field changes the digest; a different account does not,
+    // because account selection is a separate wallet decision.
+    #expect(
+      CanonicalRequest.intentDigestV2(
+        method: "personal_sign", origin: origin, chainId: "8453", profileID: "profile-a",
+        params: .array([.string("0x9999"), .string("0x6869")]))
+        != digestA)
+    #expect(
+      CanonicalRequest.intentDigestV2(
+        method: "PERSONAL_SIGN", origin: origin, chainId: "8453", profileID: nil,
+        params: params) != digestA)
   }
 }

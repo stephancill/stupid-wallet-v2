@@ -56,32 +56,23 @@ public enum ActivityStoreError: Error, Sendable, Equatable {
 /// `Activity.sqlite` tables so upgrades retain existing history.
 public actor ActivityStore {
   private let databaseURL: URL
-  private let pendingRequestDirectory: URL
 
   public init(
     databaseURL: URL? = nil,
-    pendingRequestDirectory: URL? = nil,
     appGroupID: String = PendingRequestStore.defaultAppGroup
   ) {
     if let databaseURL {
       self.databaseURL = databaseURL
-      self.pendingRequestDirectory =
-        pendingRequestDirectory
-        ?? databaseURL.deletingLastPathComponent().appendingPathComponent("PendingRequests")
     } else if let container = FileManager.default.containerURL(
       forSecurityApplicationGroupIdentifier: appGroupID)
     {
       self.databaseURL = container.appendingPathComponent("Activity.sqlite")
-      self.pendingRequestDirectory =
-        pendingRequestDirectory ?? container.appendingPathComponent("PendingRequests")
     } else {
       let base = FileManager.default.urls(
         for: .applicationSupportDirectory, in: .userDomainMask
       ).first!
       let directory = base.appendingPathComponent("StupidWallet")
       self.databaseURL = directory.appendingPathComponent("Activity.sqlite")
-      self.pendingRequestDirectory =
-        pendingRequestDirectory ?? directory.appendingPathComponent("PendingRequests")
     }
   }
 
@@ -349,7 +340,6 @@ public actor ActivityStore {
   }
 
   private func createSchema(_ database: OpaquePointer) throws {
-    let previousVersion = try schemaVersion(database)
     try exec(
       database,
       """
@@ -378,66 +368,7 @@ public actor ActivityStore {
     try addColumn(database, table: "transactions", name: "call_bundle_id", type: "TEXT")
     try addColumn(database, table: "signatures", name: "request_id", type: "TEXT")
     try addColumn(database, table: "signatures", name: "profile_id", type: "TEXT")
-    if previousVersion < 7 { try backfillActivityContent(database) }
     try exec(database, "PRAGMA user_version=8;")
-  }
-
-  private func schemaVersion(_ database: OpaquePointer) throws -> Int {
-    var statement: OpaquePointer?
-    guard sqlite3_prepare_v2(database, "PRAGMA user_version;", -1, &statement, nil) == SQLITE_OK
-    else { throw sqliteError(database) }
-    defer { sqlite3_finalize(statement) }
-    guard sqlite3_step(statement) == SQLITE_ROW else { throw sqliteError(database) }
-    return Int(sqlite3_column_int(statement, 0))
-  }
-
-  private func backfillActivityContent(_ database: OpaquePointer) throws {
-    let files =
-      (try? FileManager.default.contentsOfDirectory(
-        at: pendingRequestDirectory, includingPropertiesForKeys: nil)) ?? []
-    for file in files where file.pathExtension == "json" {
-      guard let data = try? Data(contentsOf: file),
-        let request = try? JSONDecoder().decode(WalletPendingRequest.self, from: data)
-      else { continue }
-
-      if let transactionData = Self.transactionData(request.params) {
-        try execute(
-          database,
-          sql: """
-            UPDATE transactions SET transaction_data = ?
-            WHERE request_id = ? AND (transaction_data IS NULL OR transaction_data = '');
-            """
-        ) { statement in
-          bind(transactionData, to: 1, in: statement)
-          bind(request.id.uuidString, to: 2, in: statement)
-        }
-      }
-      let message = Self.signedMessage(request)
-      if !message.isEmpty {
-        try execute(
-          database,
-          sql: """
-            UPDATE signatures SET message_content = ?
-            WHERE request_id = ? AND message_content = '';
-            """
-        ) { statement in
-          bind(message, to: 1, in: statement)
-          bind(request.id.uuidString, to: 2, in: statement)
-        }
-      }
-      if let signature = request.result?.stringValue, Hex.data(signature)?.count == 65 {
-        try execute(
-          database,
-          sql: """
-            UPDATE signatures SET signature_hex = ?
-            WHERE request_id = ? AND signature_hex = '';
-            """
-        ) { statement in
-          bind(signature, to: 1, in: statement)
-          bind(request.id.uuidString, to: 2, in: statement)
-        }
-      }
-    }
   }
 
   private func addColumn(

@@ -91,15 +91,24 @@ public final class KeychainKeyStore: Sendable {
   /// an existence probe only: it does not present the device-owner prompt, unlike
   /// `load`, so it is safe to call ahead of an approval.
   public func contains(account: String) -> Bool {
+    let context = LAContext()
+    context.interactionNotAllowed = true
     var query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
       kSecReturnData as String: false,
       kSecMatchLimit as String: kSecMatchLimitOne,
+      kSecUseAuthenticationContext as String: context,
     ]
     query[kSecAttrAccessGroup as String] = accessGroup
-    return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    let status = SecItemCopyMatching(query as CFDictionary, nil)
+    context.invalidate()
+    return Self.existenceStatusIndicatesPresent(status)
+  }
+
+  static func existenceStatusIndicatesPresent(_ status: OSStatus) -> Bool {
+    status == errSecSuccess || status == errSecInteractionNotAllowed
   }
 
   /// All accounts that have a key stored under this service and access group.

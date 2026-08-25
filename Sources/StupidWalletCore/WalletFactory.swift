@@ -183,15 +183,8 @@ public enum WalletFactory {
     WalletStore.activeAddress(appGroup: appGroup)
   }
 
-  /// Legacy source-key read by callers that still use `UserDefaults(suiteName:)`. Prefer
-  /// `activeAddress(appGroup:)` which reads the shared App Group file. Kept so migration
-  /// can fall back to the previously-written `UserDefaults` value.
-  public static func activeAddressFromUserDefaults(
-    appGroup: String = PendingRequestStore.defaultAppGroup
-  ) -> String? {
-    UserDefaults(suiteName: appGroup)?.string(forKey: Self.walletAddressKey)
-  }
-
+  /// Unsupported rebuild registration key retained only so registry startup can remove
+  /// downgrade residue. It is never a wallet identity or migration source.
   public static let walletAddressKey = "sw2.walletAddress"
 
   private static func randomSecret() throws -> [UInt8] {

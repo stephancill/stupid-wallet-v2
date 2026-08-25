@@ -29,8 +29,8 @@ signing input or creates key material.
 - Preserve existing connection grants when a different account is connected.
 - Keep one active connected account per normalized origin and Safari profile while retaining any
   other account grants for that origin/profile.
-- Preserve installed-wallet migration, current activity history, connection grants, network
-  preferences, RPC overrides, and account-bound balance caches.
+- Preserve supported Dawn migration, activity history, hostname grants, network preferences, and RPC
+  overrides. Dawn starts with an empty account-bound balance cache.
 
 ## Non-Goals
 
@@ -52,9 +52,14 @@ signing input or creates key material.
 - New wallet creation generates a seed-backed wallet group and derives account index zero.
 - Seed import creates a seed-backed group and derives account index zero.
 - Private-key import creates a one-account private-key group.
-- Existing old-format and rebuild-format installations become one-account private-key groups even
-  when the account was originally imported from a seed phrase. Neither shipped format retained the
-  seed, so sibling derivation is impossible without a separate future re-import design.
+- Only old Dawn v1 installations are supported migration sources. They become one-account private-key
+  groups even when the account was originally imported from a seed phrase because Dawn retained no
+  seed from which siblings can be derived.
+- Migration from the current single-account rebuild (v2) is explicitly out of scope. Its
+  `wallet-address.conf`, `sw2.walletAddress`, normalized `connectedOriginsV2`, singleton balance cache,
+  and pending-request files are not migration inputs and receive no upgrade-preservation guarantee.
+- Fail-closed compatibility projection for opening a multi-account installation in an older rebuild
+  remains in scope. That downgrade-safety boundary is separate from supporting v2 as an upgrade source.
 - A seed group stores one protected BIP-39 entropy item. Derived private keys are produced only in
   memory when needed and are not copied into separate persistent keychain items.
 - Forgetting a seed-backed wallet removes the complete group, including its entropy and every
@@ -178,15 +183,16 @@ Registry invariants:
 - `legacyWalletAddressFallbackRemoved` must be true before seed groups, additional accounts, or home
   selection changes are enabled.
 - Only `.complete` is usable by ordinary app or extension operations. `.migrating` is a durable,
-  resumable barrier while singleton wallet, connection, fallback, and cache adoption are incomplete.
+  resumable barrier while Dawn key, connection, activity, network-preference, and registry adoption are
+  incomplete.
 - Unknown or malformed registry versions fail loudly; they do not fall back to an arbitrary keychain
   item.
 - A monotonically increasing revision lets asynchronous UI and signing work reject stale snapshots.
 
-New code reads the registry as authority. Gate A removes the rebuild-era `sw2.walletAddress`
-UserDefaults fallback after registry adoption; multi-account code never mirrors it again. Startup and
-every projection transition also remove and verify the absence of any value reintroduced by a
-downgraded build before exposing wallet state. The sole rebuild compatibility projection is then
+New code reads the registry as authority. `sw2.walletAddress` is not a migration input. Startup and
+every projection transition remove and verify the absence of any value introduced by a downgraded
+build before exposing wallet state; multi-account code never mirrors it. The sole rebuild downgrade
+compatibility projection is
 `wallet-address.conf`, and it is deliberately fail-closed because older code can sign only
 address-keyed private-key items:
 
@@ -329,9 +335,8 @@ compatibility and never authorization truth for new code.
 
 ### Account-bound balance cache
 
-Replace the one-snapshot `native-balance-cache.json` payload with a versioned dictionary keyed by
-normalized address, or one atomic file per normalized address. Preserve the existing formatted total
-for its recorded account during migration.
+Use a versioned dictionary keyed by normalized address in `native-balance-cache.json`. Do not decode
+the current-rebuild singleton payload as a migration source; Dawn starts with no cache entries.
 
 Each entry includes account, formatted aggregate balance, and last successful update. A refresh result
 may update only the account and registry revision captured when it began.
@@ -407,11 +412,10 @@ remain durable; this scope does not delete them. Any future retention cleanup re
 reviewed tombstone protocol serialized with prepare deduplication and must first prove no
 page/background completion route can retry the key.
 
-Records without the new binding version decode as legacy records. They remain status-readable for
-page completion and activity backfill, but no pending legacy record is approvable after registry
-adoption. On first migration/access, terminalize it with JSON-RPC code `-32000` and message
-`Wallet account state changed; retry request`. Preserve already-terminal records unchanged. Legacy
-records must never be silently skipped, signed, or rebound under the new popup operation.
+Records created by the multi-account runtime must carry binding version 2. Records from the
+unsupported current rebuild are not migration inputs; they are neither decoded for completion or
+activity backfill nor terminalized into the new queue. An unknown binding or record schema fails
+closed and can never be signed or rebound.
 
 ## Core Service Design
 
@@ -481,41 +485,49 @@ revalidates connection state and uses the protected key.
 
 Startup order:
 
-1. Acquire the cross-process registry-adoption claim.
+1. Acquire the cross-process registry-adoption claim through synchronous `NSFileCoordinator` write
+   coordination on the stable App Group claim URL. A canceled coordination attempt fails closed.
 2. Acquire the registry lock, decode and validate the registry and transition journal if present, and
    complete the exact
    commit-forward recovery protocol before exposing wallet state.
-3. If no registry exists, inspect the current rebuild registration and migration state.
-4. Resume or roll back an interrupted authenticated old-format migration rather than treating a
+3. If no registry exists, inspect only the Dawn v1 address and authenticated migration state. Do not
+   inspect or adopt current-rebuild registration, cache, grant, or pending-request state.
+4. Resume or roll back an interrupted authenticated Dawn migration rather than treating a
    prematurely registered address as complete.
 5. If authentication is necessary, persist the existing old-format migration marker, release the
    registry lock, execute the decrypt/address-match/new-format sign-and-recover proof, reacquire the
    registry lock, and reject if the captured source state changed.
 6. Through `commitRegistryTransition`, adopt the proven address into one private-key group, set it
    as home, and persist the registry as `.migrating` with the matching private-key projection.
-7. While retaining the registry lock, acquire the connection-state lock, migrate V2 and legacy grants,
-   set active mappings, and initialize the default to the proven address when no valid default exists.
-8. Migrate and validate the singleton balance cache under the proven account.
-9. Remove `sw2.walletAddress`, verify it is absent, and then persist
-   `legacyWalletAddressFallbackRemoved = true`. This monotonic cleanup is retried after interruption.
-10. Validate registry, connection state, projection, fallback absence, and cache, then atomically
-    advance the registry to `.complete`.
+7. While retaining the registry lock, acquire the connection-state lock, migrate Dawn's hostname-only
+   `connectedSites` grants with their stored accounts, and initialize the default to the proven address
+   when no valid default exists. Do not ingest `connectedOriginsV2`.
+8. Preserve Dawn activity and installation-wide network preferences through their existing App Group
+   formats. Start the new account-bound balance cache empty; Dawn has no supported singleton cache.
+9. Verify `sw2.walletAddress` is absent as downgrade cleanup, then persist
+   `legacyWalletAddressFallbackRemoved = true`. This value is not an address source.
+10. Validate registry, connection state, projection, downgrade-fallback absence, activity/network
+     compatibility, and the new cache shape, then atomically
+     advance the registry to `.complete`.
 11. Preserve old key material until the existing explicit migration cleanup policy allows deletion.
-12. Release the registry lock and adoption claim, terminalize pending legacy-binding requests under
-    their per-request claims, and hydrate only the home-selected account's cache and views.
+12. Release the registry lock and adoption claim, then hydrate only the home-selected account's cache
+    and views. Dawn has no `PendingRequests` format to migrate.
 
 Every app and extension request entry first calls the same idempotent `ensureRegistryAdopted`
 operation. Initial adoption first persists `.migrating`; under registry-then-connection locks it
-resumes all singleton wallet, grant/default/active, fallback-removal, and cache steps, then commits
+resumes Dawn key, legacy-grant/default, activity/network, and downgrade-fallback steps, then commits
 `.complete` only after their authoritative files validate. Another process seeing `.migrating`
-resumes or fails closed and cannot prepare or decide a request. After adoption, every
-status/list/rebind/approve/reject path acquires the per-request claim, reloads the record, and
-terminalizes a pending legacy binding before queue checks or any authentication, signing, grant
-mutation, or RPC submission. The startup scan is cleanup, not the security boundary; this adoption
-barrier plus claimed lazy check closes the cross-process interval.
+resumes or fails closed and cannot prepare or decide a request.
 
-Conflicting nonempty values in `wallet-address.conf`, `sw2.walletAddress`, and old `walletAddress`
-fail loudly unless the authenticated migration state proves which value is authoritative.
+The adoption claim must not be a retained App Group `flock`: iOS terminates a containing app with
+`0xDEAD10CC` if it is suspended while holding one. Physical-device verification proved that
+`NSFileCoordinator` instead gives the containing app a File Coordination suspension assertion while
+its accessor runs, excludes the Safari extension, releases normally, and permits a fresh extension
+request immediately afterward.
+
+The Dawn `walletAddress` plus authenticated migration state are the only supported pre-registry wallet
+identity inputs. A present current-rebuild registration is unsupported and must not be silently
+adopted as Dawn state.
 
 ### Create a seed wallet group
 
@@ -904,14 +916,14 @@ an account/group change causes release and retry rather than continuing under th
 
 ## Migration Plan
 
-### Existing rebuild wallet
+### Current rebuild wallet (v2)
 
-- Detect `wallet-address.conf` and the matching private-key keychain item.
-- Require consistency with any rebuild migration marker.
-- Create one private-key group with that address.
-- Set it as home selection and connection default.
-- Preserve its existing keychain service/account identity without moving key bytes.
-- Migrate its singleton balance snapshot into the account-keyed cache.
+- Unsupported as a migration source.
+- Do not inspect or adopt `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, the
+  singleton native-balance cache, or retained pending-request files when no registry exists.
+- Do not add fallback behavior that silently turns an unsupported v2 installation into a partial
+  multi-account installation. Its retained keychain item remains orphaned unless explicitly imported
+  through a future reviewed recovery flow.
 
 ### Old Dawn-format wallet
 
@@ -927,28 +939,24 @@ zero's private key. Do not label it seed-backed or permit sibling derivation.
 
 ### Existing connection grants
 
-- Decode normalized V2 grants and migrate each stored address as an account-specific exact grant.
-- Set each migrated exact origin/profile's active account to its V2 address.
-- Preserve hostname-only grants with legacy precision and their stored address.
+- Preserve Dawn `connectedSites` hostname-only grants with legacy precision and their stored address.
 - Never assign a legacy grant to the current home or default account.
 - Preserve grants for addresses not currently registered as dormant records; they cannot become
   active or sign until that exact account is explicitly re-imported.
-- Fail closed on corrupt V2 data rather than treating it as empty and reactivating broader hostname
-  fallback.
+- Do not ingest `connectedOriginsV2`; that current-rebuild format is outside migration scope.
 
 ### Existing activity
 
-Keep every row. Account-scoped views include rows with a matching `from_address`. Retained pending
-records may backfill an empty address only when request linkage proves it.
+Keep every Dawn row. Account-scoped views include rows with a matching `from_address`; rows without a
+provable account remain retained but do not appear in an account-scoped view. Current-rebuild pending
+records are not used to backfill them.
 
 ### Existing pending requests
 
-Decode old records with explicit binding-version defaults. Never let a schema decode failure silently
-remove a queue head. During registry adoption, and lazily on first access for any record missed by that
-scan, convert every pending legacy-binding record to failed with JSON-RPC code `-32000` and message
-`Wallet account state changed; retry request`. Preserve consumed, rejected, expired, and failed legacy
-records for status and activity backfill. No legacy pending record may reach authentication, signing,
-grant mutation, broadcasting, or connect rebinding.
+Dawn has no supported `PendingRequests` format. Current-rebuild pending files are not migrated or used
+for activity backfill. Account-inclusive binding version 2 remains the required format for requests
+created by the multi-account runtime; that protocol version is unrelated to the unsupported wallet-v2
+migration source.
 
 ## File-Level Change Map
 
@@ -965,12 +973,13 @@ grant mutation, broadcasting, or connect rebinding.
   weakening `.userPresence` behavior.
 - New `KeychainSeedStore.swift`: entropy items keyed by group ID.
 - `Signing.swift`: account resolver plus private-key and seed-account signers.
-- `BalanceCache.swift`: multi-account schema and singleton migration.
-- `ConnectedSitesStore.swift`: replace V2 authority with atomic connection state, account-specific
-  grants, active mappings, default account, migration, and legacy mirror.
+- `BalanceCache.swift`: multi-account schema without current-rebuild singleton decoding.
+- `ConnectedSitesStore.swift`: replace runtime authority with atomic connection state, account-specific
+  grants, active mappings, default account, Dawn hostname-grant migration, and legacy mirror.
 - `ActivityStore.swift`: account predicates, indexes, repeated-signature event identity, and migration.
 - `ApprovalRequest.swift`: account-inclusive binding and intent digest versions.
-- `PendingWalletRequest.swift`: binding/revision compatibility and atomic connect rebind.
+- `PendingWalletRequest.swift`: current account-inclusive binding/revision and atomic connect rebind;
+  no current-rebuild request migration.
 - `WalletService.swift`: operation-specific account resolution, exact grant checks, visible accounts,
   connect rebind/commit, account-scoped activity, and disconnect semantics.
 - `TransactionSubmissionLock.swift`: retain account/chain nonce isolation and integrate documented lock
@@ -1014,8 +1023,8 @@ grant mutation, broadcasting, or connect rebinding.
 
 - `WalletFactoryTests.swift`: groups, duplicate imports, derivation, rollback, and deletion recovery.
 - `SeedPhraseTests.swift`: entropy/mnemonic vectors and account indexes.
-- `MigrationTests.swift`: both shipped wallet formats, pending states, conflicts, and retained secrets.
-- `ConnectedSitesTests.swift`: V2/legacy migration, multiple accounts, active/default separation, and
+- `MigrationTests.swift`: Dawn migration states, conflicts, authenticated proof, and retained secrets.
+- `ConnectedSitesTests.swift`: Dawn hostname migration, multiple accounts, active/default separation, and
   concurrent updates.
 - `ActivityStoreTests.swift`: account filters, migration, repeated signatures, and connected-app scope.
 - `ApprovalTests.swift`: account-inclusive binding, rebind restrictions, races, and connect commit.
@@ -1032,19 +1041,24 @@ grant mutation, broadcasting, or connect rebinding.
 
 ### Gate A: Registry and migration
 
+Status: complete on 2026-08-25.
+
 Exit conditions:
 
 - Versioned registry validates both group kinds and separate home selection.
-- A durable `.migrating` barrier prevents app and extension request handling until singleton registry,
-  connection, fallback, and cache adoption validates as `.complete`.
-- Existing rebuild and old Dawn-format installations adopt exactly one private-key group.
+- A durable `.migrating` barrier prevents app and extension request handling until Dawn key,
+  connection, activity/network, downgrade-fallback, and registry adoption validates as `.complete`.
+- Existing Dawn v1 installations adopt exactly one private-key group. Current rebuild v2 installations
+  are explicitly unsupported migration sources.
 - Conflicting or interrupted state fails or recovers deterministically.
 - Registry/projection interruption commits forward exactly, and the rebuild UserDefaults fallback is
   proven absent before multi-account operations are enabled.
 - Old key material is not deleted.
-- Account-bound balance migration succeeds.
-- Atomic connection-state authority migrates V2 and legacy grants without changing their stored
+- The new account-bound balance cache starts empty for Dawn migration.
+- Atomic connection-state authority migrates Dawn hostname grants without changing their stored
   accounts or authorization precision.
+- A real Dawn v1 installation upgrades in place on a physical device, and real containing-app and
+  Safari-extension processes cannot overlap adoption without either process being terminated.
 
 ### Gate B: Seed groups and account lifecycle
 
@@ -1063,7 +1077,7 @@ Exit conditions:
 
 - Multiple accounts retain grants for one origin/profile.
 - Default and active connection accounts persist separately from home selection.
-- V2 and legacy migrations preserve their stored addresses and precision.
+- Dawn hostname-grant migration preserves stored addresses and precision.
 - Disconnect and forget remove only matching account state.
 - Activity and connected-app details cannot mix account rows.
 - Repeated deterministic signatures persist as separate canonical request events.
@@ -1120,7 +1134,6 @@ Exit conditions:
 Exit conditions:
 
 - A real old release upgrades in place to one group without address or signing identity change.
-- A current rebuild single-account installation upgrades without losing activity, grants, or balance.
 - Physical-device generated seed, import, derive, sign, private-key export, and complete group deletion
   behave as documented.
 - Physical-device Safari proves connection selection, grant retention, active-account signing, and
@@ -1138,12 +1151,8 @@ fixtures into its App Group or keychain:
   extension, App Group, and keychain identities. In that app, create or import a disposable test wallet
   and exercise each state being migrated, including a connected test site and representative activity
   when those semantics are under test.
-- On the preferred simulator, separately install the latest pre-multi-account rebuild and use its UI to
-  create/import the singleton wallet, establish representative grants, activity, network selection,
-  and balance-cache state, then close the app.
-- Install the new build over each prepared installation without uninstalling the old build, erasing the
-  simulator/device, clearing Safari data, or resetting App Group, UserDefaults, keychain, or Secure
-  Enclave state first.
+- Install the new build over the prepared Dawn installation without uninstalling the old build,
+  clearing Safari data, or resetting App Group, UserDefaults, keychain, or Secure Enclave state first.
 - Use only disposable test accounts with no real assets. Record the expected migration assertions, but
   never record seed phrases, private keys, personal wallet addresses, device identifiers, or sensitive
   signing payloads.
@@ -1165,7 +1174,6 @@ fixtures into its App Group or keychain:
 - Exact origin and Safari-profile separation for each account.
 - Seamless hostname-only authorization for its stored account until an exact grant exists.
 - Account-scoped Activity unions, limits, receipt polling, and detail navigation.
-- Old pending record decoding and deterministic terminal behavior.
 - Provider retry before approval, after rebinding, after approval, and after commit-marker recovery
   resolves the original request; reuse of its key with changed intent fails, while the same intent
   with a newly minted key creates a distinct request.
@@ -1180,7 +1188,8 @@ fixtures into its App Group or keychain:
 
 ### Simulator coverage
 
-- Migrate a production-shaped singleton registry, grant store, balance cache, and activity database.
+- Exercise synthetic Dawn registry adoption and corruption handling; real Dawn key migration remains a
+  physical-device acceptance test.
 - Create a seed group, confirm backup, derive account one, import a private-key group, and switch home.
 - Verify different home balances and account-scoped Activity/Connected Apps.
 - Connect one site to account A, then use a second new site to select account B in its connect popup.
@@ -1220,7 +1229,8 @@ fixtures into its App Group or keychain:
 
 - An installation can hold multiple seed and private-key wallet groups without secret or metadata
   crossover.
-- Existing users retain their exact account and history in one private-key group.
+- Supported Dawn v1 users retain their exact account and history in one private-key group. Current
+  rebuild v2 installations have no migration guarantee.
 - Seed groups derive deterministic sibling accounts without persisting child keys.
 - The home picker controls only containing-app account scope.
 - Activity and Connected Apps show only the home-selected account.

@@ -1,5 +1,4 @@
 import Foundation
-import SQLite3
 import Testing
 
 @testable import StupidWalletCore
@@ -69,49 +68,6 @@ struct ActivityStoreTests {
     #expect(records.count == 1)
     #expect(records.first?.signedMessage == messageHex)
     #expect(records.first?.signature == "0x" + String(repeating: "07", count: 65))
-  }
-
-  @Test("schema migration backfills retained canonical request content")
-  func backfillsRetainedRequests() async throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "ActivityStoreTests-\(UUID().uuidString)")
-    let databaseURL = directory.appendingPathComponent("Activity.sqlite")
-    let pendingDirectory = directory.appendingPathComponent("PendingRequests")
-    let store = ActivityStore(
-      databaseURL: databaseURL, pendingRequestDirectory: pendingDirectory)
-    let transactionData = "0x1234"
-    let transaction = request(
-      kind: .send, method: "eth_sendTransaction",
-      params: .array([.object(["data": .string(transactionData)])]))
-    let messageHex = "0x" + Hex.encode(Array("retained message".utf8))
-    var signature = request(
-      kind: .message, method: "personal_sign",
-      params: .array([.string(messageHex), .string(account)]))
-    let signatureHex = "0x" + String(repeating: "11", count: 65)
-    signature.result = .string(signatureHex)
-    try await store.recordTransaction(
-      request: transaction, hash: "0x" + String(repeating: "ef", count: 32), nonce: "0x4")
-    try await store.recordSignature(request: signature, signature: [8, 9, 10])
-
-    var database: OpaquePointer?
-    #expect(sqlite3_open(databaseURL.path, &database) == SQLITE_OK)
-    let migrationSetup = """
-      UPDATE transactions SET transaction_data = NULL;
-      UPDATE signatures SET message_content = '', signature_hex = '';
-      PRAGMA user_version=6;
-      """
-    #expect(sqlite3_exec(database, migrationSetup, nil, nil, nil) == SQLITE_OK)
-    sqlite3_close(database)
-    let pendingStore = PendingRequestStore(directory: pendingDirectory)
-    try await pendingStore.insert(transaction)
-    try await pendingStore.insert(signature)
-
-    let migrated = ActivityStore(
-      databaseURL: databaseURL, pendingRequestDirectory: pendingDirectory)
-    let records = try await migrated.activities()
-    #expect(records.first { $0.kind == .transaction }?.transactionData == transactionData)
-    #expect(records.first { $0.kind == .signature }?.signedMessage == messageHex)
-    #expect(records.first { $0.kind == .signature }?.signature == signatureHex)
   }
 
   @Test("transaction lifecycle updates are durable")

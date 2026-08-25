@@ -26,13 +26,11 @@ public struct SecurityWalletBackend: OldWalletBackend {
   public func oldAddress() -> String? { defaults().string(forKey: constants.oldAddressKey) }
 
   public func hasNewWallet() -> Bool {
-    WalletStore.activeAddress(appGroup: appGroup) != nil
-      || defaults().string(forKey: constants.newWalletKey) != nil
+    (try? WalletRegistryStore(appGroup: appGroup).load()) != nil
   }
 
   public func isMigrated() -> Bool {
     defaults().bool(forKey: constants.migratedKey)
-      && defaults().string(forKey: constants.newWalletKey) != nil
   }
 
   public func ciphertext(for address: String) -> Data? {
@@ -67,13 +65,6 @@ public struct SecurityWalletBackend: OldWalletBackend {
     do { try keyStore.save(key: key, account: account) } catch {
       throw WalletMigrationFailure.saveFailed
     }
-    do {
-      try WalletStore.setAddress(account, appGroup: appGroup)
-      defaults().set(account, forKey: constants.newWalletKey)
-    } catch {
-      try? keyStore.delete(account: account)
-      throw WalletMigrationFailure.saveFailed
-    }
   }
 
   public func loadKey(account: String) throws -> [UInt8] {
@@ -87,7 +78,6 @@ public struct SecurityWalletBackend: OldWalletBackend {
   }
 
   public func markMigrated(address: String) {
-    defaults().set(address, forKey: constants.newWalletKey)
     defaults().set(true, forKey: constants.migratedKey)
     defaults().removeObject(forKey: constants.pendingKey)
   }
@@ -107,7 +97,9 @@ public struct SecurityWalletBackend: OldWalletBackend {
       cleanupOldMaterial(address: address)
       defaults().removeObject(forKey: constants.oldAddressKey)
     }
-    defaults().removeObject(forKey: constants.newWalletKey)
+    defaults().removeObject(forKey: constants.rebuildWalletKey)
+    defaults().removeObject(forKey: constants.rebuildMigratedKey)
+    defaults().removeObject(forKey: constants.rebuildPendingKey)
     defaults().removeObject(forKey: constants.migratedKey)
     defaults().removeObject(forKey: constants.pendingKey)
   }
@@ -157,8 +149,10 @@ public struct SecurityWalletBackend: OldWalletBackend {
 
   private struct BackendConstants {
     let oldAddressKey = "walletAddress"
-    let newWalletKey = WalletFactory.walletAddressKey
-    let migratedKey = "sw2.authenticatedMigration"
-    let pendingKey = "sw2.authenticatedMigration.pending"
+    let rebuildWalletKey = WalletFactory.walletAddressKey
+    let rebuildMigratedKey = "sw2.authenticatedMigration"
+    let rebuildPendingKey = "sw2.authenticatedMigration.pending"
+    let migratedKey = "sw3.dawnAuthenticatedMigration"
+    let pendingKey = "sw3.dawnAuthenticatedMigration.pending"
   }
 }

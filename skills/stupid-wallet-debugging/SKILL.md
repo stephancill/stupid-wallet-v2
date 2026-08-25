@@ -29,6 +29,22 @@ generic error text and do not bypass the canonical approval protocol.
    Safari `0xe8008015`/`No matching profile found` after an otherwise valid direct wrapper install as
    an installation-boundary failure, not another prompt to mutate signatures or profiles. Verify
    extension-bearing builds through Xcode or TestFlight.
+8. On a USB iPhone, use `idevicesyslog --udid <udid> --process StupidWalletSafari` for bounded
+   extension authentication diagnosis. A `LocalAuthentication evaluateAccessControl` immediately
+   around registry readiness checks means a supposedly metadata-only keychain probe touched a
+   protected item. `SecItemCopyMatching` can authenticate even with `kSecReturnData=false`; bind an
+   `LAContext` with `interactionNotAllowed=true` and treat `errSecInteractionNotAllowed` as evidence
+   that the exact protected item exists.
+9. Never hold or deliberately pause a containing app on an App Group `flock` while backgrounding it
+   to Safari. RunningBoard terminates that process with `0xDEAD10CC` because suspended apps may not
+   retain shared-container file locks. An extension proceeding only after that kill proves exclusion,
+   but it does not prove a safe production coordination boundary.
+10. Use the stable App Group claim URL with synchronous `NSFileCoordinator` for registry adoption.
+    Device logs should show a `File Coordination Claim` RunningBoard assertion while the containing
+    app accessor runs. A competing extension accessor may be canceled rather than visibly wait; verify
+    it did not enter during the claim and that a fresh popup request enters after release. The popup's
+    no-request state alone does not prove native success because its transport fallback can render an
+    empty list.
 
 ## Stack Map
 
@@ -82,14 +98,11 @@ Use these observations:
 - `rejected` or `expired`: do not reuse it; reproduce a fresh request normally.
 - `consumed`: inspect `result`, then verify the signature or transaction independently.
 
-Activity details intentionally omit Data and Message sections when their SQLite values are null or
-empty. For rebuild-era rows, first compare `PRAGMA user_version` and count empty
-`transaction_data`/`message_content` rows that have a `request_id`; schema migration can safely
-backfill those values from retained `PendingRequests/<request-id>.json` records. Inspect counts and
-request metadata before reading sensitive payloads. Rows without a request ID or retained canonical
-record cannot be reconstructed from activity storage alone. Signature schema migration can likewise
-restore an empty `signature_hex` from the retained consumed request's 65-byte result; validate the
-length before treating that result as a signature.
+Activity details intentionally omit Data, Message, or Signature values when their SQLite columns are
+null or empty. Current-rebuild `PendingRequests` files are unsupported migration inputs and must not be
+read to reconstruct those fields. Preserve Dawn activity rows as stored; missing historical content
+remains missing unless a separately reviewed source proves it without importing unsupported request
+authority.
 
 Activity lists are local SQLite data and should render before receipt polling. If global Activity or
 a connected-app Activity section shows a blocking spinner for approximately one or more RPC
@@ -97,6 +110,18 @@ timeouts, inspect the view's load order: awaiting `refreshTransactionActivity()`
 every unresolved transaction and can delay the query even though persisted rows are already
 available. A realistic database with many unresolved rows exposes this more clearly than a small
 fixture.
+
+Current multi-account pending records require binding version 2 and an explicit revision. An
+unsupported current-rebuild record is not migrated, terminalized, listed, or used for activity
+backfill. Never edit or delete one to make startup pass; a current-rebuild-only installation is outside
+the approved upgrade scope and must not be converted into a partial registry.
+
+On an ad-hoc iOS simulator build, App Group files may be shared while an app and its Safari extension
+still observe separate App Group `UserDefaults` suite files in their process data containers. Prove the
+problem before blaming migration: connect through the old extension, then open Connected Apps in the
+old containing app before upgrading. If it already reports no connections, that simulator cannot prove
+grant preservation; use a properly signed physical upgrade rather than copying preferences or adding a
+simulator-only migration path.
 
 Find the booted simulator and App Group pending files without changing them:
 

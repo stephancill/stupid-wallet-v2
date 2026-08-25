@@ -3,6 +3,8 @@ import Foundation
 
 public enum PendingRequestStoreError: Error, Equatable, Sendable {
   case duplicateCallBundleID
+  case corrupt
+  case unavailable
 }
 
 /// Canonical, one-time pending signing request. Crucially the popup never supplies
@@ -26,6 +28,12 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
   public let account: String
   /// Immutable dapp intent bound by `payloadDigest` and shown for approval.
   public let params: JSONValue
+  /// Approval-binding identity. Version 1 hashes request ID plus canonical params; version 2
+  /// hashes the account-inclusive canonical object. `nil` identifies a retained legacy record.
+  public let bindingVersion: Int?
+  /// Monotonic transition counter starting at zero; increments only on the one permitted
+  /// plain-connect account rebind.
+  public var revision: UInt64
   public let payloadDigest: String
   /// Stable identity of the canonical intent used with `requestKey` for idempotent
   /// `prepare`. Absent on records written before this field existed.
@@ -43,6 +51,35 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
 
   public var isExpired: Bool { Date() > expiresAt }
 
+  private enum CodingKeys: String, CodingKey {
+    case id, kind, method, origin, profileID, chainId, account, params, bindingVersion, revision
+    case payloadDigest, intentDigest, requestKey, resolvedParams, createdAt, expiresAt, status
+    case result, error
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    kind = try container.decode(RequestKind.self, forKey: .kind)
+    method = try container.decode(String.self, forKey: .method)
+    origin = try container.decode(String.self, forKey: .origin)
+    profileID = try container.decodeIfPresent(String.self, forKey: .profileID)
+    chainId = try container.decode(String.self, forKey: .chainId)
+    account = try container.decode(String.self, forKey: .account)
+    params = try container.decode(JSONValue.self, forKey: .params)
+    bindingVersion = try container.decodeIfPresent(Int.self, forKey: .bindingVersion)
+    revision = try container.decode(UInt64.self, forKey: .revision)
+    payloadDigest = try container.decode(String.self, forKey: .payloadDigest)
+    intentDigest = try container.decodeIfPresent(String.self, forKey: .intentDigest)
+    requestKey = try container.decodeIfPresent(String.self, forKey: .requestKey)
+    resolvedParams = try container.decodeIfPresent(JSONValue.self, forKey: .resolvedParams)
+    createdAt = try container.decode(Date.self, forKey: .createdAt)
+    expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+    status = try container.decode(Status.self, forKey: .status)
+    result = try container.decodeIfPresent(JSONValue.self, forKey: .result)
+    error = try container.decodeIfPresent(JSONValue.self, forKey: .error)
+  }
+
   public init(
     id: UUID = UUID(),
     kind: RequestKind,
@@ -55,6 +92,8 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     payloadDigest: String,
     intentDigest: String? = nil,
     requestKey: String? = nil,
+    bindingVersion: Int? = nil,
+    revision: UInt64 = 0,
     resolvedParams: JSONValue? = nil,
     createdAt: Date = Date(),
     expiresAt: Date = Date().addingTimeInterval(600),
@@ -73,6 +112,8 @@ public struct WalletPendingRequest: Sendable, Codable, Equatable {
     self.payloadDigest = payloadDigest
     self.intentDigest = intentDigest
     self.requestKey = requestKey
+    self.bindingVersion = bindingVersion
+    self.revision = revision
     self.resolvedParams = resolvedParams
     self.createdAt = createdAt
     self.expiresAt = expiresAt
@@ -208,25 +249,37 @@ public actor PendingRequestStore {
 
   /// All currently-pending records; expired ones are re-normalized first.
   public func pending() throws -> [WalletPendingRequest] {
+    try all().filter { $0.status == .pending }
+      .sorted { $0.createdAt > $1.createdAt }
+  }
+
+  /// Every retained canonical record. UUID-named request files fail closed when unreadable
+  /// or malformed rather than disappearing from migration and replay handling.
+  public func all() throws -> [WalletPendingRequest] {
     let files =
-      (try? FileManager.default.contentsOfDirectory(
-        at: directory, includingPropertiesForKeys: nil)) ?? []
+      try FileManager.default.contentsOfDirectory(
+        at: directory, includingPropertiesForKeys: nil)
     var result: [WalletPendingRequest] = []
-    for file in files where file.pathExtension == "json" {
-      guard let data = try? Data(contentsOf: file) else { continue }
-      guard
-        var request = try? JSONDecoder().decode(
-          WalletPendingRequest.self, from: data)
-      else { continue }
+    for file in files
+    where file.pathExtension == "json"
+      && UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil
+    {
+      let data: Data
+      do {
+        data = try Data(contentsOf: file)
+      } catch {
+        throw PendingRequestStoreError.unavailable
+      }
+      guard var request = try? JSONDecoder().decode(WalletPendingRequest.self, from: data) else {
+        throw PendingRequestStoreError.corrupt
+      }
       if request.status == .pending && request.isExpired {
         request.status = .expired
-        try? persist(request)
+        try persist(request)
       }
-      if request.status == .pending {
-        result.append(request)
-      }
+      result.append(request)
     }
-    return result.sorted { $0.createdAt > $1.createdAt }
+    return result
   }
 
   private func persist(_ request: WalletPendingRequest) throws {

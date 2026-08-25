@@ -118,6 +118,60 @@ public enum CanonicalRequest {
     return Hex.encode(Keccak.keccak256(input))
   }
 
+  /// Binding version 2: a sorted-key canonical JSON object including every approval-relevant
+  /// field and the wallet-selected account. Keccak-256 of the canonical JSON bytes. Any
+  /// mutation to a listed field invalidates approval.
+  public static func bindingDigestV2(
+    requestID: UUID,
+    kind: RequestKind,
+    method: String,
+    origin: String,
+    profileID: String?,
+    chainId: String,
+    account: String,
+    params: JSONValue,
+    createdAt: Date,
+    expiresAt: Date
+  ) -> String {
+    let object: JSONValue = .object([
+      "version": .number(2),
+      "requestId": .string(requestID.uuidString.lowercased()),
+      "kind": .string(kind.rawValue),
+      "method": .string(method),
+      "origin": .string(Origin.normalize(origin)),
+      "profileId": profileID.map(JSONValue.string) ?? .null,
+      "chainId": .string(chainId),
+      "account": .string(account.lowercased()),
+      "params": params,
+      "createdAtMilliseconds": .string(millisecondsString(createdAt)),
+      "expiresAtMilliseconds": .string(millisecondsString(expiresAt)),
+    ])
+    return Hex.encode(Keccak.keccak256(canonicalization(object)))
+  }
+
+  /// Intent digest version 2: a sorted-key canonical JSON object of transport-retry
+  /// identity. It excludes the request ID, timestamps, and any separately wallet-selected
+  /// account, so a transport retry after a popup rebind still converges on the original
+  /// request.
+  public static func intentDigestV2(
+    method: String, origin: String, chainId: String, profileID: String?, params: JSONValue
+  ) -> String {
+    let object: JSONValue = .object([
+      "version": .number(2),
+      "method": .string(method.lowercased()),
+      "origin": .string(Origin.normalize(origin)),
+      "profileId": profileID.map(JSONValue.string) ?? .null,
+      "chainId": .string(chainId),
+      "params": params,
+    ])
+    return Hex.encode(Keccak.keccak256(canonicalization(object)))
+  }
+
+  /// UTC Unix milliseconds encoded as a decimal string, matching the approved v2 binding.
+  public static func millisecondsString(_ date: Date) -> String {
+    String(Int64(date.timeIntervalSince1970 * 1000))
+  }
+
   /// JSON encoding with object keys sorted in canonical order, so byte-level equality is
   /// a reliable tamper check. `.sortedKeys` on a heterogeneous object is stable.
   public static func canonicalData(_ value: JSONValue) throws -> Data {

@@ -415,8 +415,8 @@ struct TransactionSubmissionTests {
     #expect(await service.status(for: id)?.status == "failed")
   }
 
-  @Test("a malformed persisted send becomes terminal instead of remaining pending")
-  func oldMalformedSendFailsTerminally() async throws {
+  @Test("an unsupported old malformed send fails binding without mutation")
+  func oldMalformedSendFailsBinding() async throws {
     let service = service { _ in rpcResponse(error: "RPC must not be called") }
     let id = UUID()
     let params = JSONValue.array([
@@ -428,20 +428,15 @@ struct TransactionSubmissionTests {
         origin: "https://dapp.example", chainId: "1", account: service.account,
         params: params, payloadDigest: CanonicalRequest.digest(of: params, keyedBy: id)))
 
-    await #expect(
-      throws: WalletError.rpc(
-        .object([
-          "code": .number(-32602),
-          "message": .string("Invalid persisted request parameters"),
-        ]))
-    ) {
+    await #expect(throws: WalletError.bindingMismatch) {
       try await service.approve(request: id)
     }
-    #expect(await service.status(for: id)?.status == "failed")
+    #expect(await service.status(for: id) == nil)
+    #expect(try await service.store.record(id)?.status == .pending)
   }
 
-  @Test("a complete old send with unsupported semantics becomes terminal")
-  func oldUnsupportedSendFailsTerminally() async throws {
+  @Test("an unsupported complete old send fails binding without mutation")
+  func oldUnsupportedSendFailsBinding() async throws {
     let service = service { _ in rpcResponse(error: "RPC must not be called") }
     let id = UUID()
     let params = JSONValue.array([
@@ -463,16 +458,11 @@ struct TransactionSubmissionTests {
         origin: "https://dapp.example", chainId: "1", account: service.account,
         params: params, payloadDigest: CanonicalRequest.digest(of: params, keyedBy: id)))
 
-    await #expect(
-      throws: WalletError.rpc(
-        .object([
-          "code": .number(-32602),
-          "message": .string("Invalid persisted request parameters"),
-        ]))
-    ) {
+    await #expect(throws: WalletError.bindingMismatch) {
       try await service.approve(request: id)
     }
-    #expect(await service.status(for: id)?.status == "failed")
+    #expect(await service.status(for: id) == nil)
+    #expect(try await service.store.record(id)?.status == .pending)
   }
 
   @Test("request claims are atomic across store instances")

@@ -235,10 +235,19 @@ public struct WalletRegistryStore: Sendable {
   private let projectionURL: URL?
   private let journalURL: URL?
   private let lockURL: URL?
+  private let faultInjector: any PersistenceFaultInjecting
 
   public init(
     directory: URL? = nil,
     appGroup: String = PendingRequestStore.defaultAppGroup
+  ) {
+    self.init(directory: directory, appGroup: appGroup, faultInjector: NoPersistenceFaults())
+  }
+
+  init(
+    directory: URL? = nil,
+    appGroup: String = PendingRequestStore.defaultAppGroup,
+    faultInjector: any PersistenceFaultInjecting
   ) {
     let container = directory ?? WalletStore.containerURL(appGroup: appGroup)
     fileURL = container?.appendingPathComponent("wallet-registry.json", isDirectory: false)
@@ -246,6 +255,7 @@ public struct WalletRegistryStore: Sendable {
     journalURL = container?.appendingPathComponent(
       "wallet-registry-transition.json", isDirectory: false)
     lockURL = container?.appendingPathComponent("wallet-registry.lock", isDirectory: false)
+    self.faultInjector = faultInjector
   }
 
   public func load() throws -> WalletRegistry? {
@@ -265,6 +275,19 @@ public struct WalletRegistryStore: Sendable {
       throw WalletRegistryError.adoptionIncomplete
     }
     return registry
+  }
+
+  /// Confirms that the fail-closed rebuild projection exactly matches a registry snapshot.
+  public func validateProjection(for registry: WalletRegistry) throws {
+    try withLock {
+      try recoverTransitionUnlocked()
+      guard try loadRegistryUnlocked() == registry, let projectionURL else {
+        throw WalletRegistryError.transitionConflict
+      }
+      guard try Self.readFileState(at: projectionURL) == Self.projection(for: registry) else {
+        throw WalletRegistryError.transitionConflict
+      }
+    }
   }
 
   public func create(_ registry: WalletRegistry) throws {
@@ -310,6 +333,7 @@ public struct WalletRegistryStore: Sendable {
     do {
       try commitTransitionUnlocked(previous: previous, next: next)
     } catch {
+      if isSimulatedPersistenceInterruption(error) { throw error }
       try recoverTransitionUnlocked()
       guard try loadRegistryUnlocked() == next else { throw error }
     }
@@ -325,9 +349,13 @@ public struct WalletRegistryStore: Sendable {
       intendedProjection: try Self.projection(for: next))
 
     try Self.durableReplace(data: try Self.encode(transition), at: journalURL)
+    try faultInjector.hit(.journalAfterWrite)
     do {
+      try faultInjector.hit(.projectionBeforeWrite)
       try Self.apply(transition.intendedProjection, at: projectionURL)
+      try faultInjector.hit(.projectionAfterWrite)
     } catch {
+      if isSimulatedPersistenceInterruption(error) { throw error }
       do {
         try Self.apply(transition.previousProjection, at: projectionURL)
         try Self.durableRemove(at: journalURL)
@@ -337,7 +365,9 @@ public struct WalletRegistryStore: Sendable {
       throw error
     }
 
+    try faultInjector.hit(.registryBeforeWrite)
     try writeRegistryUnlocked(next)
+    try faultInjector.hit(.registryAfterWrite)
     try Self.durableRemove(at: journalURL)
   }
 

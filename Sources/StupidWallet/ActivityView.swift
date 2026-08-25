@@ -448,12 +448,13 @@ import SwiftUI
 
   func makeWalletService() -> WalletService {
     let signing: any Signing
-    if let address = WalletStore.activeAddress() {
+    if let address = try? WalletRegistryStore().loadReady()?.homeSelectedAddress {
       signing = KeychainSigner(account: address, store: KeychainKeyStore())
     } else {
       signing = UnavailableSigner()
     }
-    return WalletService(signing: signing, resolver: .persisted())
+    return WalletService(
+      signing: signing, resolver: .persisted(), registryStore: WalletRegistryStore())
   }
 
   private func appLabel(_ origin: String) -> String {

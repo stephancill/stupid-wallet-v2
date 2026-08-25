@@ -67,3 +67,33 @@ struct StubSigner: Signing {
     return sig
   }
 }
+
+final class OneShotPersistenceFaultInjector: PersistenceFaultInjecting, @unchecked Sendable {
+  enum Outcome: Sendable {
+    case failure
+    case interruption
+  }
+
+  private let point: PersistenceFaultPoint
+  private let outcome: Outcome
+  private let lock = NSLock()
+  private var fired = false
+
+  init(_ point: PersistenceFaultPoint, outcome: Outcome = .interruption) {
+    self.point = point
+    self.outcome = outcome
+  }
+
+  func hit(_ point: PersistenceFaultPoint) throws {
+    lock.lock()
+    defer { lock.unlock() }
+    guard point == self.point, !fired else { return }
+    fired = true
+    switch outcome {
+    case .failure:
+      throw PersistenceFaultSimulationError.failure(point)
+    case .interruption:
+      throw PersistenceFaultSimulationError.interruption(point)
+    }
+  }
+}

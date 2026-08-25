@@ -295,6 +295,110 @@ struct WalletRegistryTests {
         atPath: directory.appendingPathComponent("wallet-registry-transition.json").path))
   }
 
+  @Test(
+    "actual registry commit interruptions recover forward",
+    arguments: [
+      PersistenceFaultPoint.journalAfterWrite,
+      .projectionBeforeWrite,
+      .projectionAfterWrite,
+      .registryBeforeWrite,
+      .registryAfterWrite,
+    ])
+  func injectedTransitionRecovery(point: PersistenceFaultPoint) throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let address = try address(secret: 1)
+    let initialStore = WalletRegistryStore(directory: directory)
+    try initialStore.create(migratingRegistry(address: address))
+    let interruptedStore = WalletRegistryStore(
+      directory: directory,
+      faultInjector: OneShotPersistenceFaultInjector(point))
+
+    #expect(throws: PersistenceFaultSimulationError.interruption(point)) {
+      try interruptedStore.update(expectedRevision: 0) { current in
+        WalletRegistry(
+          revision: 1, adoptionState: .migrating, groups: current.groups,
+          homeSelectedAddress: current.homeSelectedAddress,
+          legacyWalletAddressFallbackRemoved: true)
+      }
+    }
+
+    let recovered = try #require(try WalletRegistryStore(directory: directory).load())
+    #expect(recovered.revision == 1)
+    #expect(recovered.legacyWalletAddressFallbackRemoved)
+    #expect(WalletStore.activeAddress(directory: directory) == address)
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: directory.appendingPathComponent("wallet-registry-transition.json").path))
+  }
+
+  @Test("an ordinary projection failure restores the previous authority")
+  func projectionFailureRollsBack() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let address = try address(secret: 1)
+    let initialStore = WalletRegistryStore(directory: directory)
+    let initial = migratingRegistry(address: address)
+    try initialStore.create(initial)
+    let failedStore = WalletRegistryStore(
+      directory: directory,
+      faultInjector: OneShotPersistenceFaultInjector(.projectionBeforeWrite, outcome: .failure))
+
+    #expect(throws: PersistenceFaultSimulationError.failure(.projectionBeforeWrite)) {
+      try failedStore.update(expectedRevision: 0) { current in
+        WalletRegistry(
+          revision: 1, adoptionState: .migrating, groups: current.groups,
+          homeSelectedAddress: current.homeSelectedAddress,
+          legacyWalletAddressFallbackRemoved: true)
+      }
+    }
+    #expect(try initialStore.load() == initial)
+    #expect(WalletStore.activeAddress(directory: directory) == address)
+    #expect(
+      !FileManager.default.fileExists(
+        atPath: directory.appendingPathComponent("wallet-registry-transition.json").path))
+  }
+
+  #if os(macOS)
+    @Test("registry advisory lock excludes a separate process")
+    func crossProcessLockExclusion() throws {
+      let directory = try temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let lockURL = directory.appendingPathComponent("wallet-registry.lock")
+      let child = Process()
+      let output = Pipe()
+      let input = Pipe()
+      child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+      child.arguments = [
+        "-c",
+        "import fcntl,sys; f=open(sys.argv[1],'a+'); fcntl.flock(f,fcntl.LOCK_EX); print('locked',flush=True); sys.stdin.buffer.read(1)",
+        lockURL.path,
+      ]
+      child.standardOutput = output
+      child.standardInput = input
+      try child.run()
+      let handshake = output.fileHandleForReading.readData(ofLength: 7)
+      #expect(String(decoding: handshake, as: UTF8.self) == "locked\n")
+
+      let completion = DispatchSemaphore(value: 0)
+      let worker = Thread {
+        do {
+          _ = try WalletRegistryStore(directory: directory).load()
+        } catch {
+          Issue.record(error)
+        }
+        completion.signal()
+      }
+      worker.start()
+      #expect(completion.wait(timeout: .now() + 0.2) == .timedOut)
+      try input.fileHandleForWriting.write(contentsOf: Data([0x01]))
+      input.fileHandleForWriting.closeFile()
+      #expect(completion.wait(timeout: .now() + 2) == .success)
+      child.waitUntilExit()
+      #expect(child.terminationStatus == 0)
+    }
+  #endif
+
   @Test("registry transitions cannot regress monotonic state")
   func monotonicTransitions() throws {
     let directory = try temporaryDirectory()

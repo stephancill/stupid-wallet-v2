@@ -3790,6 +3790,265 @@ Use this entry template:
   transaction-submission paths; add pairwise concurrency tests before protected-secret or
   pending-request mutation ships.
 
+## 2026-08-25 - Gate A Barrier Wiring
+
+### Summary
+
+- Wired the `.migrating` barrier into request entry points. `SafariWebExtensionHandler` now runs the
+  idempotent `WalletRegistryAdoption().ensureAdopted()` before every native message and dispatches
+  through a registry-gated `WalletService`; a throwing barrier responds with a structured `4900`
+  not-ready error. The app `WalletViewModel` runs the same adoption at startup and after create/import
+  so the registry tracks a freshly provisioned singleton wallet, while the projection file drives the
+  visible account.
+- `WalletService` gains an optional `registryStore`. When supplied, `ensureRegistryReady()` fails
+  request handling closed while the registry is `.migrating` (mapped to `notReady`), and
+  `permanentLegacyBinding` terminalizes any retained pending legacy-binding record (binding version
+  not 2) with JSON-RPC code `-32000` and message `Wallet account state changed; retry request` before
+  queue checks, expiry, signing, grant mutation, or RPC submission. `prepare`/`list`/`summarize` also
+  gate on readiness; `status` still returns the terminalized record's failed state so polling pages
+  converge. With no `registryStore`, hermetic single-account behavior is unchanged.
+- `ensureAdopted()` now runs the whole-pending legacy-terminalization scan only on the `.adopted`
+  transition; records it misses are terminalized lazily by the request paths that encounter them, so
+  per-message adoption stays cheap.
+- Confirmed Dawn/rebuild adoption never deletes old key material: the Dawn path retains ciphertext and
+  Secure Enclave material under the existing cleanup policy, and the rebuild keychain item is preserved
+  in place.
+
+### Why
+
+- This closes the remaining Gate A barrier exit condition: app and extension request handling is
+  refused until singleton registry, connection, fallback, and cache adoption validate as `.complete`,
+  and retained legacy pending bindings can never reach authentication, signing, grant mutation,
+  broadcasting, or a later rebind.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint` passed for all changed Swift.
+- `swift test --filter WalletRegistryAdoptionTests` passed all 14 focused tests, including new
+  coverage: a `.migrating` registry fails `prepare`/`list` closed, an adopted service terminalizes a
+  retained legacy binding on approve with the structured retry error and exposes it as failed, an
+  adopted service still approves canonical v2 records, adoption recovers an interrupted
+  projection-first transition journal, no-wallet creates no authority files, and no-creation on empty
+  installs.
+- `swift test` passed all 229 tests in 32 suites (224 previously).
+- `stupid-app build` succeeded, `stupid-app doctor` reported zero failures, and `git diff --check`
+  passed.
+
+### Follow-Up
+
+- Fault injection at the claim/journal/projection/registry/connection/cache/fallback boundaries plus a
+  real app/extension process-exclusion test before Gate A is declared closed.
+- Gate B begins seed/private-key group lifecycle; the app create/import flows still provision the
+  singleton (adopted into one private-key group on the next require) until those production flows are
+  given registry-backed group creation, and forgetting an adopted account leaves an inert stale
+  registry group that the Gate B deletion protocol will reconcile.
+
+## 2026-08-25 - Pending Request Binding Version 2
+
+### Summary
+
+- Added the approved account-inclusive approval binding as the default for new pending records.
+  `WalletPendingRequest` now carries `bindingVersion` (`nil` for retained legacy records) and a
+  monotonic `revision` starting at zero that later increments only on the single permitted
+  plain-connect account rebind. Both decode safely from retained legacy JSON.
+- Added `CanonicalRequest.bindingDigestV2`: Keccak-256 of the sorted-key canonical JSON object of
+  version, lowercase request ID, kind, persisted method, normalized origin, profile ID or `null`,
+  normalized decimal chain ID, lowercase account, canonical params, and UTC Unix-millisecond decimal
+  string timestamps. Any mutation to a listed field invalidates approval.
+- Added `CanonicalRequest.intentDigestV2`: a sorted-key canonical JSON object of version, normalized
+  lowercase method, normalized origin, profile ID or `null`, normalized decimal chain ID, and canonical
+  page params. It excludes the request ID, timestamps, and any wallet-selected account, so transport
+  retry identity survives a future popup rebind while a genuinely new request mints a new provider
+  request key.
+- `WalletService.prepare` now persists account-inclusive v2 digests with `bindingVersion: 2` and
+  `revision: 0`. `WalletService.approve` dispatches digest revalidation by binding version: v2 records
+  re-derive the account-inclusive digest, retained legacy records re-derive the prior
+  request-ID-plus-params digest and remain approvable in the current hermetically-tested service.
+- New records still create the canonical intent through the existing prepare path; dedup continues on
+  provider `requestKey` plus the v2 `intentDigest`.
+
+### Why
+
+- The plan requires an account-inclusive, immutable approval identity before any popup account rebind
+  or post-adoption legacy-terminalization policy can land. Adding the versioned bytes and record
+  fields now keeps retained v1 records decodable and lets later slices add popup rebind (revision
+  guard), adoption-gated legacy terminalization, and prepare convergence across all retained statuses
+  as isolated changes.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint` passed for the changed sources and tests.
+- `swift test --filter ApprovalTests` passed all 20 tests, including new coverage: prepare records
+  carry binding version 2 and revision zero with a stable recomputed digest, persisted-account
+  mutation is rejected, origin and timestamp mutation are rejected, retained legacy records decode
+  with nil binding version and remain approvable, and the v2 intent digest excludes the wallet-selected
+  account and request identity while changing canonical intent fields.
+- `swift test` passed all 224 tests in 32 suites (219 tests previously). The previously passing
+  mutation/expiry/queue/reject/signer-replacement approval tests still pass under the v2 default.
+- `stupid-app build` succeeded after the Swift change.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Adoption-gated lazy terminalization: after `ensureRegistryAdopted`, every status/list/rebind/
+  approve/reject path must terminalize a pending legacy-binding record with `-32000` and the retry
+  message and never sign, reject differently, or rebind it. Gate it behind the registry and wire
+  app/extension entry points through adoption.
+- Prepare convergence across all retained statuses plus the transport-integrity error for a reused
+  `requestKey` with a different `intentDigest`, then the popup connect-account rebind that increments
+  `revision` and preserves `requestKey`/`intentDigest`.
+
+## 2026-08-25 - Registry Adoption Orchestration
+
+### Summary
+
+- Added `WalletRegistryAdoption` in `Sources/StupidWalletCore/WalletRegistryAdoption.swift`: the
+  idempotent `ensureAdopted()` operation that converts a singleton rebuild wallet or an old Dawn-format
+  wallet into one private-key registry group behind the durable `.migrating` barrier.
+- Acquisition order follows the plan: recover the registry, resolve the single proven account from
+  `wallet-address.conf`, the `sw2.walletAddress` fallback, or the authenticated Dawn migration state
+  machine, adopt the registry as `.migrating`, adopt connection state, adopt the account-bound balance
+  cache, remove and verify `sw2.walletAddress`, validate registry/connection/cache, and then atomically
+  commit `.complete`.
+- Conflicting nonempty sources (`wallet-address.conf`, `sw2.walletAddress`, old `walletAddress`) fail
+  loudly. A registered address without a matching protected secret fails loudly rather than adopting
+  an un-signable group. The authenticated Dawn path reuses the Gate-4 `WalletMigration` state machine
+  through the `OldWalletBackend` protocol, so it is hermetically testable.
+- An existing `.migrating` registry is resumed (including connection, fallback, and cache steps) rather
+  than rebuilt; an existing `.complete` registry returns immediately. A second call converges to
+  committed state.
+- `ensureAdopted` takes the cross-process registry-adoption claim for the composed registry/connection
+  operations, releases it, then terminalizes every pending legacy-binding request to `.failed` with
+  JSON-RPC code `-32000` and message `Wallet account state changed; retry request`, preserving the
+  record for status/activity backfill.
+- Added the narrow `ProtectedSecretProbing` existence-probe protocol over a protected item, with
+  `KeychainKeyStore` conformance through its existing non-releasing `contains` check.
+
+### Why
+
+- This is the durable barrier that prevents app and extension request handling from using registry,
+  connection, fallback, and balance state until all of them adopt and validate as `.complete`. It is
+  the piece the registry, connection-state, and balance-cache foundations were built for.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint` passed for the new source and tests.
+- `swift test --filter WalletRegistryAdoptionTests` passed all 9 focused tests: rebuild adoption,
+  no-wallet no-creation, Dawn migration adoption, conflicting sources, missing secret, interrupted
+  migration resume, fallback removal, legacy pending terminalization, and migration failure mapping.
+- `swift test` passed all 219 tests in 32 suites (210 tests in 31 suites previously).
+- `stupid-app build` succeeded after the Swift change.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- The adoption claim serializes composed registry/connection adoption; strict hold-registry-lock-while-
+  acquiring-connection-lock composition for concurrent runtime reads (`visibleAccounts` and revocations)
+  arrives with the entry-point wiring slice, which also switches every app and extension request entry
+  through `ensureRegistryAdopted` and adds the lazy legacy-binding check at prepare/approve/reject.
+- Fault injection across the adoption boundaries (claim, journal, projection, registry, connection,
+  cache, fallback) plus a real app/extension process-exclusion test before Gate A exits.
+
+## 2026-08-25 - Account-Bound Balance Cache
+
+### Summary
+
+- Replaced the single-snapshot `native-balance-cache.json` payload in `BalanceCache` with a versioned
+  dictionary keyed by normalized address in the same atomic App Group file.
+- Each entry retains the account, formatted aggregate balance, last successful `updatedAt`, and the
+  registry revision captured when the refresh that produced it began.
+- Preserved the existing `balance(account:)`, `save(balance:account:)`, and `remove(account:)` API so
+  the single-account containing app continues to read and write the same file unchanged.
+- Added `entry(account:)`, `load() -> BalanceCacheSnapshot?`, `removeAll()`, and an internal
+  `revision()` for multi-account hydration and stale-write detection.
+- Migration preserves a stored singleton `{account, balance}` snapshot for its recorded account,
+  rewriting the payload once in the versioned shape; missing files return nil and corrupt payloads
+  fail loudly.
+- Persistence uses the same durable same-directory temporary write, file synchronization, and atomic
+  rename as the registry and connection-state stores.
+
+### Why
+
+- The plan requires account-bound balance caches so switching home accounts hydrates the correct
+  cached total and forgetting one account removes only that account's entry. Keeping the singleton
+  read/write API working means the cache can be adopted without touching the containing app's
+  read path, then extended for account switching later.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint` passed for the changed source and new tests.
+- `swift test --filter BalanceCacheTests` passed all 6 focused tests: multi-account coexistence and
+  single-account removal, case-insensitive lookups with full-entry metadata, monotonic cache revision,
+  singleton migration that preserves only the recorded account, corrupt/absent failure modes, and
+  `removeAll`.
+- `swift test` passed all 210 tests in 31 suites (204 tests in 30 suites previously). The pre-existing
+  `Gate6AppCoreTests.cachedTotalBalance` still passes against the migrated API.
+- `stupid-app build` succeeded after the Swift change.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Continue Gate A adoption: reconcile current rebuild and Dawn migration states into one private-key
+  group under the registry-adoption claim, adopt connection grants, remove and verify
+  `sw2.walletAddress`, migrate the balance cache under the proven account, terminalize legacy pending
+  bindings, and switch every app and extension entry through `ensureRegistryAdopted`.
+
+## 2026-08-25 - Atomic Connection-State Authority
+
+### Summary
+
+- Added the second Gate A persistence foundation: `ConnectionState` and `ConnectionStateStore` in
+  `Sources/StupidWalletCore/ConnectionState.swift`, replacing normalized-grant authority in
+  `UserDefaults` with one versioned, atomic `connection-state.json` App Group file guarded by an OS
+  advisory lock.
+- Defined the plan's value types: account-specific `ConnectionGrant` (exact origin/profile precision
+  and hostname-only legacy precision), one `ActiveConnection` per origin/profile, a separately
+  persisted `defaultAccount`, and durable `ConnectCommit` markers that travel with the same atomic
+  revision that holds grant/active/default fields.
+- Added strict validation: canonical EIP-55 accounts, unique grant identities, exact-origin grants
+  that match their normalized origin and derived hostname, hostname-precision grants that carry no
+  origin, at most one active account per origin/profile that must be backed by an exact grant, a
+  canonical default, and unique connect-commit request IDs.
+- Added a locked, revision-checked `getOrCreate`/`update` API with durable same-directory atomic
+  writes, plus an idempotent `initialMigratedState` that reads shipped V2 normalized grants
+  (`connectedOriginsV2`, default `Date` encoding) and legacy hostname grants (`connectedSites`) into a
+  revision-zero state. V2 grants become exact grants and restore their origin/profile active mapping;
+  legacy hostname grants keep hostname precision and are skipped per domain when an exact grant
+  already exists (preserving the fail-closed policy).
+- Every authoritative write mirrors the legacy `connectedSites` hostname dictionary
+  (best-effort downgrade compatibility) after the file commit; the mirror cannot represent multiple
+  accounts for one domain, so the most recently connected account wins.
+
+### Why
+
+- Connection grants are the other half of the approved state that must move behind a durable,
+  cross-process, account-aware authority before multi-account UI, signer switching, or active-account
+  request policy can be enabled. The registry owns group/account identity; connection state owns
+  who is granted, which granted account is active per origin/profile, and which account future plain
+  connects propose. Building it as a tested foundation lets the later adoption orchestration switch
+  app and extension readers together without temporarily splitting state.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint` passed for the new source and tests.
+- `swift test --filter ConnectionStateTests` passed all 11 focused tests: persistence across
+  independent store instances, revision monotonicity and concurrent-update exclusion, empty-state
+  idempotency, active-without-grant rejection, duplicate-active rejection, exact/legacy grant shape,
+  address/default validation, duplicate connect-commit rejection, V2/legacy migration that preserves
+  each stored account and precision, and the legacy mirror write.
+- `swift test` passed all 204 tests in 30 suites (193 tests in 29 suites previously).
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Next Gate A steps remain: reconcile current rebuild and Dawn migration states with
+  `initialMigratedState` under the adoption claim, remove and verify `sw2.walletAddress`, migrate the
+  singleton balance cache, terminalize legacy pending bindings, and switch every app and extension
+  entry through `ensureRegistryAdopted`. The connection store is not yet authority until those
+  readers switch together.
+- Add fault injection around the connection-state boundary (file write, lock interruption, corrupt
+  payload) and marker/request reconciliation coverage once connect commits are produced.
+
 ## 2026-08-25 - Wallet Registry Foundation
 
 ### Summary
@@ -3845,3 +4104,287 @@ Use this entry template:
 - Add exhaustive fault injection around journal, projection, registry, fallback, connection, and cache
   boundaries plus a real app/extension process-exclusion test. Current independent-store tests prove
   advisory-lock serialization in one host process but are not device migration acceptance.
+
+## 2026-08-25 - Gate A Fail-Closed Adoption Validation
+
+### Summary
+
+- Tightened the Gate A readiness barrier so an absent registry, a `.migrating` registry, a missing
+  private-key source, corrupt or missing connection authority, mismatched active/default membership,
+  an invalid account-bound cache, a stale compatibility projection, or a retained malformed pending
+  record prevents app and extension operations.
+- Removed optimistic containing-app projection reads. Wallet state is published only from a validated
+  complete registry, and the Safari signer is constructed from that registry rather than the removed
+  `sw2.walletAddress` fallback.
+- Made retained legacy-binding terminalization conditional and per-request claimed. Every adopted
+  entry scans the production `PendingRequests` directory, and status fails closed when terminalization
+  cannot be persisted.
+- Made balance-cache read-modify-write operations cross-process locked and corruption preserving.
+  Concurrent account saves no longer lose another process's entry.
+- Made V2 and legacy connection migration reject malformed stored containers and entries. A legacy
+  hostname grant is preserved even when an exact grant shares its domain, retaining the original
+  account and authorization precision.
+
+### Why
+
+- `.complete` must mean that wallet identity, protected-key availability, connection authority,
+  compatibility projection, fallback removal, cache state, and retained request state all validate.
+  Returning from adoption based only on the registry flag allowed corrupt or interrupted state to
+  bypass the intended migration barrier.
+
+### Verification
+
+- `swift format` completed for changed Swift. Recursive `swift format lint` reported only three
+  pre-existing block-comment warnings in `SecurityWalletBackend.swift`.
+- `swift test` passed all 237 tests in 32 suites. New regressions cover absent-registry refusal,
+  complete-state revalidation, corrupt migration sources, same-domain exact/legacy grant retention,
+  claimed legacy request terminalization, and concurrent balance-cache saves.
+- `stupid-app doctor` completed with zero failures and zero warnings, and `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+  Accessibility inspection found the expected setup actions with no wallet state exposed before
+  adoption.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Gate A is not yet declared complete. Add deterministic interruption injection across every
+  journal, projection, registry, connection, cache, and fallback persistence step, then prove the
+  fixed lock boundary in real app/extension processes.
+- Perform in-place acceptance upgrades from a production-shaped rebuild installation and a real old
+  Dawn-format installation. Synthetic fixtures do not prove App Group, keychain, Secure Enclave, or
+  shipped-format behavior.
+
+## 2026-08-25 - Gate A Fault Matrix And Rebuild Upgrade Investigation
+
+### Summary
+
+- Added deterministic one-shot persistence interruption seams and recovery coverage across registry
+  journal, compatibility projection, registry authority, connection authority, account-bound cache,
+  fallback removal, fallback-state commitment, completion-state commitment, and the adoption claim.
+- Added a separate child-process proof that `wallet-registry.lock` excludes another process. Changed
+  the test worker from the shared dispatch pool to a dedicated thread after full-suite contention
+  demonstrated that dispatch scheduling latency was not a valid lock timeout signal.
+- Performed a clean in-place simulator upgrade from the pre-multi rebuild commit. The old app UI
+  created a disposable wallet, populated the singleton balance cache, connected a loopback test site,
+  and produced one signed-message activity row before the current build was installed without an
+  uninstall or state reset.
+- The first upgraded launch exposed a concrete persisted-format bug: retained consumed request files
+  predated the non-optional `revision` field, so the fail-closed pending-store scan reported `corrupt`
+  after registry adoption and the app showed setup. `WalletPendingRequest` now decodes an absent
+  revision as zero, matching the shipped binding format, and a regression removes all later optional
+  binding fields plus revision before decoding.
+- After the fix, the upgrade produced one complete private-key registry group, preserved the exact
+  compatibility projection, migrated the singleton cache to one account entry, retained the activity
+  rows, removed the rebuild fallback commitment, and displayed the existing wallet again.
+
+### Simulator Limitation
+
+- The ad-hoc simulator could not provide valid grant-migration acceptance. Immediately after Safari
+  connected successfully under the old build, the old containing app itself displayed no connected
+  apps. Inspection showed App Group files were shared but the app and extension used separate
+  process-container `UserDefaults` suite files; replacing the extension removed the old process
+  container before Gate A could read it.
+- No simulator-only recovery or preference copying was added. A properly signed physical-device
+  upgrade must prove legacy grant preservation. Real app/extension simultaneous-process exclusion and
+  the old Dawn-format in-place device upgrade also remain outstanding, so Gate A is not closed.
+
+### Verification
+
+- `swift format --in-place` completed for changed Swift files. Recursive `swift format lint` reported
+  only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`.
+- The focused shipped-record compatibility test and separate-process lock test passed.
+- The first full `swift test` run exposed the dispatch-pool scheduling flaw in the new lock test. After
+  using a dedicated worker thread, `swift test` passed all 244 tests in 32 suites.
+- `stupid-app doctor` completed with zero failures and zero warnings. `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` installed and launched the current app;
+  accessibility inspection found the existing wallet home with address and balance controls.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Prove the registry/adoption lock boundary with the real containing app and Safari extension running
+  concurrently.
+- On a properly signed disposable physical installation, prepare a rebuild grant and activity before
+  upgrading and verify exact identity, grant, activity, cache, and signing continuity afterward.
+- Perform the separate in-place upgrade from a real old Dawn-format installation. Never use personal
+  wallet state for either acceptance run.
+
+## 2026-08-25 - Multi-Account Migration Scope Narrowed To Dawn V1
+
+### Decision
+
+- Narrowed the approved multi-account migration scope to old Dawn v1 installations only.
+- Current single-account rebuild v2 installations are explicitly unsupported migration sources. Their
+  `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, singleton balance cache, and
+  `PendingRequests` records receive no upgrade-preservation guarantee and must not be silently adopted.
+- Retained fail-closed `wallet-address.conf` projection for downgrade safety. Downgrade compatibility
+  is a separate boundary and does not make v2 an accepted upgrade source.
+
+### Plan Changes
+
+- Replaced the dual-source startup sequence with direct authenticated Dawn migration into a
+  `.migrating` registry.
+- Kept Dawn's actual persisted compatibility requirements: old address/ciphertext/Secure Enclave key
+  proof, `connectedSites` hostname grants, Activity, installation-wide network preferences, and old-key
+  retention until authenticated sign-and-recover succeeds.
+- Removed v2 singleton balance, normalized-grant, and pending-request migration from Gate A and upgrade
+  acceptance. Dawn starts with an empty account-bound balance cache and has no supported
+  `PendingRequests` source format.
+- Made deletion of the already-implemented superseded v2 migration paths the first recommended work in
+  `docs/engineering-handover.md`, followed by real app/extension exclusion proof and the physical Dawn
+  upgrade.
+
+### Verification
+
+- Reviewed the current implementation and the Dawn reference source to distinguish Dawn
+  `connectedSites`, Activity, and network preferences from rebuild-only v2 formats.
+- `git diff --check` passed after the documentation changes.
+
+### Follow-Up
+
+- Remove the superseded implementation and tests before claiming Gate A matches the approved plan.
+- Refactor Dawn migration so authenticated key proof commits directly into registry adoption instead
+  of staging through current-rebuild registration artifacts.
+
+## 2026-08-25 - Dawn-Only Registry Adoption Implemented
+
+### Summary
+
+- Removed `wallet-address.conf` and `sw2.walletAddress` as pre-registry identity sources. A
+  current-rebuild-only installation now remains unsupported and creates no registry.
+- Changed authenticated Dawn key migration to persist only the protected key and a Dawn-specific proof
+  marker before `WalletRegistryAdoption` commits the account directly into a `.migrating` registry.
+- Removed `connectedOriginsV2` ingestion, singleton balance-cache conversion, adoption-time pending
+  request terminalization, retained-request activity backfill, and missing-revision request decoding.
+- Kept Dawn `connectedSites` hostname grants, old-key retention, runtime account-bound connection and
+  balance stores, binding-version-2 request handling, and fail-closed downgrade projection cleanup.
+- Unsupported pending bindings are omitted from list, summary, and status results and cannot be
+  approved or rejected.
+
+### Why
+
+- Gate A now implements the approved Dawn-v1-only migration boundary instead of carrying unshipped
+  current-rebuild compatibility into the multi-account registry.
+
+### Verification
+
+- Formatted all changed Swift source and tests with `swift format --in-place`.
+- Targeted migration, registry-adoption, connection-state, balance-cache, activity, approval, and
+  wallet-factory tests passed: 80 tests in 7 suites.
+- `swift test` passed all 239 tests in 32 suites.
+- Recursive `swift format lint` reported only the three pre-existing block-comment warnings in
+  `SecurityWalletBackend.swift`.
+- `stupid-app --version` reported 0.0.8 with Swift 6.2.1. The project remains on manifest version 1.
+- `stupid-app doctor` completed with zero failures and zero warnings, and `stupid-app build`
+  succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app
+  on the preferred simulator. Accessibility inspection found the wallet home address, balance, and
+  copy-address controls.
+
+### Follow-Up
+
+- Prove the registry/adoption lock boundary in the real containing app and Safari extension, then
+  perform a real in-place Dawn v1 physical-device upgrade before closing Gate A.
+
+## 2026-08-25 - Physical Dawn Upgrade And Protected-Probe Fix
+
+### Summary
+
+- Performed an in-place physical-device upgrade from TestFlight Dawn build 89 using a newly created
+  disposable wallet. After the required authenticated migration prompts, the current app preserved
+  and reopened the old wallet; no persisted files were edited to force migration.
+- The first attempted fixture was intentionally rejected because it still contained a rebuild
+  `wallet-address.conf`. Deleting the disposable app installation and preparing Dawn first produced
+  the required uncontaminated source and confirmed the v2 exclusion policy works.
+- Fixed a repeating Face ID loop in Safari after migration. Registry validation called
+  `KeychainKeyStore.contains`, and `SecItemCopyMatching` evaluated the protected item ACL even with
+  `kSecReturnData=false`. The existence query now uses a fresh `LAContext` with
+  `interactionNotAllowed=true` and treats `errSecInteractionNotAllowed` as proof that the exact item
+  exists, without releasing key bytes or presenting authentication UI.
+
+### Process-Exclusion Finding
+
+- A DEBUG-only 45-second hold after the app acquired `wallet-registry-adoption.lock` showed that the
+  Safari extension could not return from adoption while the app owned the claim.
+- When the user switched to Safari, RunningBoard terminated the suspended containing app with
+  `0xDEAD10CC` specifically because it retained a shared App Group file lock. The extension proceeded
+  only after process termination released the lock.
+- This confirms OS-level exclusion but fails the production safety gate. Gate A remains open until the
+  adoption claim is suspension-safe, followed by a real app/extension proof that completes without
+  killing either process. All temporary hold and diagnostic logging code was removed.
+
+### Verification
+
+- TestFlight metadata identified the migration source as version 1.0, build 89; the installed current
+  development build was version 1.0.0, build 1.
+- Signed app and extension entitlements both contained the production App Group; device logs confirmed
+  successful shared-container lookup and a complete registry in the current extension.
+- Before the fix, bounded `idevicesyslog --process StupidWalletSafari` output showed
+  `LocalAuthentication evaluateAccessControl` during the readiness probe. After the fix and a device
+  restart, the containing app reopened the migrated wallet and the Safari popup loaded normally with
+  no Face ID loop.
+- `KeychainKeyStoreTests` passed the new status-classification regression, and all 17 focused
+  `WalletRegistryAdoptionTests` continued to pass.
+- Final `swift test` passed all 240 tests in 33 suites. Recursive `swift format lint` reported
+  only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`.
+- `stupid-app doctor` completed with zero failures and zero warnings. `stupid-app build` succeeded,
+  and the final diagnostic-free development build installed over USB.
+- After a final device restart, the containing app loaded the migrated wallet and the current Safari
+  popup opened normally without authentication.
+
+### Follow-Up
+
+- Replace the long-lived App Group adoption `flock` with a suspension-safe coordination boundary, or
+  prove bounded containing-app background execution that always releases it before suspension.
+- Repeat the real app/extension exclusion test without a watchdog termination before declaring Gate A
+  complete.
+
+## 2026-08-25 - Suspension-Safe Adoption Coordination And Gate A Closure
+
+### Summary
+
+- Replaced the outer registry-adoption `flock` with synchronous `NSFileCoordinator` write coordination
+  on the same stable App Group claim URL. Registry, connection-state, cache, journal, projection, and
+  fallback recovery boundaries remain unchanged.
+- Added a macOS child-process regression that compiles a coordinator helper and proves a second process
+  cannot enter its accessor before the first process releases the claim.
+- Kept coordination cancellation fail-closed: an app or extension that does not receive its accessor
+  cannot inspect, prepare, decide, or expose wallet state.
+
+### Physical Verification
+
+- Temporarily held the containing app's coordinated accessor for 45 seconds in a DEBUG build, then
+  foregrounded Safari and opened the wallet popup. Device logs showed `filecoordinationd` grant the app
+  a RunningBoard `File Coordination Claim` suspension assertion for the full interval.
+- The Safari extension did not enter its accessor during the app claim. The popup attempt returned to
+  its no-request state rather than handling wallet state. The app released normally after 45 seconds;
+  neither process was terminated and no `0xDEAD10CC` occurred.
+- After release, closing and reopening the popup launched a fresh extension process. Device logs showed
+  its write claim granted, `StupidWalletSafari` enter and leave the coordinated accessor, and the
+  native `list` request complete normally without an authentication prompt.
+- Removed all temporary hold and coordination logging from source after collecting the result.
+
+### Outcome
+
+- Gate A exit conditions are complete: deterministic persistence interruption and cross-process tests,
+  Dawn-v1-only adoption, the real in-place Dawn build-89 physical upgrade, non-interactive protected
+  key existence validation, and suspension-safe real app/extension exclusion are proven.
+- Continue with Gate B seed groups and account lifecycle. Gate A does not enable deferred runtime
+  multi-account selection or connection behavior by itself.
+
+### Final Verification
+
+- Strengthened the child-process coordination regression after the full parallel suite exposed a test
+  timing race in its fixed-duration hold. The helper now remains inside its coordinated accessor until
+  an explicit release marker, and the test verifies adoption has not completed before that release.
+- `swift test --filter crossProcessCoordination` passed, followed by all 241 tests in 33 suites.
+- Recursive `swift format lint` reported only the three pre-existing block-comment warnings in
+  `SecurityWalletBackend.swift`.
+- `stupid-app 0.0.8` doctor completed with zero failures and zero warnings, and `stupid-app build`
+  succeeded against the iOS 26.1 SDK.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  diagnostic-free app. Accessibility inspection found the wallet-address, copy-address, and balance
+  controls.
+- `stupid-app run --usb` signed and installed the diagnostic-free app and extension over the physical
+  migrated installation. Its known CoreDevice TUN launch step failed after installation; a direct
+  `devicectl` launch of the installed bundle then succeeded.

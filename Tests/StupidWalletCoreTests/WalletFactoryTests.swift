@@ -22,8 +22,8 @@ struct WalletFactoryTests {
     #expect(recovered == pair.address)
   }
 
-  @Test("the wallet address default key matches the migration writer")
-  func addressKeyContract() {
+  @Test("the unsupported rebuild key remains stable for downgrade cleanup")
+  func downgradeResidueKeyContract() {
     #expect(WalletFactory.walletAddressKey == "sw2.walletAddress")
   }
 

@@ -267,6 +267,10 @@ public actor WalletService {
   nonisolated let deploymentStore: Simple7702AccountDeploymentStore
   nonisolated let submissionLock: TransactionSubmissionLock
   nonisolated let simple7702AccountRuntimeHash: String
+  /// Optional registry authority. When set, request handling fails closed until the
+  /// registry validates as `.complete` and retained pending legacy-binding records are
+  /// terminalized instead of signed. `nil` keeps hermetic single-account behavior.
+  nonisolated let registryStore: WalletRegistryStore?
 
   public init(
     store: PendingRequestStore? = nil,
@@ -280,7 +284,8 @@ public actor WalletService {
     rpcOverrideStore: RPCOverrideStore = RPCOverrideStore(),
     deploymentStore: Simple7702AccountDeploymentStore = Simple7702AccountDeploymentStore(),
     submissionLock: TransactionSubmissionLock? = nil,
-    simple7702AccountRuntimeHash: String = EIP5792.simple7702AccountRuntimeHash
+    simple7702AccountRuntimeHash: String = EIP5792.simple7702AccountRuntimeHash,
+    registryStore: WalletRegistryStore? = nil
   ) {
     self.signing = signing
     let resolvedStore = store ?? PendingRequestStore()
@@ -296,6 +301,7 @@ public actor WalletService {
     self.submissionLock =
       submissionLock ?? TransactionSubmissionLock(directory: resolvedStore.directory)
     self.simple7702AccountRuntimeHash = simple7702AccountRuntimeHash
+    self.registryStore = registryStore
   }
 
   /// Hermetic-test initializer that also isolates the connection-grant store.
@@ -322,6 +328,7 @@ public actor WalletService {
     self.deploymentStore = Simple7702AccountDeploymentStore(directory: chainDirectory)
     self.submissionLock = TransactionSubmissionLock(directory: chainDirectory)
     self.simple7702AccountRuntimeHash = EIP5792.simple7702AccountRuntimeHash
+    self.registryStore = nil
   }
 
   // MARK: Connection grants
@@ -354,12 +361,26 @@ public actor WalletService {
   }
 
   public nonisolated var account: String { signing.account }
+
+  /// Fail-closed adoption barrier. When a registry authority is supplied, request
+  /// handling is refused while the registry is `.migrating` (mapped to notReady) or
+  /// corrupt. An absent registry also fails closed; only no registryStore uses ordinary behavior.
+  private func ensureRegistryReady() throws {
+    guard let registryStore else { return }
+    do {
+      guard try registryStore.loadReady() != nil else { throw WalletError.notReady }
+    } catch {
+      throw WalletError.notReady
+    }
+  }
+
   public struct ActiveChainState: Sendable {
     public let chainID: String
     public let recoveredSwitch: Bool
   }
 
   public func activeChainState() async throws -> ActiveChainState {
+    try ensureRegistryReady()
     guard let claim = chainStore.claimSwitch(wait: true) else { throw ChainStoreError.unavailable }
     defer { chainStore.releaseSwitch(claim) }
     var recovered = false
@@ -432,6 +453,7 @@ public actor WalletService {
     profileID: String? = nil,
     requestKey: String? = nil
   ) async throws -> UUID {
+    try ensureRegistryReady()
     let chainId = try await activeChainID()
     var kind = RequestKind.kind(for: method)
     guard MethodPolicy.requiresApproval(method) else { throw WalletError.methodNotApproved }
@@ -486,10 +508,23 @@ public actor WalletService {
       throw WalletError.invalidParams
     }
     let normalizedOrigin = Origin.normalize(origin)
-    let intentDigest = CanonicalRequest.intentDigest(
+    let intentDigest = CanonicalRequest.intentDigestV2(
       method: method, origin: normalizedOrigin, chainId: recordChainID,
       profileID: profileID, params: kind == .siwe ? params : canonicalParams)
     let id = UUID()
+    let createdAt = Date()
+    let expiresAt = createdAt.addingTimeInterval(600)
+    let payloadDigest = CanonicalRequest.bindingDigestV2(
+      requestID: id,
+      kind: kind,
+      method: method,
+      origin: normalizedOrigin,
+      profileID: profileID,
+      chainId: recordChainID,
+      account: signing.account,
+      params: canonicalParams,
+      createdAt: createdAt,
+      expiresAt: expiresAt)
     let record = WalletPendingRequest(
       id: id,
       kind: kind,
@@ -499,9 +534,13 @@ public actor WalletService {
       chainId: recordChainID,
       account: signing.account,
       params: canonicalParams,
-      payloadDigest: CanonicalRequest.digest(of: canonicalParams, keyedBy: id),
+      payloadDigest: payloadDigest,
       intentDigest: intentDigest,
-      requestKey: requestKey
+      requestKey: requestKey,
+      bindingVersion: 2,
+      revision: 0,
+      createdAt: createdAt,
+      expiresAt: expiresAt
     )
     if kind == .send {
       do {
@@ -527,18 +566,24 @@ public actor WalletService {
 
   /// Display-safe canonical summary for one pending request.
   public func summarize(request: UUID, profileID: String? = nil) async throws -> Summary? {
+    _ = try ensureRegistryReady()
     guard let record = try await store.record(request) else { return nil }
     guard record.profileID == profileID else { return nil }
+    guard record.bindingVersion == 2 else { return nil }
     return await makeSummary(record)
   }
 
   /// Summaries for all pending records, oldest first (queue order) with the active head.
   public func list(profileID: String? = nil) async throws -> [Summary] {
-    let records = try await store.pending().filter { $0.profileID == profileID }.sorted {
-      $0.createdAt < $1.createdAt
-    }
+    _ = try ensureRegistryReady()
+    let pending =
+      (try await store.pending()).filter { $0.profileID == profileID }.sorted {
+        $0.createdAt < $1.createdAt
+      }
     var summaries: [Summary] = []
-    for record in records { summaries.append(await makeSummary(record)) }
+    for record in pending where record.bindingVersion == 2 {
+      summaries.append(await makeSummary(record))
+    }
     return summaries
   }
 
@@ -743,9 +788,11 @@ public actor WalletService {
 
   /// Persisted status so a suspending service worker and a polling page converge.
   public func status(for id: UUID, profileID: String? = nil) async -> RequestStatus? {
+    guard (try? ensureRegistryReady()) != nil else { return nil }
     guard let record = try? await store.record(id), record.profileID == profileID else {
       return nil
     }
+    guard record.bindingVersion == 2 else { return nil }
     return RequestStatus(
       status: record.status.rawValue, result: record.result, error: record.error)
   }
@@ -753,12 +800,14 @@ public actor WalletService {
   /// Approve the active head: verify binding, queue eligibility, expiry, recomputed
   /// digest, authenticate, then sign with the real account key and consume the record.
   public func approve(request: UUID, profileID: String? = nil) async throws -> JSONValue {
+    _ = try ensureRegistryReady()
     guard try await store.record(request) != nil else { throw WalletError.notFound }
     guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
     defer { store.releaseClaim(claim) }
 
     guard var record = try await store.record(request) else { throw WalletError.notFound }
     guard record.profileID == profileID else { throw WalletError.bindingMismatch }
+    guard record.bindingVersion == 2 else { throw WalletError.bindingMismatch }
     // store.record() normalizes an expired pending record to `.expired`.
     if record.status == .expired { throw WalletError.expired }
     guard record.status == .pending else { throw WalletError.alreadyConsumed }
@@ -812,8 +861,18 @@ public actor WalletService {
     guard Self.kindMatches(record) else {
       throw WalletError.bindingMismatch
     }
-    // Recompute the digest over the reloaded, canonical params; must equal the binding.
-    let digestNow = CanonicalRequest.digest(of: record.params, keyedBy: record.id)
+    // Recompute the account-inclusive digest over the reloaded canonical record.
+    let digestNow = CanonicalRequest.bindingDigestV2(
+      requestID: record.id,
+      kind: record.kind,
+      method: record.method,
+      origin: record.origin,
+      profileID: record.profileID,
+      chainId: record.chainId,
+      account: record.account,
+      params: record.params,
+      createdAt: record.createdAt,
+      expiresAt: record.expiresAt)
     guard digestNow == record.payloadDigest else { throw WalletError.bindingMismatch }
 
     // Consent-only approvals (connect / chain) return without touching the key.
@@ -1966,11 +2025,13 @@ public actor WalletService {
   }
 
   public func reject(request: UUID, profileID: String? = nil) async throws {
+    _ = try ensureRegistryReady()
     guard try await store.record(request) != nil else { throw WalletError.notFound }
     guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
     defer { store.releaseClaim(claim) }
     guard let record = try await store.record(request) else { throw WalletError.notFound }
     guard record.profileID == profileID else { throw WalletError.bindingMismatch }
+    guard record.bindingVersion == 2 else { throw WalletError.bindingMismatch }
     guard record.status == .pending else { throw WalletError.alreadyConsumed }
     var rejected = record
     rejected.status = .rejected
