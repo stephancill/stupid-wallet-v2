@@ -50,6 +50,43 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-25 - Compatible Request Blockies
+
+### Summary
+
+- Replaced the popup's approximate identicon generator with the exact `blo` 2.0 Ethereum blockies
+  algorithm: lowercase seed hashing, signed-shift xorshift PRNG, `2^31` random scale, upstream
+  random-call order, background/main/spot palette mapping, and mirrored 4x8 source pixels.
+- Kept the project-owned DOM renderer and squircle clipping rather than adding a runtime package.
+- Rendered exact address values in generic request-detail tables as block containers, removing the
+  same inline baseline padding previously corrected in atomic-call cards.
+- Pinned upstream commit `bb15b6309bb5903601adab83d049c53a5a6852d2`, provenance, adaptation,
+  copyright, and complete MIT terms in `THIRD_PARTY_NOTICES.md`.
+- Bumped the WebExtension manifest to `0.1.41`.
+
+### Why
+
+- The previous popup implementation used the wrong shift semantics, random scale, and palette order,
+  so its output did not match standard Ethereum blockies or the referenced `blo` implementation.
+
+### Verification
+
+- Added a full deterministic palette and 64-pixel vector for a fixed address, plus a rendered
+  `eth_sendTransaction` To-address regression. `node --test Tests/JavaScript/*.test.mjs` passed all
+  10 tests.
+- Extension `oxfmt`, `oxlint`, `node --check`, manifest JSON validation, and `git diff --check`
+  passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched
+  manifest `0.1.41`.
+- `stupid-app doctor` completed with zero failures and warnings.
+- Live Safari inspection confirmed the corrected blockie in a transaction To row and sticky footer
+  without the prior address baseline padding. The transaction was left unapproved.
+
+### Follow-Up
+
+- Recheck the same deterministic address against the referenced `blo` SVG in Mac Safari before
+  release.
+
 ## 2026-08-25 - Home Account Squircle
 
 ### Summary

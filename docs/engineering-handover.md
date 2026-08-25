@@ -99,8 +99,9 @@ standard-params work:
   root message fields. Transaction details remain raw canonical destination, value,
   display-only estimated network fee, and full calldata. Calldata is initially clamped to three
   lines and expands in place when selected. Exact 20-byte address values throughout the review use
-  a deterministic squircle blockie plus `0x1234...abcd` text, while retaining the full address as hover
-  metadata. Native-value quantities are formatted in the network currency rather than shown as
+  a `blo` 2.0-compatible deterministic squircle blockie plus `0x1234...abcd` text, while retaining
+  the full address as hover metadata. Native-value quantities are formatted in the network currency
+  rather than shown as
   hexadecimal, and explicit add-network Chain IDs are decimal; nonce, gas limit, and raw
   fee fields are not exposed in the popup, while simulation and calldata decoding remain
   deferred. Generic chain rows resolve through the shared `NetworkStore` and display the
@@ -315,7 +316,7 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.39`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.41`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet.
 - One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
@@ -1050,7 +1051,7 @@ current registration; the stale row selected old web resources. Keep only the cu
 The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
 the background worker cannot delay the review surface, while retaining the background route as a
 transport fallback for Safari environments where direct native messaging is unavailable. Manifest
-`0.1.39` contains the dedicated monochrome toolbar action icons, current request-review layout, and
+`0.1.41` contains the dedicated monochrome toolbar action icons, current request-review layout, and
 the direct-popup synchronization
 introduced in `0.1.23`: after a successful
 decision it notifies the worker before the popup closes,

@@ -154,6 +154,22 @@ test("popup renders addresses, collapses queued requests, and expands raw callda
                   ],
                 },
               },
+              {
+                requestId: "queued-send",
+                data: {
+                  kind: "send",
+                  title: "Send transaction",
+                  account,
+                  origin: "https://dapp.example",
+                  queued: true,
+                  rows: [
+                    { label: "Account", value: account },
+                    { label: "Chain", value: "1" },
+                    { label: "To", value: target },
+                    { label: "Data", value: "0x1234" },
+                  ],
+                },
+              },
             ],
           },
         });
@@ -174,9 +190,27 @@ test("popup renders addresses, collapses queued requests, and expands raw callda
   assert.ok(addressValues.length >= 3);
   assert.equal(addressValues[0].textContent, "0x1111...1111");
   assert.equal(addressValues[0].title, target);
-  assert.equal(addressValues[0].querySelector(".blockie").children.length, 64);
-  const activeActions = tray.querySelector(".request-batch").querySelector(".actions");
+  const blockiePixels = addressValues[0].querySelector(".blockie").children;
+  assert.equal(blockiePixels.length, 64);
+  const palette = ["hsl(66 69% 49%)", "hsl(157 48% 54%)", "hsl(20 70% 80%)"];
+  const leftHalf = [
+    0, 0, 1, 2, 1, 1, 0, 0, 2, 2, 0, 2, 1, 0, 0, 1, 0, 0, 2, 1, 1, 1, 2, 1, 0, 0, 0, 1, 1, 0, 1, 0,
+  ];
+  const expectedColors = [];
+  for (let row = 0; row < 8; row += 1) {
+    const half = leftHalf.slice(row * 4, row * 4 + 4);
+    expectedColors.push(...[...half, ...half.slice().reverse()].map((index) => palette[index]));
+  }
+  assert.deepEqual(
+    blockiePixels.map((pixel) => pixel.style.backgroundColor),
+    expectedColors,
+  );
+  const activeBatch = tray.querySelector(".request-batch");
+  const activeActions = activeBatch.querySelector(".actions");
   assert.equal(activeActions.querySelector(".account").textContent, "0x1234...5678");
+  const sendAddress = tray.querySelector(".request-send").querySelector(".message-value");
+  assert.equal(sendAddress.tagName, "div");
+  assert.equal(sendAddress.querySelector(".address-value").textContent, "0x1111...1111");
 
   const queued = tray.querySelector(".queued");
   const heading = queued.querySelector(".request-heading");
@@ -186,9 +220,9 @@ test("popup renders addresses, collapses queued requests, and expands raw callda
   assert.ok(!queued.classList.contains("collapsed"));
   assert.equal(heading.getAttribute("aria-expanded"), "true");
 
-  const calldataToggle = tray.querySelector(".calldata-toggle");
-  assert.equal(tray.querySelectorAll(".call-card").length, 2);
-  assert.equal(tray.querySelectorAll(".calldata-toggle").length, 1);
+  const calldataToggle = activeBatch.querySelector(".calldata-toggle");
+  assert.equal(activeBatch.querySelectorAll(".call-card").length, 2);
+  assert.equal(activeBatch.querySelectorAll(".calldata-toggle").length, 1);
   assert.deepEqual(
     tray.querySelectorAll(".call-label").map((label) => label.textContent),
     ["To", "Data", "To"],

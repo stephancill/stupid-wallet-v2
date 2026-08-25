@@ -254,7 +254,8 @@
         label.textContent = row.label;
         item.appendChild(label);
       }
-      const value = document.createElement(row.label === "Data" ? "div" : "pre");
+      const address = isAddress(String(row.value ?? ""));
+      const value = document.createElement(row.label === "Data" || address ? "div" : "pre");
       value.className = "message-value";
       appendDisplayValue(value, row.value, { calldata: row.label === "Data" });
       item.appendChild(value);
@@ -352,7 +353,11 @@
 
   function appendBlockiePixels(container, seed) {
     const random = seededRandom(seed);
-    const colors = [blockieColor(random), blockieColor(random), blockieColor(random)];
+    // Keep blo's exact random-call and palette order: main, background, spot, then pixels.
+    const main = blockieColor(random);
+    const background = blockieColor(random);
+    const spot = blockieColor(random);
+    const colors = [background, main, spot];
     for (let row = 0; row < 8; row += 1) {
       const half = Array.from({ length: 4 }, () => Math.floor(random() * 2.3));
       for (const color of [...half, ...half.slice().reverse()]) {
@@ -364,18 +369,18 @@
   }
 
   function seededRandom(seed) {
-    const state = [0, 0, 0, 0];
+    const state = new Uint32Array(4);
     for (let index = 0; index < seed.length; index += 1) {
       const slot = index % 4;
-      state[slot] = (Math.imul(state[slot], 31) + seed.charCodeAt(index)) >>> 0;
+      state[slot] = (state[slot] << 5) - state[slot] + seed.charCodeAt(index);
     }
     return () => {
-      const value = (state[0] ^ (state[0] << 11)) >>> 0;
+      const value = state[0] ^ (state[0] << 11);
       state[0] = state[1];
       state[1] = state[2];
       state[2] = state[3];
-      state[3] = (state[3] ^ (state[3] >>> 19) ^ value ^ (value >>> 8)) >>> 0;
-      return state[3] / 0x100000000;
+      state[3] = (state[3] ^ (state[3] >> 19) ^ value ^ (value >> 8)) >>> 0;
+      return state[3] / 0x80000000;
     };
   }
 

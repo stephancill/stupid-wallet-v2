@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This repository vendors a small set of upstream sources for cryptographic primitives.
+This repository vendors or adapts a small set of upstream sources and algorithms.
 Each is pinned to an exact revision so builds are reproducible and auditable.
 
 ## libsecp256k1 (C)
@@ -32,6 +32,35 @@ Each is pinned to an exact revision so builds are reproducible and auditable.
 - **Local adaptation:** vocabulary data only. Validation, PBKDF2-HMAC-SHA512, BIP-32
   derivation, and key handling are project-owned and use CryptoKit plus the existing
   vendored libsecp256k1 target. No MnemonicSwift runtime package is linked.
+
+## blo Ethereum Identicon Algorithm
+
+- **Provenance:** <https://github.com/bpierre/blo>
+- **Pinned revision:** commit `bb15b6309bb5903601adab83d049c53a5a6852d2` (`blo` 2.0.0 source).
+- **License:** MIT. Copyright (c) 2023 Pierre Bertet <https://bpier.re/>.
+- **Local adaptation:** the seed, xorshift PRNG, random-call order, HSL palette, and mirrored 8x8
+  image algorithm are adapted into `SafariExtension/Resources/popup.js`. The popup renders the
+  resulting pixels as DOM elements rather than using upstream's SVG serializer. No runtime package
+  is linked.
+
+MIT License
+
+Copyright (c) 2023 Pierre Bertet <https://bpier.re/>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial
+portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
+NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
+OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Deprecation / no-other-dependencies policy
 
