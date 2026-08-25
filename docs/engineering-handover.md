@@ -292,13 +292,16 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.24`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.25`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet.
 - One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
   icons, EIP-6963 provider discovery, and the in-page request hint. The canonical 1024-point
   app asset is `Resources/AppIcon.png`; generated browser sizes remain in the extension
-  resource set.
+  resource set. Safari's action uses dedicated transparent 16-, 19-, 32-, and 38-pixel
+  black toolbar icons. Safari may apply its system-blue active-state tint because the artwork is
+  intentionally monochrome; preserving the black-and-white identity takes precedence over
+  avoiding that platform tint.
 - A compact in-page, non-authoritative Safari notice plus a toolbar badge as the request
   prompt. The notice tells the user to open `stupid wallet` from Safari and remains
   non-interactive; review and approval stay exclusively in the toolbar popup.
@@ -961,7 +964,8 @@ current registration; the stale row selected old web resources. Keep only the cu
 The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
 the background worker cannot delay the review surface, while retaining the background route as a
 transport fallback for Safari environments where direct native messaging is unavailable. Manifest
-`0.1.24` contains the direct-popup synchronization introduced in `0.1.23`: after a successful
+`0.1.25` contains the dedicated monochrome toolbar action icons plus the direct-popup synchronization
+introduced in `0.1.23`: after a successful
 decision it notifies the worker before the popup closes,
 and an empty worker request set clears the badge with an empty string rather than displaying `0`.
 Live rejection proved the one-item badge disappears immediately. The test requests were rejected

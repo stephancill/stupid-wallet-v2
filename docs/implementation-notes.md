@@ -50,6 +50,40 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-25 - Dedicated Monochrome Safari Toolbar Icon
+
+### Summary
+
+- Deterministically converted the existing hand-drawn arrow with ImageMagick into transparent,
+  black Safari action icons at 16, 19, 32, and 38 pixels. The app icon, general extension
+  icons, provider metadata, and in-page hint remain unchanged.
+- Added the dedicated files to `action.default_icon` and the `stupid-app` extension resource list.
+- Bumped the WebExtension manifest to `0.1.25` to invalidate Safari's cached action icon.
+
+### Why
+
+- Dedicated action sizes avoid using the padded general extension icon as Safari's toolbar fallback.
+  Safari can still apply its blue active-state tint to monochrome artwork; preserving the requested
+  black-and-white identity takes precedence over avoiding that platform behavior.
+
+### Verification
+
+- ImageMagick inspection confirmed exact 16x16, 19x19, 32x32, and 38x38 PNG dimensions, alpha
+  transparency, and black arrow pixels.
+- `jq empty SafariExtension/Resources/manifest.json` and `git diff --check` passed.
+- `stupid-app doctor` completed with zero failures and zero warnings.
+- `stupid-app build` succeeded. Inspection of the assembled extension confirmed manifest `0.1.25`,
+  all four `action.default_icon` mappings, and all four transparent PNG resources at the appex root.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension on iOS 26.3. Safari's Page Menu displayed the hand-drawn arrow with its expected
+  system-blue active-state tint, confirming the installed monochrome action icon is current and that
+  the blue appearance is Safari rendering rather than stale or colored source artwork.
+
+### Follow-Up
+
+- Confirm the same platform tint on a physical-device surface before release if icon rendering
+  differs across supported Safari versions.
+
 ## 2026-08-24 - Safari Request Identity And Diff Cleanup
 
 ### Summary

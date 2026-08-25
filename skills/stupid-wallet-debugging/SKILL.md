@@ -190,6 +190,10 @@ public implementation notes.
 ### 4. Inspect Popup And Queue Behavior
 
 - Open Safari Page Menu, choose **Stupid Wallet**, and read the card with OCR.
+- Safari accent-tints a monochrome action icon blue when the extension can access the current
+  page. This is expected active-state UI, not evidence that the packaged general icon changed.
+  To retain an intentional color, provide genuinely colored transparent PNGs through
+  `action.default_icon`; if that key is absent, Safari falls back to the general extension icon.
 - In the iOS 26 compact bottom toolbar, Page Menu is the rectangle-over-lines control to the
   left of the address. The ellipsis opens tab actions and does not expose extensions.
 - Long transaction cards may need a swipe beginning inside the popup:

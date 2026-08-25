@@ -1,7 +1,7 @@
 {
   "name": "stupid wallet",
   "description": "EIP-1193 Ethereum provider with canonical request review",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "icons": {
@@ -11,6 +11,12 @@
   "permissions": ["nativeMessaging", "storage"],
   "host_permissions": ["<all_urls>"],
   "action": {
+    "default_icon": {
+      "16": "toolbar-icon-16.png",
+      "19": "toolbar-icon-19.png",
+      "32": "toolbar-icon-32.png",
+      "38": "toolbar-icon-38.png"
+    },
     "default_title": "stupid wallet",
     "default_popup": "popup.html"
   },
