@@ -16,7 +16,7 @@ struct SIWETests {
         "scheme": .string("https"), "domain": .string("example.com:8443"),
         "uri": .string("https://example.com:8443/session"),
         "statement": .string("Sign in to continue."), "issuedAt": .string(issuedAt),
-        "expirationTime": .string("2026-08-25T13:34:56.123Z"),
+        "expirationTime": .string("2099-08-25T13:34:56.123Z"),
         "notBefore": .string("2026-08-25T12:30:00+00:00"),
         "requestId": .string("login-7"),
         "resources": .array([
@@ -35,7 +35,7 @@ struct SIWETests {
       Chain ID: 8453
       Nonce: aB123456
       Issued At: 2026-08-25T12:34:56Z
-      Expiration Time: 2026-08-25T13:34:56.123Z
+      Expiration Time: 2099-08-25T13:34:56.123Z
       Not Before: 2026-08-25T12:30:00+00:00
       Request ID: login-7
       Resources:

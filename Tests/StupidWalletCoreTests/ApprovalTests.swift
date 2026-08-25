@@ -186,7 +186,7 @@ struct ApprovalTests {
         .object([
           "to": .string("0x0000000000000000000000000000000000000001"),
           "value": .string("0xde0b6b3a7640000"),
-          "data": .string("0x"),
+          "data": .string("0x1234"),
         ])
       ]),
       origin: "https://dapp.example"
@@ -194,6 +194,9 @@ struct ApprovalTests {
     let record = try #require(await svc.store.record(id))
     #expect(record.kind == .send)
     #expect(ApprovalSummary.title(for: record) == "Send transaction")
+    let summary = try #require(await svc.summarize(request: id))
+    #expect(summary.rows.contains { $0.label == "Value" && $0.value == "1 ETH" })
+    #expect(summary.rows.contains { $0.label == "Data" && $0.value == "0x1234" })
   }
 
   @Test("personal_sign with standard [messageHex, address] params signs the message")
@@ -276,7 +279,7 @@ struct ApprovalTests {
       origin: "https://dapp.example")
     let summary = try await svc.summarize(request: id)
     #expect(summary?.title == "Add network")
-    #expect(summary?.rows.contains { $0.label == "Chain ID" && $0.value == "0x89" } == true)
+    #expect(summary?.rows.contains { $0.label == "Chain ID" && $0.value == "137" } == true)
     #expect(summary?.rows.contains { $0.label == "Name" && $0.value == "Polygon" } == true)
   }
 

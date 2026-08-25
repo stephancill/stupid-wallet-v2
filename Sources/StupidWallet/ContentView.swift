@@ -120,7 +120,6 @@ import SwiftUI
                       ForEach(vm.networkBalances) { network in
                         HStack(spacing: 6) {
                           Text(network.name)
-                          Text("•").foregroundStyle(.secondary)
                           Text(network.balance.map { "♦ \($0)" } ?? "Unavailable")
                             .foregroundStyle(.secondary)
                         }
@@ -173,7 +172,8 @@ import SwiftUI
       let button = UIButton(type: .custom)
       button.showsMenuAsPrimaryAction = true
       button.imageView?.contentMode = .scaleAspectFit
-      button.layer.cornerRadius = 14
+      button.layer.cornerRadius = 8
+      button.layer.cornerCurve = .continuous
       button.layer.masksToBounds = true
       button.accessibilityLabel = "Wallet address"
       button.accessibilityHint = "Shows account menu"
@@ -183,6 +183,7 @@ import SwiftUI
     func updateUIView(_ button: UIButton, context: Context) {
       let iconSize = CGSize(width: 28, height: 28)
       let icon = UIGraphicsImageRenderer(size: iconSize).image { _ in
+        UIBezierPath(roundedRect: CGRect(origin: .zero, size: iconSize), cornerRadius: 8).addClip()
         BlockieView.image(seed: address.lowercased()).draw(
           in: CGRect(origin: .zero, size: iconSize))
       }
@@ -191,7 +192,7 @@ import SwiftUI
       let displayAddress =
         address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
       let accountAction = UIAction(title: displayAddress, image: icon) { _ in }
-      accountAction.attributes = .disabled
+      accountAction.attributes = .keepsMenuPresented
       let activityAction = UIAction(
         title: "Activity",
         image: UIImage(systemName: "clock")

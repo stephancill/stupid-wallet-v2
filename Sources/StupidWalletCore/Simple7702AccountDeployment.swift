@@ -29,11 +29,23 @@ public enum Simple7702AccountDeployment {
     "0x" + salt + creationCode.dropFirst(2)
   }
 
+  public static var runtimeCode: [UInt8]? {
+    guard let creationBytes = Hex.data(creationCode), creationBytes.count >= 0x1a + 0x0e37 else {
+      return nil
+    }
+    let runtime = Array(creationBytes[0x1a..<(0x1a + 0x0e37)])
+    guard
+      ("0x" + Hex.encode(Keccak.keccak256(runtime))).caseInsensitiveCompare(
+        EIP5792.simple7702AccountRuntimeHash) == .orderedSame
+    else { return nil }
+    return runtime
+  }
+
   public static func isValid() -> Bool {
     guard let factoryBytes = Hex.data(factory), factoryBytes.count == 20,
       let saltBytes = Hex.data("0x" + salt), saltBytes.count == 32,
       let creationBytes = Hex.data(creationCode),
-      let calldataBytes = Hex.data(calldata)
+      let calldataBytes = Hex.data(calldata), runtimeCode != nil
     else { return false }
     let calldataDigest = "0x" + Hex.encode(Keccak.keccak256(calldataBytes))
     guard calldataDigest.caseInsensitiveCompare(calldataHash) == .orderedSame else { return false }

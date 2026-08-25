@@ -217,7 +217,18 @@ export default function App() {
                   {
                     version: "1.0",
                     from: address!,
-                    calls: [{ to: address!, value: "0x0", data: "0x" }],
+                    calls: [
+                      {
+                        to: "0x1111111111111111111111111111111111111111",
+                        value: "0x0",
+                        data: "0x1234",
+                      },
+                      {
+                        to: "0x2222222222222222222222222222222222222222",
+                        value: "0x0",
+                        data: `0x${"12345678".repeat(24)}`,
+                      },
+                    ],
                   },
                 ],
               });

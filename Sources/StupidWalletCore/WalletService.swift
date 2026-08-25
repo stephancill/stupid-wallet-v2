@@ -94,12 +94,10 @@ public enum ApprovalSummary {
           rows.append(("Value", value))
         }
         if let data = tx["data"]?.stringValue, !data.isEmpty, data != "0x" {
-          rows.append(("Data", Self.dataDigest(data)))
+          rows.append(("Data", data))
         }
       }
     case .batch:
-      rows.append(("Execution", "Atomic"))
-      rows.append(("Authorization", "May enable the reviewed atomic execution account"))
       rows.append(("Account", request.account))
       rows.append(("Chain", request.chainId))
       rows.append(("Origin", request.origin))
@@ -109,10 +107,10 @@ public enum ApprovalSummary {
           guard case .object(let call) = value else { continue }
           let target = call["to"]?.stringValue ?? "Unavailable"
           let amount = call["value"]?.stringValue ?? "0x0"
-          let digest = call["data"]?.stringValue.map(Self.dataDigest) ?? "0x"
+          let data = call["data"]?.stringValue ?? "0x"
           rows.append(("Call \(index + 1) Target", target))
           rows.append(("Call \(index + 1) Value", amount))
-          rows.append(("Call \(index + 1) Data", digest))
+          rows.append(("Call \(index + 1) Data", data))
         }
       }
     case .chain:
@@ -251,12 +249,6 @@ public enum ApprovalSummary {
     return object
   }
 
-  private static func dataDigest(_ data: String) -> String {
-    let cleaned = data.hasPrefix("0x") ? String(data.dropFirst(2)) : data
-    guard let bytes = Hex.data(cleaned), !bytes.isEmpty else { return "0x" }
-    let hash = Hex.encode(Keccak.keccak256(bytes))
-    return "keccak256 0x\(hash) (\(bytes.count) bytes)"
-  }
 }
 
 /// Orchestrates wallet-owned RPC handling and the canonical approval lifecycle.
@@ -559,8 +551,16 @@ public actor WalletService {
       switch row.0 {
       case "Chain": return (row.0, chainDisplayName(record.chainId))
       case "Domain Chain": return (row.0, chainDisplayName(row.1))
+      case "Chain ID": return (row.0, ChainStore.normalize(row.1) ?? row.1)
+      case "Value": return (row.0, Self.displayValue(row.1, chainID: record.chainId))
+      case let label where label.hasPrefix("Call ") && label.hasSuffix(" Value"):
+        return (row.0, Self.displayValue(row.1, chainID: record.chainId))
       default: return row
       }
+    }
+    if record.kind == .batch, let value = Self.batchValue(record.params, chainID: record.chainId) {
+      let chainIndex = rows.firstIndex { $0.0 == "Chain" }.map { rows.index(after: $0) }
+      rows.insert(("Value", value), at: chainIndex ?? rows.endIndex)
     }
     if record.kind == .send || record.kind == .batch {
       rows.append(("Network Fee", await estimatedNetworkFee(for: record)))
@@ -584,23 +584,45 @@ public actor WalletService {
         return "Unable to estimate"
       }
       do {
-        guard try await verifiedImplementationCode(chainID: record.chainId) != nil else {
+        let implementationCode: [UInt8]
+        if let verifiedCode = try await verifiedImplementationCode(chainID: record.chainId) {
+          implementationCode = verifiedCode
+        } else if simple7702AccountRuntimeHash.caseInsensitiveCompare(
+          EIP5792.simple7702AccountRuntimeHash) == .orderedSame,
+          let reviewedCode = Simple7702AccountDeployment.runtimeCode
+        {
+          implementationCode = reviewedCode
+        } else {
           return "Unable to estimate"
         }
         let code = try await rpcData(
           method: "eth_getCode", params: .array([.string(record.account), .string("latest")]),
           chainID: record.chainId)
-        if code.isEmpty { return "Estimated after authorization" }
-        guard Self.isCanonicalDelegation(code) else { return "Unable to estimate" }
+        let needsAuthorization: Bool
+        if code.isEmpty {
+          needsAuthorization = true
+        } else if Self.isCanonicalDelegation(code) {
+          needsAuthorization = false
+        } else {
+          return "Unable to estimate"
+        }
+        var estimateParams: [JSONValue] = [
+          .object([
+            "from": .string(record.account), "to": .string(record.account),
+            "value": .string("0x0"), "data": .string(calldata),
+          ])
+        ]
+        var accountOverride: [String: JSONValue] = [
+          "balance": .string("0x" + String(repeating: "f", count: 64))
+        ]
+        if needsAuthorization {
+          accountOverride["code"] = .string("0x" + Hex.encode(implementationCode))
+        }
+        estimateParams.append(.string("latest"))
+        estimateParams.append(.object([record.account: .object(accountOverride)]))
         let estimate = try await rpcQuantity(
-          method: "eth_estimateGas",
-          params: .array([
-            .object([
-              "from": .string(record.account), "to": .string(record.account),
-              "value": .string("0x0"), "data": .string(calldata),
-            ])
-          ]), chainID: record.chainId)
-        guard let gas = Self.safeBatchGas(estimate, needsAuthorization: false),
+          method: "eth_estimateGas", params: .array(estimateParams), chainID: record.chainId)
+        guard let gas = Self.safeBatchGas(estimate, needsAuthorization: needsAuthorization),
           let gasBytes = Hex.quantityData(hex: gas)
         else { return "Unable to estimate" }
         let fee = try await rpcQuantity(
@@ -657,6 +679,30 @@ public actor WalletService {
     } catch {
       return "Unable to estimate"
     }
+  }
+
+  private static func displayValue(_ quantity: String, chainID: String) -> String {
+    guard let bytes = Hex.quantityData(hex: quantity) else { return quantity }
+    let amount = NativeBalanceService.formatEther(bytes: bytes)
+      .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+    return "\(amount) \(nativeCurrencySymbol(chainID: chainID))"
+  }
+
+  private static func batchValue(_ params: JSONValue, chainID: String) -> String? {
+    guard case .object(let object) = params, case .array(let calls) = object["calls"] else {
+      return nil
+    }
+    var total: [UInt8] = [0]
+    for value in calls {
+      guard case .object(let call) = value,
+        let quantity = call["value"]?.stringValue,
+        let bytes = Hex.quantityData(hex: quantity)
+      else { return nil }
+      total = NativeBalanceService.add(total, bytes)
+    }
+    let amount = NativeBalanceService.formatEther(bytes: total)
+      .replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
+    return "\(amount) \(nativeCurrencySymbol(chainID: chainID))"
   }
 
   private static func multiply(_ lhs: [UInt8], _ rhs: [UInt8]) -> [UInt8] {

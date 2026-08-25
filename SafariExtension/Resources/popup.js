@@ -26,7 +26,7 @@
       primary: "Send",
     },
     batch: {
-      description: "Review the calls that will execute atomically.",
+      description: "Review the calls that will execute.",
       primary: "Send Calls",
     },
     chain: {
@@ -114,13 +114,29 @@
       badge.className = "queue-badge";
       badge.textContent = "Queued";
       heading.appendChild(badge);
+      heading.setAttribute("role", "button");
+      heading.setAttribute("tabindex", "0");
+      heading.setAttribute("aria-expanded", "false");
+      const toggle = () => {
+        const collapsed = section.classList.toggle("collapsed");
+        heading.setAttribute("aria-expanded", String(!collapsed));
+      };
+      heading.addEventListener("click", toggle);
+      heading.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        toggle();
+      });
     }
     section.appendChild(heading);
+
+    const body = document.createElement("div");
+    body.className = "request-body";
 
     const intro = document.createElement("p");
     intro.className = "intro";
     intro.textContent = presentation.description;
-    section.appendChild(intro);
+    body.appendChild(intro);
 
     const messageRows = rows.filter((row) => row.label === "Message");
     const typedMessageRows = rows.filter((row) => row.label.startsWith("Message / "));
@@ -144,20 +160,27 @@
       kind === "send"
         ? detailRows.filter((row) => !["Chain", "Value", "Network Fee"].includes(row.label))
         : [];
-    const summaryRows = detailRows.filter((row) => !transactionRows.includes(row));
+    const batchRows = kind === "batch" ? batchCallRows(detailRows) : [];
+    const summaryRows = detailRows.filter(
+      (row) =>
+        !transactionRows.includes(row) &&
+        !isBatchCallRow(row) &&
+        !(kind === "batch" && row.label === "Calls"),
+    );
 
     const summary = document.createElement("div");
     summary.className = "summary";
     appendSummaryRow(summary, "Site", hostFor(data.origin), true);
     for (const row of summaryRows) appendSummaryRow(summary, row.label, row.value);
     if (kind === "connect" && account) appendSummaryRow(summary, "Wallet", account);
-    section.appendChild(summary);
+    body.appendChild(summary);
 
-    if (transactionRows.length > 0) appendSection(section, "Details", transactionRows);
+    if (transactionRows.length > 0) appendSection(body, "Details", transactionRows);
+    if (batchRows.length > 0) appendBatchSection(body, batchRows);
 
     if (domainRows.length > 0) {
       appendSection(
-        section,
+        body,
         "Domain",
         domainRows.map((row) => ({
           label:
@@ -172,10 +195,10 @@
         })),
       );
     }
-    if (messageRows.length > 0) appendSection(section, "Message", messageRows.map(unlabelled));
+    if (messageRows.length > 0) appendSection(body, "Message", messageRows.map(unlabelled));
     if (typedMessageRows.length > 0) {
       appendSection(
-        section,
+        body,
         "Message",
         typedMessageRows.map((row) => ({
           label: row.label.slice("Message / ".length),
@@ -184,14 +207,16 @@
       );
     }
 
-    if (account && kind !== "connect") {
-      const footerAccount = document.createElement("div");
-      footerAccount.className = "account";
-      footerAccount.textContent = account;
-      section.appendChild(footerAccount);
-    }
-
-    section.appendChild(actionsFor({ requestId, data, primary: presentation.primary }));
+    body.appendChild(
+      actionsFor({
+        requestId,
+        data,
+        primary: presentation.primary,
+        account: kind === "connect" ? null : account,
+      }),
+    );
+    section.appendChild(body);
+    if (data.queued) section.classList.add("collapsed");
     return section;
   }
 
@@ -208,8 +233,8 @@
     key.className = "row-label";
     key.textContent = label;
     const content = document.createElement("div");
-    content.className = `row-value${emphasis ? " emphasis" : ""}${isCode(value) ? " code" : ""}`;
-    content.textContent = value == null ? "Unavailable" : value;
+    content.className = `row-value${emphasis ? " emphasis" : ""}`;
+    appendDisplayValue(content, value);
     container.append(key, content);
   }
 
@@ -229,9 +254,9 @@
         label.textContent = row.label;
         item.appendChild(label);
       }
-      const value = document.createElement("pre");
+      const value = document.createElement(row.label === "Data" ? "div" : "pre");
       value.className = "message-value";
-      value.textContent = row.value == null ? "Unavailable" : row.value;
+      appendDisplayValue(value, row.value, { calldata: row.label === "Data" });
       item.appendChild(value);
       list.appendChild(item);
     }
@@ -239,15 +264,155 @@
     container.appendChild(section);
   }
 
-  function isCode(value) {
-    return (
-      typeof value === "string" && (value.startsWith("0x") || value.startsWith("keccak256 0x"))
-    );
+  function isBatchCallRow(row) {
+    return /^Call \d+ (Target|Value|Data)$/.test(row.label);
   }
 
-  function actionsFor({ requestId, data, primary }) {
+  function batchCallRows(rows) {
+    const calls = [];
+    for (const row of rows) {
+      const match = /^Call (\d+) (Target|Value|Data)$/.exec(row.label);
+      if (!match) continue;
+      const index = Number(match[1]) - 1;
+      calls[index] ||= {};
+      calls[index][match[2].toLowerCase()] = row.value;
+    }
+    return calls.filter(Boolean);
+  }
+
+  function appendBatchSection(container, calls) {
+    const section = document.createElement("section");
+    section.className = "section";
+    const title = document.createElement("h2");
+    title.textContent = `Details (${calls.length} ${calls.length === 1 ? "call" : "calls"})`;
+    const list = document.createElement("div");
+    list.className = "call-list";
+    for (const call of calls) {
+      const card = document.createElement("div");
+      card.className = "call-card";
+      const summary = document.createElement("div");
+      summary.className = "call-summary";
+      summary.appendChild(callField("To", call.target, "call-target"));
+      if (call.value && !call.value.startsWith("0 ")) {
+        summary.appendChild(callField("Value", call.value, "call-value"));
+      }
+      card.appendChild(summary);
+      if (call.data && call.data !== "0x") {
+        card.appendChild(callField("Data", call.data, "call-data", { calldata: true }));
+      }
+      list.appendChild(card);
+    }
+    section.append(title, list);
+    container.appendChild(section);
+  }
+
+  function callField(labelText, value, className, options) {
+    const field = document.createElement("div");
+    field.className = `call-field ${className}`;
+    const label = document.createElement("div");
+    label.className = "call-label";
+    label.textContent = labelText;
+    const content = document.createElement("div");
+    content.className = "call-field-content";
+    appendDisplayValue(content, value, options);
+    field.append(label, content);
+    return field;
+  }
+
+  function appendDisplayValue(container, value, { calldata = false } = {}) {
+    const display = value == null ? "Unavailable" : String(value);
+    if (isAddress(display)) {
+      container.appendChild(addressView(display));
+      return;
+    }
+    if (calldata) {
+      container.appendChild(calldataView(display));
+      return;
+    }
+    container.textContent = display;
+  }
+
+  function isAddress(value) {
+    return /^0x[0-9a-f]{40}$/i.test(value);
+  }
+
+  function addressView(address) {
+    const value = document.createElement("span");
+    value.className = "address-value";
+    value.title = address;
+    const blockie = document.createElement("span");
+    blockie.className = "blockie";
+    blockie.setAttribute("aria-hidden", "true");
+    appendBlockiePixels(blockie, address.toLowerCase());
+    const text = document.createElement("span");
+    text.textContent = `${address.slice(0, 6)}...${address.slice(-4)}`;
+    value.append(blockie, text);
+    return value;
+  }
+
+  function appendBlockiePixels(container, seed) {
+    const random = seededRandom(seed);
+    const colors = [blockieColor(random), blockieColor(random), blockieColor(random)];
+    for (let row = 0; row < 8; row += 1) {
+      const half = Array.from({ length: 4 }, () => Math.floor(random() * 2.3));
+      for (const color of [...half, ...half.slice().reverse()]) {
+        const pixel = document.createElement("span");
+        pixel.style.backgroundColor = colors[color];
+        container.appendChild(pixel);
+      }
+    }
+  }
+
+  function seededRandom(seed) {
+    const state = [0, 0, 0, 0];
+    for (let index = 0; index < seed.length; index += 1) {
+      const slot = index % 4;
+      state[slot] = (Math.imul(state[slot], 31) + seed.charCodeAt(index)) >>> 0;
+    }
+    return () => {
+      const value = (state[0] ^ (state[0] << 11)) >>> 0;
+      state[0] = state[1];
+      state[1] = state[2];
+      state[2] = state[3];
+      state[3] = (state[3] ^ (state[3] >>> 19) ^ value ^ (value >>> 8)) >>> 0;
+      return state[3] / 0x100000000;
+    };
+  }
+
+  function blockieColor(random) {
+    const hue = Math.floor(random() * 360);
+    const saturation = Math.floor(random() * 60 + 40);
+    const lightness = Math.floor((random() + random() + random() + random()) * 25);
+    return `hsl(${hue} ${saturation}% ${lightness}%)`;
+  }
+
+  function calldataView(data) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "calldata-toggle";
+    button.setAttribute("aria-expanded", "false");
+    button.title = "Show full calldata";
+    const value = document.createElement("span");
+    value.className = "calldata-value";
+    value.textContent = data;
+    button.appendChild(value);
+    button.addEventListener("click", () => {
+      const expanded = button.classList.toggle("expanded");
+      button.setAttribute("aria-expanded", String(expanded));
+      button.title = expanded ? "Collapse calldata" : "Show full calldata";
+    });
+    return button;
+  }
+
+  function actionsFor({ requestId, data, primary, account }) {
     const actions = document.createElement("div");
     actions.className = "actions";
+    if (account) {
+      const actionAccount = document.createElement("div");
+      actionAccount.className = "account";
+      appendDisplayValue(actionAccount, account);
+      actions.appendChild(actionAccount);
+    }
     const reject = document.createElement("button");
     reject.className = "reject";
     reject.textContent = "Reject";

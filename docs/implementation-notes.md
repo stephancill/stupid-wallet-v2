@@ -50,6 +50,191 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-25 - Home Account Squircle
+
+### Summary
+
+- Changed the top-trailing 28-point account-menu blockie button and its generated icon clip from a
+  circle to an 8-point continuous-corner squircle, matching request-preview blockies.
+
+### Why
+
+- Address identity should use one consistent shape across the home screen and Safari confirmations.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift` completed, `git diff --check`
+  passed, and `swift test` passed all 181 tests in 28 suites.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+  Simulator inspection confirmed the top-right account blockie is a squircle without clipping.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-25 - Labeled Call Fields
+
+### Summary
+
+- Matched the sticky signing-account text to the action buttons' 14-point text and retained centered
+  vertical alignment across the account, Reject, and primary action.
+- Added compact uppercase To, Value, and Data headings to every atomic-call card. The fields stack
+  vertically at full width, including zero values and empty `0x` calldata.
+- Removed the address row's inline-baseline line box so To-to-address spacing matches the compact
+  Value and Data label/value rhythm.
+- Restored the original 3-point spacing between every field label and value after correcting the
+  address baseline, and changed popup blockies from circles to 18-point squircles.
+- Increased spacing between call fields, omitted zero Value and empty `0x` Data fields, and removed
+  the sticky account's remaining inline baseline box so it centers with both action buttons.
+- Shortened the batch introduction to "Review the calls that will execute." and bumped the
+  WebExtension manifest to `0.1.39`.
+
+### Why
+
+- The signing account and actions are one authorization bar, and call fields need explicit,
+  consistently spaced labels without a side-aligned Value column.
+
+### Verification
+
+- Extension `oxfmt`, `oxlint`, `node --check`, manifest JSON validation, and `git diff --check`
+  passed. `node --test Tests/JavaScript/*.test.mjs` passed all 10 tests, including ordered To,
+  Value, and Data labels across two calls and account placement inside the action bar.
+- `swift test` passed all 181 tests in 28 suites before the CSS-only baseline correction.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  request-review resources through manifest `0.1.39`.
+- `stupid-app doctor` completed with zero failures and warnings.
+- Live Safari inspection confirmed vertically stacked non-empty call fields with even label and
+  inter-field spacing, squircle blockies, omitted zero values, and the account text centered on the
+  same vertical coordinate as both sticky action buttons. The two-call request was left unapproved.
+
+### Follow-Up
+
+- Recheck the labeled call cards at the Mac Safari popup width before release.
+
+## 2026-08-25 - Multi-Call Card And Action Bar Polish
+
+### Summary
+
+- Reduced atomic-call card vertical padding from 12 to 8 points while preserving 12-point
+  horizontal alignment.
+- Moved the non-connect signing account out of the scrolling request body and into the sticky action
+  bar, where its blockie and shortened address sit to the left of Reject and the primary action.
+- Changed the prototype `wallet_sendCalls` action and native/popup regressions to use two distinct
+  calls. The second prototype call includes long calldata so the real popup exercises three-line
+  clamping and expansion.
+- Bumped the WebExtension manifest to `0.1.32`.
+
+### Why
+
+- Single-line call cards had excess vertical space, the authorizing account should remain visible
+  with the approval controls, and multi-call layout needed real Safari verification rather than
+  relying on a one-call fixture.
+
+### Verification
+
+- `bunx oxfmt --write <changed JavaScript, TypeScript, CSS, and manifest files>`, extension and
+  prototype `oxlint`, `node --check SafariExtension/Resources/popup.js`, and `git diff --check`
+  passed. `node --test Tests/JavaScript/*.test.mjs` passed all 10 tests.
+- `swift test` passed all 181 tests in 28 suites. The EIP-5792 service fixture now summarizes and
+  estimates a two-call batch.
+- `bun run build` passed for `PrototypeDapp`. `stupid-app run --simulator --udid
+  <preferred-simulator>` rebuilt, installed, and launched manifest `0.1.32`.
+- `stupid-app doctor` completed with zero failures and warnings.
+- A live Safari request displayed `Details (2 calls)` with two compact cards and distinct address
+  blockies. Long calldata rendered as three lines with an ellipsis and expanded to its full wrapped
+  content when selected. The signing account remained visible in the sticky action bar while the
+  details scrolled. The request was left unapproved.
+
+### Follow-Up
+
+- Recheck the same compact card and action-bar layout at the Mac Safari popup width before release.
+
+## 2026-08-25 - Expandable Request Preview Data
+
+### Summary
+
+- Replaced transaction and atomic-call calldata digests with the exact canonical raw calldata. The
+  popup clamps calldata to three wrapped lines by default and expands or collapses it when selected.
+- Made every exact 20-byte address value in the popup use a deterministic round blockie followed by
+  `0x1234...abcd`; the full address remains attached as title metadata.
+- Made queued request cards start collapsed and expand from their keyboard-accessible heading. Queue
+  order and native approval authority are unchanged, and queued approval remains disabled.
+- Removed redundant Execution and Authorization batch rows and retained one regular foreground
+  treatment for call targets, values, and calldata.
+- Added pre-authorization batch fee estimation with an RPC state override. Undelegated accounts use
+  reviewed runtime code, including runtime extracted from the pinned deployment artifact only when
+  its hash matches the pinned runtime hash. The display-only estimate overrides balance so call
+  value does not block estimation; approval still resolves against real account state.
+- Bumped the WebExtension manifest to `0.1.30`.
+- Moved the canonical SIWE test vector's expiration into the durable future after its fixed expiry
+  made the otherwise deterministic full suite fail; production SIWE validation did not change.
+
+### Why
+
+- Request previews should expose the data a user is authorizing, make addresses quickly
+  distinguishable, and keep inactive queued requests compact without changing canonical signing or
+  queue policy.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>` and `bunx oxfmt --write <changed extension and
+  JavaScript test files>` completed. `bunx oxlint SafariExtension/Resources/popup.js
+  Tests/JavaScript/popup.test.mjs`, `node --check SafariExtension/Resources/popup.js`, `jq empty
+  SafariExtension/Resources/manifest.json`, and `git diff --check` passed.
+- `node --test Tests/JavaScript/*.test.mjs` passed all 10 tests, including rendered blockie,
+  collapsed-queue, and calldata-expansion behavior.
+- `swift test` passed all 181 tests in 28 suites, including raw single-send and atomic-call calldata
+  summary regressions and pre-authorization state-override estimation coverage.
+- `stupid-app doctor` completed with zero failures and warnings. `stupid-app build` succeeded, and
+  `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app
+  and extension.
+- A live two-request Safari run showed blockie-prefixed `0x1234...abcd` call targets and a second
+  card containing only its heading and Queued badge by default; selecting that heading revealed its
+  details while approval remained disabled. Both requests were left unapproved. The prototype's
+  built-in batch uses empty calldata, so long-data clamping was verified by the rendered DOM test.
+
+### Follow-Up
+
+- Exercise long calldata and multiple queued requests in both iPhone and Mac Safari popup widths
+  before release.
+
+## 2026-08-25 - Request Review And Account Menu Polish
+
+### Summary
+
+- Changed transaction and atomic-call value summaries from hexadecimal wei quantities to trimmed
+  native-currency amounts, and changed explicit add-network Chain IDs from hexadecimal to decimal.
+- Replaced flattened atomic-call rows with the old app's compact rounded per-call card hierarchy.
+  The popup still does not decode calldata; each card uses the canonical target, formatted value,
+  and calldata digest supplied by native code.
+- Removed popup monospace overrides so request fields use regular system typography.
+- Removed the separator bullet from expanded aggregate-balance rows. Rounded the account-menu
+  blockie and changed its shortened address from disabled/muted text to regular text that keeps the
+  menu presented when selected.
+- Bumped the WebExtension manifest to `0.1.28` so Safari reloads the popup resources.
+
+### Why
+
+- These surfaces now match the established old-app layout and human-readable quantity presentation
+  without introducing deferred ABI decoding or changing canonical approval/signing inputs.
+
+### Verification
+
+- `swift format --in-place <changed Swift files>`, `node --check
+  SafariExtension/Resources/popup.js`, `jq empty SafariExtension/Resources/manifest.json`, and
+  `git diff --check` passed.
+- Added summary regressions for decimal add-network Chain IDs and native-currency single/batch call
+  values. `swift test` passed all 180 tests in 28 suites.
+- `stupid-app doctor` completed with zero failures and warnings, and `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app
+  and extension. Simulator inspection confirmed the account menu's rounded blockie and regular
+  address text, plus expanded network-balance rows without separator bullets.
+
+### Follow-Up
+
+- Exercise a live multi-call Safari request before release to confirm the final popup card layout at
+  both iPhone and Mac popup widths.
+
 ## 2026-08-25 - Add-Network RPC Fallback
 
 ### Summary

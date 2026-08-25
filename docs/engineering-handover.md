@@ -93,15 +93,27 @@ standard-params work:
   old app's request-information hierarchy with site context, request-specific sections,
   account context, and action-specific buttons, while remaining an extension-owned renderer
   of native display-safe values. The active request's Reject/primary-action footer stays fixed
-  at the bottom while details scroll; there is no duplicate wallet-brand header inside the
+  at the bottom while details scroll and includes the blockie-prefixed signing account to the left
+  of the actions; there is no duplicate wallet-brand header inside the
   Safari-owned popup. Typed-data summaries include primary type, domain fields, and ordered
   root message fields. Transaction details remain raw canonical destination, value,
-  display-only estimated network fee, and full calldata hash/size; nonce, gas limit, and raw
+  display-only estimated network fee, and full calldata. Calldata is initially clamped to three
+  lines and expands in place when selected. Exact 20-byte address values throughout the review use
+  a deterministic squircle blockie plus `0x1234...abcd` text, while retaining the full address as hover
+  metadata. Native-value quantities are formatted in the network currency rather than shown as
+  hexadecimal, and explicit add-network Chain IDs are decimal; nonce, gas limit, and raw
   fee fields are not exposed in the popup, while simulation and calldata decoding remain
   deferred. Generic chain rows resolve through the shared `NetworkStore` and display the
   persisted network name, falling back to `Chain N` for unknown metadata; explicit add-network
-  Chain ID fields remain numeric. `WalletService.Summary` carries `kind`, `title`, ordered
-  `rows`, a `queued` flag, and the active-head queue.
+  Chain ID fields remain numeric. Atomic batches use a compact per-call card hierarchy
+  without ABI decoding, while retaining canonical target, formatted value, and raw calldata. The
+  batch summary omits redundant Execution and Authorization rows. Each card stacks a compact To
+  field plus Value and Data only when they are non-zero/non-empty, with labels above their values
+  and clear spacing between fields. Target, value, and data use the same regular foreground
+  typography. Popup values use regular system typography rather than
+  switching hexadecimal fields to monospace. `WalletService.Summary` carries `kind`, `title`,
+  ordered `rows`, a `queued` flag, and the active-head queue. Queued request cards start collapsed
+  and their headings expand or collapse display details; expanding one never makes it approvable.
 - Approval is bound to request ID, kind, method, origin, chain, `payloadDigest` (keccak
   of the request ID + canonical sorted-key params), expiry, and unconsumed state. On
   approve, native code reloads the canonical record, rejects if expired/queued/non-pending,
@@ -192,7 +204,8 @@ independent RPCs agreed on receipt success and 21,000 gas used.
 The Gate 6 containing-app shell now follows the shipped app's SwiftUI screen hierarchy and
 presentation: the lowercase welcome and import screens; centered large native balance with
 an anchored details popover; top-trailing Copy Address icon beside the account blockie menu,
-which begins with a non-interactive blockie and shortened-address row followed by Activity,
+which uses a continuous-corner squircle and begins with a matching squircle blockie plus regular
+shortened-address row followed by Activity,
 Connected Apps, and Settings actions; Settings sheet; Connected Apps list/detail/disconnect
 with origin/profile-filtered activity; reciprocal navigation from an activity detail to its
 currently connected app detail;
@@ -207,7 +220,8 @@ the full-width sum of native wei balances from every included network; individua
 failures do not discard successful balances, while a complete included-network outage is
 shown as unavailable. Expanding the aggregate balance lists every included network with a
 non-zero balance as an individual row, using the same fetch results as the total. Rows are
-ordered by descending full-width wei balance and render as left-aligned `Network • Balance` rows.
+ordered by descending full-width wei balance and render as compact left-aligned network and balance
+rows without a separator bullet.
 Zero and unavailable balances are omitted; when no non-zero rows exist, the expansion
 affordance is hidden and disabled. Activity details show persisted transaction calldata and signed
 message content as multiline text. Legacy signature content remains readable, while
@@ -301,7 +315,7 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.25`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.39`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet.
 - One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
@@ -549,9 +563,12 @@ Implemented after the Secure Wallet Core gates passed:
   cross-process submission claim per account and chain before RPC preparation and retain it through
   broadcast. The batch's nested just-in-time deployment reuses the already-held boundary rather
   than reacquiring it. A competing operation fails as busy instead of signing the same pending nonce.
-- First-delegation estimation uses the hash-verified runtime through an RPC state override.
-  A signed authorization is never disclosed for estimation; the two protected signatures
-  are created only after RPC preparation succeeds.
+- First-delegation estimation uses the hash-verified runtime through an RPC state override. The
+  display-only popup estimate can use runtime extracted and hash-checked from the pinned deployment
+  artifact before that implementation is deployed, and overrides account balance so the requested
+  call value cannot prevent gas estimation. Approval uses real code and balance. A signed
+  authorization is never disclosed for estimation; the two protected signatures are created only
+  after RPC preparation succeeds.
 
 ### Later Parity
 
@@ -1033,7 +1050,8 @@ current registration; the stale row selected old web resources. Keep only the cu
 The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
 the background worker cannot delay the review surface, while retaining the background route as a
 transport fallback for Safari environments where direct native messaging is unavailable. Manifest
-`0.1.25` contains the dedicated monochrome toolbar action icons plus the direct-popup synchronization
+`0.1.39` contains the dedicated monochrome toolbar action icons, current request-review layout, and
+the direct-popup synchronization
 introduced in `0.1.23`: after a successful
 decision it notifies the worker before the popup closes,
 and an empty worker request set clears the badge with an empty string rather than displaying `0`.

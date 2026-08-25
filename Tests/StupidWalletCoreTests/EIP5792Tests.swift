@@ -91,7 +91,16 @@ struct EIP5792ServiceTests {
       method: "wallet_sendCalls", params: v1Params(), origin: origin, profileID: profile)
     let summary = try await service.summarize(request: id, profileID: profile)
     #expect(summary?.kind == "batch")
-    #expect(summary?.rows.contains { $0.label == "Execution" && $0.value == "Atomic" } == true)
+    #expect(summary?.rows.contains { $0.label == "Execution" } == false)
+    #expect(summary?.rows.contains { $0.label == "Authorization" } == false)
+    #expect(summary?.rows.contains { $0.label == "Value" && $0.value == "0 ETH" } == true)
+    #expect(summary?.rows.contains { $0.label == "Call 1 Value" && $0.value == "0 ETH" } == true)
+    #expect(summary?.rows.contains { $0.label == "Call 1 Data" && $0.value == "0x1234" } == true)
+    #expect(
+      summary?.rows.contains {
+        $0.label == "Call 2 Target" && $0.value == "0x2222222222222222222222222222222222222222"
+      } == true)
+    #expect(summary?.rows.contains { $0.label == "Network Fee" && $0.value.hasPrefix("~") } == true)
     let result = try await service.approve(request: id, profileID: profile)
     #expect(result.stringValue == state.transactionHash)
     #expect(state.rawTransaction?.first == 0x02)
@@ -107,6 +116,11 @@ struct EIP5792ServiceTests {
     let id = try await service.prepare(
       method: "wallet_sendCalls", params: v2Params(id: appID), origin: origin,
       profileID: profile)
+    let summary = try await service.summarize(request: id, profileID: profile)
+    #expect(summary?.rows.contains { $0.label == "Network Fee" && $0.value.hasPrefix("~") } == true)
+    #expect(state.estimateParams?.value(at: ["0", "authorizationList"]) == nil)
+    #expect(
+      state.estimateParams?.value(at: ["2", signer.account, "code"])?.stringValue == "0x6001")
     let result = try await service.approve(request: id, profileID: profile)
     #expect(result.nestedString(at: ["id"]) == appID)
     #expect(result.nestedBool(at: ["capabilities", "atomic"]) == true)
@@ -122,6 +136,27 @@ struct EIP5792ServiceTests {
       params: .array([.string(state.transactionHash)]), origin: origin, profileID: profile)
     #expect(status.nestedNumber(at: ["status"]) == 200)
     #expect(status.nestedString(at: ["id"]) == state.transactionHash)
+  }
+
+  @Test("missing implementation and delegation still receive a state-override fee preview")
+  func predeploymentFeePreview() async throws {
+    let state = CallsRPCState(accountCode: "0x", implementationInitiallyMissing: true)
+    let (service, signer) = makeService(
+      state: state, runtimeHash: EIP5792.simple7702AccountRuntimeHash)
+    await service.connect(origin: origin, profileID: profile)
+    let id = try await service.prepare(
+      method: "wallet_sendCalls", params: v1Params(), origin: origin, profileID: profile)
+
+    let summary = try await service.summarize(request: id, profileID: profile)
+
+    #expect(summary?.rows.contains { $0.label == "Network Fee" && $0.value.hasPrefix("~") } == true)
+    #expect(state.estimateParams?.value(at: ["0", "authorizationList"]) == nil)
+    #expect(
+      state.estimateParams?.value(at: ["2", signer.account, "balance"])?.stringValue
+        == "0x" + String(repeating: "f", count: 64))
+    #expect(
+      state.estimateParams?.value(at: ["2", signer.account, "code"])?.stringValue
+        == Simple7702AccountDeployment.runtimeCode.map { "0x" + Hex.encode($0) })
   }
 
   @Test("custom chain deploys implementation before authorization and atomic batch")
@@ -365,7 +400,11 @@ struct EIP5792ServiceTests {
           .object([
             "to": .string("0x1111111111111111111111111111111111111111"),
             "value": .string("0x0"), "data": .string("0x1234"),
-          ])
+          ]),
+          .object([
+            "to": .string("0x2222222222222222222222222222222222222222"),
+            "value": .string("0x0"), "data": .string("0x5678"),
+          ]),
         ])
       ])
     ])
@@ -387,7 +426,8 @@ struct EIP5792ServiceTests {
   }
 
   private func makeService(
-    state: CallsRPCState, chainID: String = "1"
+    state: CallsRPCState, chainID: String = "1",
+    runtimeHash: String = "0x" + Hex.encode(Keccak.keccak256([0x60, 0x01]))
   ) -> (WalletService, RecordingSigner) {
     let signer = RecordingSigner()
     CallsURLProtocol.handler = { request in state.response(request: request) }
@@ -413,7 +453,7 @@ struct EIP5792ServiceTests {
         resolver: RPCResolver(overrides: [chainID: URL(string: "https://rpc.example")!]),
         rpcClient: RPCClient(session: URLSession(configuration: configuration)),
         deploymentStore: Simple7702AccountDeploymentStore(directory: directory),
-        simple7702AccountRuntimeHash: "0x" + Hex.encode(Keccak.keccak256([0x60, 0x01]))),
+        simple7702AccountRuntimeHash: runtimeHash),
       signer
     )
   }

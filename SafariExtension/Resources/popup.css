@@ -70,6 +70,20 @@ body {
   gap: 8px;
 }
 
+.request.queued .request-heading {
+  cursor: pointer;
+}
+
+.request.queued .request-heading:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+
+.request.queued.collapsed .request-body {
+  display: none;
+}
+
 .request h1 {
   margin: 0;
   font-size: 20px;
@@ -111,10 +125,29 @@ body {
   font-weight: 600;
 }
 
-.row-value.code,
+.address-value {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.blockie {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  overflow: hidden;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  border: 1px solid var(--border);
+  border-radius: 30%;
+}
+
 .message-value {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: inherit;
+  font-size: 14px;
 }
 
 .section {
@@ -155,17 +188,97 @@ body {
   overflow-wrap: anywhere;
 }
 
-.account {
-  margin-top: 18px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+.call-list {
+  display: grid;
+  gap: 12px;
+}
+
+.call-card {
+  padding: 8px 12px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--secondary);
+}
+
+.call-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.call-field {
+  min-width: 0;
+}
+
+.call-label {
+  margin-bottom: 3px;
   color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.call-field-content {
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.call-field-content > .address-value {
+  display: flex;
+}
+
+.calldata-toggle {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.calldata-toggle:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.calldata-value {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.calldata-toggle.expanded .calldata-value {
+  display: block;
+}
+
+.call-data {
+  margin-top: 12px;
+}
+
+.account {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  margin-right: auto;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.account > .address-value {
+  display: flex;
 }
 
 .actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 18px;

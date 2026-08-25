@@ -94,3 +94,195 @@ test("popup falls back to background messaging when direct native transport is u
   assert.equal(backgroundMessages.length, 1);
   assert.equal(backgroundMessages[0].type, "popup.list");
 });
+
+test("popup renders addresses, collapses queued requests, and expands raw calldata", async () => {
+  const account = "0x1234567890abcdef1234567890abcdef12345678";
+  const target = "0x1111111111111111111111111111111111111111";
+  const calldata = `0x${"12345678".repeat(30)}`;
+  let didRender;
+  const tray = new TestElement("div", () => didRender?.());
+  const document = {
+    getElementById() {
+      return tray;
+    },
+    createElement(tagName) {
+      return new TestElement(tagName);
+    },
+  };
+  const browser = {
+    runtime: {
+      lastError: null,
+      sendNativeMessage(_applicationID, _message, callback) {
+        callback({
+          ok: true,
+          data: {
+            pending: [
+              {
+                requestId: "active",
+                data: {
+                  kind: "batch",
+                  title: "Send calls",
+                  account,
+                  origin: "https://dapp.example",
+                  queued: false,
+                  rows: [
+                    { label: "Account", value: account },
+                    { label: "Chain", value: "1" },
+                    { label: "Call 1 Target", value: target },
+                    { label: "Call 1 Value", value: "0 ETH" },
+                    { label: "Call 1 Data", value: calldata },
+                    {
+                      label: "Call 2 Target",
+                      value: "0x2222222222222222222222222222222222222222",
+                    },
+                    { label: "Call 2 Value", value: "0 ETH" },
+                    { label: "Call 2 Data", value: "0x" },
+                  ],
+                },
+              },
+              {
+                requestId: "queued",
+                data: {
+                  kind: "message",
+                  title: "Sign message",
+                  account,
+                  origin: "https://dapp.example",
+                  queued: true,
+                  rows: [
+                    { label: "Account", value: account },
+                    { label: "Message", value: "hello" },
+                  ],
+                },
+              },
+            ],
+          },
+        });
+      },
+      sendMessage() {
+        return Promise.resolve(null);
+      },
+    },
+  };
+
+  const rendered = new Promise((resolve) => {
+    didRender = resolve;
+  });
+  vm.runInNewContext(popupSource, { browser, document, Math, Promise, URL, window: {} });
+  await rendered;
+
+  const addressValues = tray.querySelectorAll(".address-value");
+  assert.ok(addressValues.length >= 3);
+  assert.equal(addressValues[0].textContent, "0x1111...1111");
+  assert.equal(addressValues[0].title, target);
+  assert.equal(addressValues[0].querySelector(".blockie").children.length, 64);
+  const activeActions = tray.querySelector(".request-batch").querySelector(".actions");
+  assert.equal(activeActions.querySelector(".account").textContent, "0x1234...5678");
+
+  const queued = tray.querySelector(".queued");
+  const heading = queued.querySelector(".request-heading");
+  assert.ok(queued.classList.contains("collapsed"));
+  assert.equal(heading.getAttribute("aria-expanded"), "false");
+  heading.click();
+  assert.ok(!queued.classList.contains("collapsed"));
+  assert.equal(heading.getAttribute("aria-expanded"), "true");
+
+  const calldataToggle = tray.querySelector(".calldata-toggle");
+  assert.equal(tray.querySelectorAll(".call-card").length, 2);
+  assert.equal(tray.querySelectorAll(".calldata-toggle").length, 1);
+  assert.deepEqual(
+    tray.querySelectorAll(".call-label").map((label) => label.textContent),
+    ["To", "Data", "To"],
+  );
+  assert.equal(calldataToggle.textContent, calldata);
+  assert.equal(calldataToggle.getAttribute("aria-expanded"), "false");
+  calldataToggle.click();
+  assert.ok(calldataToggle.classList.contains("expanded"));
+  assert.equal(calldataToggle.getAttribute("aria-expanded"), "true");
+});
+
+class TestElement {
+  constructor(tagName, onAppend) {
+    this.tagName = tagName;
+    this.children = [];
+    this.attributes = new Map();
+    this.listeners = new Map();
+    this.style = {};
+    this.className = "";
+    this._textContent = "";
+    this.onAppend = onAppend;
+  }
+
+  get textContent() {
+    return this._textContent || this.children.map((child) => child.textContent || "").join("");
+  }
+
+  set textContent(value) {
+    this._textContent = String(value);
+    this.children = [];
+  }
+
+  get classList() {
+    const classes = () => new Set(this.className.split(/\s+/).filter(Boolean));
+    const save = (values) => {
+      this.className = [...values].join(" ");
+    };
+    return {
+      add: (...names) => {
+        const values = classes();
+        for (const name of names) values.add(name);
+        save(values);
+      },
+      contains: (name) => classes().has(name),
+      toggle: (name) => {
+        const values = classes();
+        const added = !values.has(name);
+        if (added) values.add(name);
+        else values.delete(name);
+        save(values);
+        return added;
+      },
+    };
+  }
+
+  append(...children) {
+    for (const child of children) this.appendChild(child);
+  }
+
+  appendChild(child) {
+    this.children.push(child);
+    this.onAppend?.();
+    return child;
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) || [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  click() {
+    for (const listener of this.listeners.get("click") || []) listener({});
+  }
+
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] || null;
+  }
+
+  querySelectorAll(selector) {
+    const className = selector.startsWith(".") ? selector.slice(1) : null;
+    const matches = [];
+    for (const child of this.children) {
+      if (className && child.classList.contains(className)) matches.push(child);
+      matches.push(...child.querySelectorAll(selector));
+    }
+    return matches;
+  }
+}
