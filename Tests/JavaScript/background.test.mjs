@@ -175,8 +175,7 @@ test("plain wallet_connect still short-circuits an existing grant", async () => 
       },
       sendNativeMessage(_applicationID, message, callback) {
         actions.push(message.action);
-        if (message.action === "isConnected") callback({ ok: true, data: { connected: true } });
-        else callback({ ok: true, data: { account: "0x1234" } });
+        callback({ ok: true, data: { accounts: ["0x1234"] } });
       },
     },
     tabs: {
@@ -196,7 +195,47 @@ test("plain wallet_connect still short-circuits an existing grant", async () => 
     );
   });
   assert.deepEqual(Array.from(response.result), ["0x1234"]);
-  assert.deepEqual(actions, ["isConnected", "me"]);
+  assert.deepEqual(actions, ["visibleAccounts"]);
+});
+
+test("eth_accounts uses one native visible-account snapshot", async () => {
+  let messageListener;
+  const messages = [];
+  const browser = {
+    action: { setBadgeText() {} },
+    runtime: {
+      lastError: null,
+      onMessage: {
+        addListener(listener) {
+          messageListener = listener;
+        },
+      },
+      sendNativeMessage(_applicationID, message, callback) {
+        messages.push(message);
+        callback({ ok: true, data: { accounts: ["0x1234"] } });
+      },
+    },
+    tabs: {
+      query(_query, callback) {
+        callback([]);
+      },
+      sendMessage() {},
+    },
+  };
+  vm.runInNewContext(backgroundSource, { browser, Map, Promise, Set, URL });
+
+  const response = await new Promise((resolve) => {
+    messageListener(
+      { type: "ethereum.request", method: "eth_accounts" },
+      { origin: "https://example.com" },
+      resolve,
+    );
+  });
+
+  assert.deepEqual(Array.from(response.result), ["0x1234"]);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].action, "visibleAccounts");
+  assert.equal(messages[0].origin, "https://example.com");
 });
 
 test("wallet_disconnect preserves native success and structured errors", async () => {

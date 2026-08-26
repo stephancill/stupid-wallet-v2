@@ -173,14 +173,10 @@
     // Wallet-owned read that reflects the connection grant. eth_chainId / net_version
     // resolve locally with the injected account/active chain.
     if (method === "eth_accounts") {
-      const me = await native({ action: "me" });
-      const connected = await native({ action: "isConnected", origin: pageOrigin });
+      const visible = await native({ action: "visibleAccounts", origin: pageOrigin });
       envelope(sendResponse, {
         ok: true,
-        result:
-          me.ok && connected.ok && connected.data && connected.data.connected
-            ? [me.data.account]
-            : [],
+        result: visible.ok && visible.data ? visible.data.accounts : [],
       });
       return;
     }
@@ -285,12 +281,11 @@
     const hasCapabilities =
       capabilities && typeof capabilities === "object" && Object.keys(capabilities).length > 0;
     if (method === "eth_requestaccounts" || (method === "wallet_connect" && !hasCapabilities)) {
-      const connected = await native({ action: "isConnected", origin: pageOrigin });
-      if (connected.ok && connected.data && connected.data.connected) {
-        const me = await native({ action: "me" });
+      const visible = await native({ action: "visibleAccounts", origin: pageOrigin });
+      if (visible.ok && visible.data && visible.data.accounts.length > 0) {
         envelope(sendResponse, {
           ok: true,
-          result: me.ok && me.data ? [me.data.account] : [],
+          result: visible.data.accounts,
         });
         return;
       }

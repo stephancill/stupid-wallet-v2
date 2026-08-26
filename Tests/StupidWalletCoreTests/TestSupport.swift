@@ -68,6 +68,44 @@ struct StubSigner: Signing {
   }
 }
 
+struct DeterministicAccountResolver: AccountResolving {
+  let secrets: [String: [UInt8]]
+
+  init(secrets: [[UInt8]]) throws {
+    var values: [String: [UInt8]] = [:]
+    for secret in secrets {
+      values[try EthereumKeypair.from(secret: secret).address.lowercased()] = secret
+    }
+    self.secrets = values
+  }
+
+  func signer(address: String) throws -> any Signing {
+    guard let secret = secrets[address.lowercased()] else { throw SigningError.accountUnavailable }
+    return DeterministicAccountSigner(account: address, secret: secret)
+  }
+
+  func exportPrivateKey(address _: String) throws -> String {
+    throw SigningError.accountUnavailable
+  }
+}
+
+struct DeterministicAccountSigner: Signing {
+  let account: String
+  let secret: [UInt8]
+
+  func hasKey() -> Bool { true }
+
+  func signDigest(_ digest: [UInt8]) throws -> [UInt8] {
+    try EthereumSigner.sign(digest: digest, keypair: EthereumKeypair.from(secret: secret))
+  }
+}
+
+func deterministicSecret(_ value: UInt8) -> [UInt8] {
+  var secret = [UInt8](repeating: 0, count: 32)
+  secret[31] = value
+  return secret
+}
+
 final class OneShotPersistenceFaultInjector: PersistenceFaultInjecting, @unchecked Sendable {
   enum Outcome: Sendable {
     case failure

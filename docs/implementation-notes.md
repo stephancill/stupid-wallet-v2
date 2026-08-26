@@ -50,6 +50,50 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Gate E Account-Specific Safari Policy
+
+### Summary
+
+- Replaced Safari's separate home-account and grant reads with one native `visibleAccounts` operation
+  backed by a validated registry/connection snapshot. `eth_accounts` and existing plain-connect
+  short-circuiting now expose only the active account for the authoritative origin/profile.
+- Injected the registry-backed account resolver into production `WalletService`. Every non-connect
+  wallet-owned prepare resolves the active origin/profile account, validates standard personal-sign,
+  typed-data, transaction, and batch account fields, and persists that account in binding version 2.
+- Approval now re-resolves the active account, rejects disconnect or active-account replacement, and
+  selects the protected private-key or seed-derived signer from the persisted request account. SIWE and
+  all other non-connect records remain immutable rather than following home/default/active changes.
+- Kept one deterministic creation-time-plus-UUID queue across accounts. Added recovered-signer tests
+  for two connected accounts, mismatch and active-replacement regressions, SIWE immutability coverage,
+  atomic visible-account coverage, and a JavaScript regression proving `eth_accounts` makes one native
+  account-state request. WebExtension manifest `0.1.44` carries the worker change.
+
+### Why
+
+- The home-selected account is containing-app state, not dapp authority. Resolving account and grant in
+  separate calls could combine different snapshots, and retaining one home signer could sign a request
+  for the wrong connected account after a home or active-account change.
+
+### Verification
+
+- `swift test` passed all 276 tests in 34 suites. Focused Gate E coverage proves two account-specific
+  requests coexist in the global queue and each signature recovers to its persisted account; mismatched
+  standard account fields fail before persistence; and active-account replacement terminalizes ordinary
+  signing and SIWE requests.
+- `node --test Tests/JavaScript/*.test.mjs` passed all 12 tests. Oxc formatting/linting, `node --check`,
+  manifest JSON validation, and `git diff --check` passed.
+- `swift format lint --recursive Sources Tests` reported only the three pre-existing block-comment
+  warnings in `SecurityWalletBackend.swift`.
+- `stupid-app 0.0.8 doctor` completed with zero failures and warnings, `stupid-app build` succeeded, and
+  `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app and
+  extension resources. Accessibility inspection confirmed the retained wallet home rendered.
+
+### Follow-Up
+
+- Implement Gate F's revisioned popup connect-account picker and recoverable connect commit before
+  changing the future connection default. Gate G provider account events and Gate H physical/Mac
+  multi-account Safari acceptance remain separate.
+
 ## 2026-08-26 - Gate D Containing-App Account UX
 
 ### Summary

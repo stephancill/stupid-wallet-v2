@@ -63,6 +63,30 @@ struct ConnectedSitesTests {
         origin: "http://legacy.example:8080", address: account, profileID: "profile-a"))
   }
 
+  @Test("visible account is resolved from one origin and profile snapshot")
+  func visibleAccountSnapshot() async throws {
+    let store = ConnectedSitesStore(suiteName: "grants-\(UUID().uuidString)")
+    let first = try address(secret: 1)
+    let second = try address(secret: 2)
+    try await store.connect(
+      site: ConnectedSite(
+        domain: "dapp.example", address: first, origin: "https://dapp.example",
+        profileID: "profile-a"))
+    try await store.connect(
+      site: ConnectedSite(
+        domain: "dapp.example", address: second, origin: "https://dapp.example",
+        profileID: "profile-b"))
+
+    #expect(
+      try await store.visibleAccount(origin: "https://dapp.example", profileID: "profile-a")
+        == first)
+    #expect(
+      try await store.visibleAccount(origin: "https://dapp.example", profileID: "profile-b")
+        == second)
+    #expect(
+      try await store.visibleAccount(origin: "https://dapp.example", profileID: nil) == nil)
+  }
+
   @Test("disconnect removes only the selected account grant")
   func disconnectRemoves() async throws {
     let suite = "grants-\(UUID().uuidString)"

@@ -472,4 +472,140 @@ struct ApprovalTests {
         method: "PERSONAL_SIGN", origin: origin, chainId: "8453", profileID: nil,
         params: params) != digestA)
   }
+
+  @Test("requests for two connected accounts share one queue and use their persisted signers")
+  func accountSpecificQueueAndSigners() async throws {
+    let context = try await accountPolicyService()
+    let first = try await context.service.prepare(
+      method: "personal_sign",
+      params: .array([.string("0x68656c6c6f"), .string(context.first)]),
+      origin: "https://one.example", profileID: "profile-a")
+    let second = try await context.service.prepare(
+      method: "personal_sign",
+      params: .array([.string("0x776f726c64"), .string(context.second)]),
+      origin: "https://two.example", profileID: "profile-b")
+
+    await #expect(throws: WalletError.queued) {
+      try await context.service.approve(request: second, profileID: "profile-b")
+    }
+    for (id, profile, expected) in [
+      (first, "profile-a", context.first), (second, "profile-b", context.second),
+    ] {
+      let record = try #require(await context.service.store.record(id))
+      let result = try await context.service.approve(request: id, profileID: profile)
+      let signature = try #require(result.stringValue.flatMap(Hex.data))
+      let recovered = try #require(
+        try? EthereumSigner.recoverAddress(
+          digest: RequestExecutor.signableDigest(for: record), signature: signature))
+      #expect(recovered.caseInsensitiveCompare(expected) == .orderedSame)
+    }
+  }
+
+  @Test("account parameters must match the active origin account before persistence")
+  func activeAccountParameterMismatch() async throws {
+    let context = try await accountPolicyService()
+    await #expect(throws: WalletError.invalidParams) {
+      try await context.service.prepare(
+        method: "personal_sign",
+        params: .array([.string("0x6869"), .string(context.second)]),
+        origin: "https://one.example", profileID: "profile-a")
+    }
+    await #expect(throws: WalletError.invalidParams) {
+      try await context.service.prepare(
+        method: "eth_signTypedData_v4",
+        params: .array([.string(context.second), .string("{}")]),
+        origin: "https://one.example", profileID: "profile-a")
+    }
+    await #expect(throws: WalletError.invalidParams) {
+      try await context.service.prepare(
+        method: "eth_sendTransaction",
+        params: .array([
+          .object([
+            "from": .string(context.second),
+            "to": .string("0x0000000000000000000000000000000000000001"),
+          ])
+        ]), origin: "https://one.example", profileID: "profile-a")
+    }
+    #expect(try await context.service.list(profileID: "profile-a").isEmpty)
+  }
+
+  @Test("active-account replacement terminalizes an immutable signing request")
+  func activeAccountReplacementBeforeApproval() async throws {
+    let context = try await accountPolicyService()
+    let id = try await context.service.prepare(
+      method: "personal_sign",
+      params: .array([.string("0x6869"), .string(context.first)]),
+      origin: "https://one.example", profileID: "profile-a")
+    try await context.connectedSites.connect(
+      site: ConnectedSite(
+        domain: "one.example", address: context.second, origin: "https://one.example",
+        profileID: "profile-a"))
+
+    await #expect(throws: WalletError.self) {
+      try await context.service.approve(request: id, profileID: "profile-a")
+    }
+    #expect(await context.service.status(for: id, profileID: "profile-a")?.status == "failed")
+  }
+
+  @Test("SIWE remains bound to its prepared connected account")
+  func siweAccountImmutable() async throws {
+    let context = try await accountPolicyService()
+    let params: JSONValue = .array([
+      .object([
+        "version": .string("1"),
+        "capabilities": .object([
+          "signInWithEthereum": .object([
+            "nonce": .string("12345678"), "chainId": .string("0x1"),
+          ])
+        ]),
+      ])
+    ])
+    let id = try await context.service.prepare(
+      method: "wallet_connect", params: params, origin: "https://one.example",
+      profileID: "profile-a")
+    #expect(try await context.service.store.record(id)?.account == context.first)
+    try await context.connectedSites.connect(
+      site: ConnectedSite(
+        domain: "one.example", address: context.second, origin: "https://one.example",
+        profileID: "profile-a"))
+
+    await #expect(throws: WalletError.self) {
+      try await context.service.approve(request: id, profileID: "profile-a")
+    }
+    #expect(try await context.service.store.record(id)?.account == context.first)
+  }
+
+  private func accountPolicyService() async throws -> (
+    service: WalletService, connectedSites: ConnectedSitesStore, first: String, second: String
+  ) {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "GateEApprovalTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let suite = "GateEApprovalTests-\(UUID().uuidString)"
+    _ = try ConnectionStateStore(directory: directory, suiteName: suite)
+      .getOrCreate(ConnectionState(revision: 0))
+    let connectedSites = ConnectedSitesStore(suiteName: suite, directory: directory)
+    let resolver = try DeterministicAccountResolver(secrets: [
+      deterministicSecret(1), deterministicSecret(2),
+    ])
+    let first = try EthereumKeypair.from(secret: deterministicSecret(1)).address
+    let second = try EthereumKeypair.from(secret: deterministicSecret(2)).address
+    try await connectedSites.connect(
+      site: ConnectedSite(
+        domain: "one.example", address: first, origin: "https://one.example",
+        profileID: "profile-a"))
+    try await connectedSites.connect(
+      site: ConnectedSite(
+        domain: "two.example", address: second, origin: "https://two.example",
+        profileID: "profile-b"))
+    let service = WalletService(
+      store: PendingRequestStore(directory: directory.appendingPathComponent("Pending")),
+      signing: try resolver.signer(address: first), connectedSites: connectedSites,
+      chainStore: ChainStore(directory: directory),
+      networkStore: NetworkStore(directory: directory, legacySuiteName: suite),
+      activityStore: ActivityStore(
+        databaseURL: directory.appendingPathComponent("Activity.sqlite")),
+      accountResolver: resolver)
+    return (service, connectedSites, first, second)
+  }
 }

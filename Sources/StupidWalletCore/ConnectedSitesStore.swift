@@ -79,21 +79,31 @@ public actor ConnectedSitesStore {
   /// by the retained hostname fallback when that domain has no exact grants.
   public func isConnected(origin: String, address: String, profileID: String? = nil) throws -> Bool
   {
+    try visibleAccount(origin: origin, profileID: profileID)?.caseInsensitiveCompare(address)
+      == .orderedSame
+  }
+
+  /// The one account visible to an origin/profile from one validated registry + connection
+  /// snapshot. Home and default selections are never provider-visible through this operation.
+  public func visibleAccount(origin: String, profileID: String? = nil, exactOnly: Bool = false)
+    throws
+    -> String?
+  {
     let state = try loadValidatedState()
     let normalized = Origin.normalize(origin)
     if let active = state.activeConnections.first(where: {
       $0.origin == normalized && $0.profileID == profileID
     }) {
-      return active.account.caseInsensitiveCompare(address) == .orderedSame
+      return active.account
     }
+    guard !exactOnly else { return nil }
     let domain = Origin.downHost(of: origin)
     if state.grants.contains(where: { $0.precision == .exact && $0.legacyDomain == domain }) {
-      return false
+      return nil
     }
-    return state.grants.contains {
+    return state.grants.first {
       $0.precision == .hostname && $0.legacyDomain == domain
-        && $0.account.caseInsensitiveCompare(address) == .orderedSame
-    }
+    }?.account
   }
 
   /// Exact active-grant check for privacy-sensitive wallet capability and batch-status reads.

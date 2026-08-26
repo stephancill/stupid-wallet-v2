@@ -257,6 +257,8 @@ public enum ApprovalSummary {
 public actor WalletService {
   public nonisolated let store: PendingRequestStore
   public nonisolated let signing: any Signing
+  public nonisolated let accountResolver: any AccountResolving
+  nonisolated let enforcesConnectedAccountPolicy: Bool
   public nonisolated let connectedSites: ConnectedSitesStore
   public nonisolated let chainStore: ChainStore
   public nonisolated let networkStore: NetworkStore
@@ -285,9 +287,12 @@ public actor WalletService {
     deploymentStore: Simple7702AccountDeploymentStore = Simple7702AccountDeploymentStore(),
     submissionLock: TransactionSubmissionLock? = nil,
     simple7702AccountRuntimeHash: String = EIP5792.simple7702AccountRuntimeHash,
-    registryStore: WalletRegistryStore? = nil
+    registryStore: WalletRegistryStore? = nil,
+    accountResolver: (any AccountResolving)? = nil
   ) {
     self.signing = signing
+    self.accountResolver = accountResolver ?? InjectedAccountResolver(signing: signing)
+    self.enforcesConnectedAccountPolicy = accountResolver != nil
     let resolvedStore = store ?? PendingRequestStore()
     self.store = resolvedStore
     self.connectedSites = connectedSites ?? ConnectedSitesStore()
@@ -311,6 +316,8 @@ public actor WalletService {
     grantsSuite: String
   ) {
     self.signing = signing
+    self.accountResolver = InjectedAccountResolver(signing: signing)
+    self.enforcesConnectedAccountPolicy = false
     self.store = store ?? PendingRequestStore()
     let chainDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
       "ChainStore-\(grantsSuite)")
@@ -338,8 +345,18 @@ public actor WalletService {
   /// Whether this origin already has a connection grant to the active account.
   public nonisolated func isConnected(origin: String, profileID: String? = nil) async throws -> Bool
   {
-    try await connectedSites.isConnected(
-      origin: origin, address: signing.account, profileID: profileID)
+    try await connectedSites.visibleAccount(origin: origin, profileID: profileID) != nil
+  }
+
+  /// Atomically resolves the account array visible to one provider origin/profile.
+  public nonisolated func visibleAccounts(origin: String, profileID: String? = nil) async throws
+    -> [String]
+  {
+    guard
+      let account = try await connectedSites.visibleAccount(origin: origin, profileID: profileID),
+      let signer = try? accountResolver.signer(address: account), signer.hasKey()
+    else { return [] }
+    return [signer.account]
   }
 
   /// Persisted connection grants for the current account.
@@ -360,8 +377,11 @@ public actor WalletService {
 
   /// Revokes a connection. Idempotent.
   public func disconnect(origin: String, profileID: String? = nil) async throws {
+    guard
+      let account = try await connectedSites.visibleAccount(origin: origin, profileID: profileID)
+    else { return }
     try await connectedSites.disconnect(
-      account: signing.account, origin: origin, profileID: profileID)
+      account: account, origin: origin, profileID: profileID)
   }
 
   public nonisolated var account: String { signing.account }
@@ -376,6 +396,50 @@ public actor WalletService {
     } catch {
       throw WalletError.notReady
     }
+  }
+
+  private nonisolated func connectedSigner(
+    origin: String, profileID: String?, exactOnly: Bool = false
+  ) async throws -> any Signing {
+    guard
+      let account = try await connectedSites.visibleAccount(
+        origin: origin, profileID: profileID, exactOnly: exactOnly)
+    else { throw WalletError.unauthorized }
+    guard let signer = try? accountResolver.signer(address: account), signer.hasKey() else {
+      throw WalletError.notReady
+    }
+    return signer
+  }
+
+  private static func validateStandardAccountParameter(
+    method: String, params: JSONValue, account: String
+  ) throws {
+    let method = method.lowercased()
+    let supplied: String?
+    switch method {
+    case "personal_sign":
+      guard case .array(let values) = params, values.count == 2,
+        values[0].stringValue != nil, let address = values[1].stringValue
+      else { throw WalletError.invalidParams }
+      supplied = address
+    case "eth_signtypeddata_v4":
+      guard case .array(let values) = params, values.count == 2,
+        let address = values[0].stringValue, values[1].stringValue != nil
+      else { throw WalletError.invalidParams }
+      supplied = address
+    default:
+      return
+    }
+    guard supplied?.caseInsensitiveCompare(account) == .orderedSame else {
+      throw WalletError.invalidParams
+    }
+  }
+
+  private static func requestComesBefore(_ lhs: WalletPendingRequest, _ rhs: WalletPendingRequest)
+    -> Bool
+  {
+    if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+    return lhs.id.uuidString.lowercased() < rhs.id.uuidString.lowercased()
   }
 
   public struct ActiveChainState: Sendable {
@@ -411,11 +475,7 @@ public actor WalletService {
     origin: String,
     profileID: String? = nil
   ) async throws -> JSONValue {
-    guard signing.hasKey() else { throw WalletError.notReady }
-    guard
-      try await connectedSites.isConnected(
-        origin: origin, address: signing.account, profileID: profileID)
-    else { throw WalletError.unauthorized }
+    _ = try await connectedSigner(origin: origin, profileID: profileID)
     guard let target = Self.requestedChainID(params) else { throw WalletError.invalidParams }
     guard let claim = chainStore.claimSwitch() else { throw WalletError.queued }
     defer { chainStore.releaseSwitch(claim) }
@@ -461,34 +521,38 @@ public actor WalletService {
     let chainId = try await activeChainID()
     var kind = RequestKind.kind(for: method)
     guard MethodPolicy.requiresApproval(method) else { throw WalletError.methodNotApproved }
-    guard signing.hasKey() else { throw WalletError.notReady }
-    if kind == .chain,
-      !(try await connectedSites.isConnected(
-        origin: origin, address: signing.account, profileID: profileID))
-    {
-      throw WalletError.unauthorized
+    let methodName = method.lowercased()
+    let isSIWE = methodName == "wallet_connect" && Self.hasSIWECapability(params)
+    if methodName == "wallet_connect", !isSIWE, Self.hasCapabilities(params) {
+      throw WalletError.invalidParams
+    }
+    let requestSigner: any Signing
+    if !enforcesConnectedAccountPolicy || (kind == .connect && !isSIWE) {
+      guard signing.hasKey() else { throw WalletError.notReady }
+      requestSigner = signing
+    } else {
+      requestSigner = try await connectedSigner(
+        origin: origin, profileID: profileID, exactOnly: kind == .batch)
+    }
+    let account = requestSigner.account
+    if enforcesConnectedAccountPolicy {
+      try Self.validateStandardAccountParameter(method: method, params: params, account: account)
     }
 
     let canonicalParams: JSONValue
     var recordChainID = chainId
-    if method.lowercased() == "wallet_connect", Self.hasSIWECapability(params) {
-      let prepared = try SIWE.prepare(params: params, account: signing.account, origin: origin)
+    if isSIWE {
+      let prepared = try SIWE.prepare(params: params, account: account, origin: origin)
       kind = .siwe
       canonicalParams = prepared.params
       recordChainID = prepared.chainID
-    } else if method.lowercased() == "wallet_connect", Self.hasCapabilities(params) {
-      throw WalletError.invalidParams
     } else if kind == .batch {
-      guard
-        try await connectedSites.hasExactGrant(
-          origin: origin, address: signing.account, profileID: profileID)
-      else { throw WalletError.unauthorized }
       guard (try? networkStore.network(chainID: chainId)) != nil else {
         throw Self.walletError(.unsupportedChain)
       }
       do {
         canonicalParams = try EIP5792.prepare(
-          params: params, account: signing.account, activeChainID: chainId
+          params: params, account: account, activeChainID: chainId
         ).params
       } catch let error as EIP5792Error {
         throw Self.walletError(error)
@@ -498,13 +562,14 @@ public actor WalletService {
       {
         let duplicateActivity =
           (try? await activityStore.callBundle(
-            id: requestedID, origin: origin, profileID: profileID, account: signing.account)) != nil
+            id: requestedID, origin: origin, profileID: profileID, account: account)) != nil
         guard !duplicateActivity else {
           throw Self.walletError(.duplicateID)
         }
       }
     } else if kind == .send {
-      canonicalParams = try canonicalizeTransaction(params: params, chainID: chainId)
+      canonicalParams = try canonicalizeTransaction(
+        params: params, account: account, chainID: chainId)
     } else {
       canonicalParams = params
     }
@@ -525,7 +590,7 @@ public actor WalletService {
       origin: normalizedOrigin,
       profileID: profileID,
       chainId: recordChainID,
-      account: signing.account,
+      account: account,
       params: canonicalParams,
       createdAt: createdAt,
       expiresAt: expiresAt)
@@ -536,7 +601,7 @@ public actor WalletService {
       origin: normalizedOrigin,
       profileID: profileID,
       chainId: recordChainID,
-      account: signing.account,
+      account: account,
       params: canonicalParams,
       payloadDigest: payloadDigest,
       intentDigest: intentDigest,
@@ -581,9 +646,8 @@ public actor WalletService {
   public func list(profileID: String? = nil) async throws -> [Summary] {
     _ = try ensureRegistryReady()
     let pending =
-      (try await store.pending()).filter { $0.profileID == profileID }.sorted {
-        $0.createdAt < $1.createdAt
-      }
+      (try await store.pending()).filter { $0.profileID == profileID }.sorted(
+        by: Self.requestComesBefore)
     var summaries: [Summary] = []
     for record in pending where record.bindingVersion == 2 {
       summaries.append(await makeSummary(record))
@@ -593,7 +657,7 @@ public actor WalletService {
 
   private func makeSummary(_ record: WalletPendingRequest) async -> Summary {
     var active = false
-    if let queue = try? await store.pending().sorted(by: { $0.createdAt < $1.createdAt }) {
+    if let queue = try? await store.pending().sorted(by: Self.requestComesBefore) {
       active = queue.first?.id == record.id
     }
     var rows = ApprovalSummary.rows(for: record).map { row in
@@ -821,7 +885,7 @@ public actor WalletService {
       throw WalletError.expired
     }
     // Queue policy: only the oldest pending request may be approved.
-    let queue = (try await store.pending()).sorted { $0.createdAt < $1.createdAt }
+    let queue = (try await store.pending()).sorted(by: Self.requestComesBefore)
     guard queue.first?.id == record.id else { throw WalletError.queued }
     let activeChainID = try await activeChainID()
     guard record.kind == .siwe || record.chainId == activeChainID else {
@@ -834,33 +898,38 @@ public actor WalletService {
       try await store.insert(record)
       throw WalletError.rpc(rpcError)
     }
-    guard signing.account.caseInsensitiveCompare(record.account) == .orderedSame else {
-      throw WalletError.bindingMismatch
-    }
-    if record.kind == .chain,
-      !(try await connectedSites.isConnected(
-        origin: record.origin, address: record.account, profileID: profileID))
-    {
-      let rpcError = JSONValue.object([
-        "code": .number(4100),
-        "message": .string("Origin disconnected before approval"),
-      ])
-      record.status = .failed
-      record.error = rpcError
-      try await store.insert(record)
-      throw WalletError.rpc(rpcError)
-    }
-    if record.kind == .batch,
-      !(try await connectedSites.hasExactGrant(
-        origin: record.origin, address: record.account, profileID: profileID))
-    {
-      let rpcError = JSONValue.object([
-        "code": .number(4100), "message": .string("Origin disconnected before approval"),
-      ])
-      record.status = .failed
-      record.error = rpcError
-      try await store.insert(record)
-      throw WalletError.rpc(rpcError)
+    let requestSigner: any Signing
+    if record.kind == .connect || !enforcesConnectedAccountPolicy {
+      do {
+        requestSigner = try accountResolver.signer(address: record.account)
+      } catch {
+        throw WalletError.bindingMismatch
+      }
+      guard requestSigner.hasKey() else { throw WalletError.notReady }
+    } else {
+      do {
+        requestSigner = try await connectedSigner(
+          origin: record.origin, profileID: profileID, exactOnly: record.kind == .batch)
+      } catch {
+        let rpcError = JSONValue.object([
+          "code": .number(4100),
+          "message": .string("Connected account changed before approval"),
+        ])
+        record.status = .failed
+        record.error = rpcError
+        try await store.insert(record)
+        throw WalletError.rpc(rpcError)
+      }
+      guard requestSigner.account.caseInsensitiveCompare(record.account) == .orderedSame else {
+        let rpcError = JSONValue.object([
+          "code": .number(4100),
+          "message": .string("Connected account changed before approval"),
+        ])
+        record.status = .failed
+        record.error = rpcError
+        try await store.insert(record)
+        throw WalletError.rpc(rpcError)
+      }
     }
     guard Self.kindMatches(record) else {
       throw WalletError.bindingMismatch
@@ -901,7 +970,7 @@ public actor WalletService {
     if requiresSignature {
       if record.kind == .batch {
         do {
-          let result = try await approveBatch(record: &record)
+          let result = try await approveBatch(record: &record, signing: requestSigner)
           record.status = .consumed
           record.result = result
           try await store.insert(record)
@@ -946,7 +1015,7 @@ public actor WalletService {
       }
       let signature: [UInt8]
       do {
-        signature = try signing.signDigest(signable)
+        signature = try requestSigner.signDigest(signable)
       } catch {
         throw WalletError.authCancelled
       }
@@ -1150,7 +1219,9 @@ public actor WalletService {
     .rpc(.object(["code": .number(4900), "message": .string(message)]))
   }
 
-  private func canonicalizeTransaction(params: JSONValue, chainID: String) throws -> JSONValue {
+  private func canonicalizeTransaction(params: JSONValue, account: String, chainID: String) throws
+    -> JSONValue
+  {
     guard case .array(let items) = params, items.count == 1,
       case .object(var transaction) = items[0]
     else { throw WalletError.invalidParams }
@@ -1164,11 +1235,11 @@ public actor WalletService {
     }
 
     if let from = transaction["from"]?.stringValue,
-      from.caseInsensitiveCompare(signing.account) != .orderedSame
+      from.caseInsensitiveCompare(account) != .orderedSame
     {
       throw WalletError.invalidParams
     }
-    transaction["from"] = .string(signing.account)
+    transaction["from"] = .string(account)
     transaction["value"] = transaction["value"] ?? .string("0x0")
     if let data = transaction["data"], let input = transaction["input"], data != input {
       throw WalletError.invalidParams
@@ -1211,7 +1282,7 @@ public actor WalletService {
       transaction.removeValue(forKey: "type")
     }
     let intent = JSONValue.array([.object(transaction)])
-    try Self.validateTransactionIntent(intent, account: signing.account, chainID: chainID)
+    try Self.validateTransactionIntent(intent, account: account, chainID: chainID)
     return intent
   }
 
@@ -1258,7 +1329,9 @@ public actor WalletService {
     return resolved
   }
 
-  private func approveBatch(record: inout WalletPendingRequest) async throws -> JSONValue {
+  private func approveBatch(record: inout WalletPendingRequest, signing: any Signing) async throws
+    -> JSONValue
+  {
     guard
       EIP5792.validatePersisted(
         params: record.params, account: record.account, chainID: record.chainId),
@@ -1266,7 +1339,8 @@ public actor WalletService {
       let version = batch["version"]?.stringValue
     else { throw WalletError.invalidParams }
     let calldata = try EIP5792.executeBatchCalldata(record.params)
-    let implementationCode = try await ensureBatchImplementation(chainID: record.chainId)
+    let implementationCode = try await ensureBatchImplementation(
+      chainID: record.chainId, signing: signing)
     let accountCode = try await rpcData(
       method: "eth_getCode", params: .array([.string(record.account), .string("latest")]),
       chainID: record.chainId)
@@ -1392,7 +1466,9 @@ public actor WalletService {
     return .string(hash)
   }
 
-  private func ensureBatchImplementation(chainID: String) async throws -> [UInt8] {
+  private func ensureBatchImplementation(chainID: String, signing: any Signing) async throws
+    -> [UInt8]
+  {
     if shouldCacheDeployment(chainID: chainID),
       let cached = deploymentStore.verifiedCode(
         chainID: chainID, runtimeHash: simple7702AccountRuntimeHash,
@@ -1546,11 +1622,7 @@ public actor WalletService {
   public func getCapabilities(
     params: JSONValue, origin: String, profileID: String? = nil
   ) async throws -> JSONValue {
-    guard signing.hasKey() else { throw WalletError.notReady }
-    guard
-      try await connectedSites.hasExactGrant(
-        origin: origin, address: signing.account, profileID: profileID)
-    else { throw WalletError.unauthorized }
+    let signing = try await connectedSigner(origin: origin, profileID: profileID, exactOnly: true)
     guard case .array(let values) = params, values.count == 1 || values.count == 2,
       let requestedAccount = values.first?.stringValue,
       requestedAccount.caseInsensitiveCompare(signing.account) == .orderedSame
@@ -1600,11 +1672,7 @@ public actor WalletService {
   public func getCallsStatus(
     params: JSONValue, origin: String, profileID: String? = nil
   ) async throws -> JSONValue {
-    guard signing.hasKey() else { throw WalletError.notReady }
-    guard
-      try await connectedSites.hasExactGrant(
-        origin: origin, address: signing.account, profileID: profileID)
-    else { throw WalletError.unauthorized }
+    let signing = try await connectedSigner(origin: origin, profileID: profileID, exactOnly: true)
     guard case .array(let values) = params, values.count == 1,
       let id = values[0].stringValue, EIP5792.isValidID(id)
     else { throw WalletError.invalidParams }

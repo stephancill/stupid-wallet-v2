@@ -66,6 +66,23 @@ public protocol AccountResolving: Sendable {
   func exportPrivateKey(address: String) throws -> String
 }
 
+/// Adapts the historical injected signer to account resolution for hermetic callers. It
+/// deliberately resolves only that exact account and cannot substitute another signer.
+struct InjectedAccountResolver: AccountResolving {
+  let signing: any Signing
+
+  func signer(address: String) throws -> any Signing {
+    guard signing.account.caseInsensitiveCompare(address) == .orderedSame else {
+      throw SigningError.accountUnavailable
+    }
+    return signing
+  }
+
+  func exportPrivateKey(address _: String) throws -> String {
+    throw SigningError.accountUnavailable
+  }
+}
+
 /// Resolves a registered account to its protected source. Seed children are derived only
 /// inside the group lifecycle claim and are never persisted as address-keyed keychain items.
 public struct WalletAccountResolver: AccountResolving, Sendable {

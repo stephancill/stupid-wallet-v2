@@ -18,7 +18,7 @@ confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
 
-Multiple wallet groups and accounts are approved next-scope, and Gate A is complete. The shared
+Multiple wallet groups and accounts are approved next-scope, and Gates A, C, D, and E are complete. The shared
 plan now supports migration only from the old Dawn v1 application. Migration from the current
 single-account rebuild (v2) is explicitly out of scope: its address registration, normalized grants,
 singleton cache, and pending-request records receive no upgrade-preservation guarantee. Fail-closed
@@ -70,8 +70,13 @@ behavior, migration,
 account-resolution boundaries, popup connection picker, ordered implementation gates, and acceptance
 criteria are specified in
 `docs/multi-account-implementation-plan.md`. The containing app now exposes the Gate D multi-account
-model, while Safari account-specific request policy, popup selection, and provider events remain behind
-Gates E through G.
+model. Gate E is hermetically complete: the Safari worker requests one native visible-account snapshot
+for `eth_accounts` and existing-connect short-circuiting; production `WalletService` resolves
+non-connect wallet-owned operations from the origin/profile active account, validates standard account
+parameters before persistence, revalidates that account before approval, and resolves the protected
+signer from the persisted account. Requests for different accounts retain one deterministic global
+queue, while active-account replacement fails immutable signing and SIWE records rather than rebinding
+them. Popup connect selection and provider events remain behind Gates F and G.
 
 Gate B is now hermetically implemented and remains open for physical-device acceptance.
 `EthereumSeedPhrase` generates canonical entropy, round-trips every supported English BIP-39 size, and
@@ -634,8 +639,8 @@ The first usable milestone includes:
 
 ### Multiple Wallet Groups And Accounts
 
-Approved next-scope. Gates A, C, and D are complete; Gate B is hermetically complete but still requires
-physical-device acceptance, and Gates E through H remain pending:
+Approved next-scope. Gates A, C, D, and E are complete; Gate B is hermetically complete but still
+requires physical-device acceptance, and Gates F through H remain pending:
 
 - Only Dawn v1 is a supported migration source. The current rebuild v2 is unsupported, and its
   `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, singleton balance cache, and
@@ -1336,9 +1341,9 @@ investigation history in implementation notes.
    signing and private-key export, and complete resumable group deletion. The hermetic implementation
    and simulator build are complete. Keep future connect-marker reconciliation coupled to Gate F before
    connect commits become writable at runtime.
-2. Proceed to Gate E account-specific Safari request policy now that Gate D containing-app account UX
-   is complete. Keep Gate F connect rebind and Gate G provider account events behind their ordered
-   acceptance boundaries.
+2. Proceed to Gate F popup connect account selection now that Gate E account-specific Safari request
+   policy is hermetically complete. Keep Gate G provider account events behind its ordered acceptance
+   boundary.
 3. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
    reveal/cancellation/timeout, Forget Account, automatic migration launch, and Safari
    signing with each newly provisioned key. Raw private-key import, including recovery of a

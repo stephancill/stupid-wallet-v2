@@ -64,7 +64,7 @@ public final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandli
       }
       service = WalletService(
         signing: makeSigning(registry: registry), resolver: .persisted(),
-        registryStore: WalletRegistryStore())
+        registryStore: WalletRegistryStore(), accountResolver: WalletAccountResolver())
     } catch {
       return Server.errorJSON(4900, "Wallet is not ready yet")
     }
@@ -82,8 +82,14 @@ private enum Server {
     service: WalletService, envelope: Envelope, profileID: String?
   ) async -> JSONValue {
     switch envelope.action {
-    case "me":
-      return success(["account": .string(service.account)])
+    case "visibleAccounts":
+      do {
+        let accounts = try await service.visibleAccounts(
+          origin: envelope.origin ?? "unknown", profileID: profileID)
+        return success(["accounts": .array(accounts.map(JSONValue.string))])
+      } catch {
+        return errorJSON(4900, "Connection state is unavailable")
+      }
 
     case "chain":
       guard let state = try? await service.activeChainState(),

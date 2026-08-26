@@ -1118,6 +1118,14 @@ Exit conditions:
 
 ### Gate E: Account-specific Safari request policy
 
+Status: hermetically complete on 2026-08-26. Safari resolves provider-visible accounts from one
+validated registry/connection snapshot, and production request handling resolves every non-connect
+wallet-owned operation from the authoritative origin/profile active account. Prepare validates standard
+account parameters before persistence; approval revalidates the same account and resolves its protected
+signer from the persisted request. Cross-account requests retain one deterministic global queue, and
+active-account replacement terminalizes immutable signing and SIWE records instead of substituting an
+account. Physical multi-account Safari signing remains part of Gate H acceptance.
+
 Exit conditions:
 
 - `eth_accounts` resolves account and grant atomically.
