@@ -50,6 +50,64 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Gate G Provider Account Lifecycle
+
+### Summary
+
+- Added provider-owned account state initialized from native `visibleAccounts`. Connect,
+  `eth_accounts`, and disconnect responses update that state directly, while duplicate snapshots are
+  suppressed so `accountsChanged` fires only for an actual one-account-or-empty transition.
+- Added a sender-scoped account bootstrap route and payload-free same-origin tab refresh after
+  successful connect or disconnect. Tabs for another top-level origin receive no refresh; each
+  receiver resolves its own native snapshot under Safari's authoritative profile context.
+- Added bridge refresh on initial injection, `pageshow`, window focus, and visible
+  `visibilitychange`. No interval polling was added. WebExtension manifest `0.1.48` carries the new
+  provider, bridge, and worker resources.
+- Fixed physical-device injection on LAN-hosted HTTP fixtures. Safari does not expose
+  secure-context-only `crypto.randomUUID` there, so provider initialization now generates the same
+  RFC 4122 v4 session identity from `crypto.getRandomValues` when necessary.
+
+### Why
+
+- The containing app cannot dispatch directly into iOS Safari after account removal. Refreshing one
+  atomic native snapshot on proven page lifecycle signals converges provider state without leaking
+  another origin's account or running a permanent poller.
+
+### Verification
+
+- `node --test Tests/JavaScript/*.test.mjs` passed all 19 tests. New coverage proves provider
+  deduplication, connect/disconnect transitions, native bootstrap, same-origin versus cross-origin tab
+  delivery, return-to-page lifecycle refresh, and provider injection without `crypto.randomUUID`.
+  Oxc formatting/linting, JavaScript syntax checks, manifest JSON validation, and `git diff --check`
+  passed.
+- `swift test` passed all 288 tests in 34 suites. `stupid-app 0.0.8 doctor` completed with zero failures
+  and warnings, `stupid-app build` succeeded, and `stupid-app run --simulator --udid
+  <preferred-simulator>` installed and launched; the final manifest `0.1.48` was installed and launched
+  on both the preferred simulator and the physical iPhone over Wi-Fi.
+- Live simulator Safari bootstrapped an existing connection after extension relaunch. Disconnecting
+  that exact account/site grant from the containing app and returning to the existing Safari page
+  changed the dapp to disconnected immediately without a reload, proving focus/visibility lifecycle
+  refresh and showing that polling is unnecessary.
+- Wi-Fi installation and launch of manifest `0.1.48` succeeded on the physical iPhone. The first LAN
+  fixture attempt reproduced provider-not-found despite enabled website access; the insecure-origin
+  UUID regression above fixed it. After reinstall and reload, Connect opened the canonical wallet
+  request normally.
+- Physical Safari acceptance passed: approving Connect in one of two same-origin tabs updated the
+  other tab without reload; containing-app Connected Apps revocation disconnected the existing page
+  immediately on return; force-quitting and reopening Safari restored the retained connected account
+  without approval; and changing only the containing-app home account left the dapp's active account
+  unchanged.
+- A final reconnect attempt was not used as acceptance evidence: repeated test taps created separate
+  deliberate pending calls, and the opened popup instance did not list them. The canonical records
+  were not edited or deleted and were left to expire under normal policy; Gate F's successful
+  simulator connection proof and the later physical `0.1.48` connection both provide current
+  connect-approval evidence.
+
+### Follow-Up
+
+- Gate H retains physical-device and Mac Safari multi-account acceptance, including concrete
+  cross-profile event isolation. Gate B physical protected-seed acceptance also remains open.
+
 ## 2026-08-26 - Gate F Revisioned Connect Account Selection
 
 ### Summary

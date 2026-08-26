@@ -291,6 +291,7 @@ test("eth_accounts uses one native visible-account snapshot", async () => {
 test("wallet_disconnect preserves native success and structured errors", async () => {
   let messageListener;
   let nativeResponse = { ok: true, data: { ok: true } };
+  const tabMessages = [];
   const browser = {
     action: { setBadgeText() {} },
     runtime: {
@@ -308,9 +309,14 @@ test("wallet_disconnect preserves native success and structured errors", async (
     },
     tabs: {
       query(_query, callback) {
-        callback([]);
+        callback([
+          { id: 1, url: "https://example.com/one" },
+          { id: 2, url: "https://other.example/" },
+        ]);
       },
-      sendMessage() {},
+      sendMessage(tabId, message) {
+        tabMessages.push({ tabId, message });
+      },
     },
   };
   vm.runInNewContext(backgroundSource, { browser, Map, Promise, Set, URL });
@@ -328,6 +334,9 @@ test("wallet_disconnect preserves native success and structured errors", async (
   assert.equal(success.__envelope, true);
   assert.equal(success.ok, true);
   assert.equal(success.result, true);
+  assert.equal(tabMessages.length, 1);
+  assert.equal(tabMessages[0].tabId, 1);
+  assert.equal(tabMessages[0].message.type, "wallet.refreshAccounts");
 
   nativeResponse = {
     ok: false,
@@ -338,6 +347,96 @@ test("wallet_disconnect preserves native success and structured errors", async (
   assert.equal(failure.ok, false);
   assert.equal(failure.error.code, 4900);
   assert.equal(failure.error.message, "Connection state is unavailable");
+  assert.equal(tabMessages.length, 1);
+});
+
+test("account updates reach only tabs for the authoritative origin", async () => {
+  let messageListener;
+  const tabMessages = [];
+  const browser = {
+    action: { setBadgeText() {} },
+    runtime: {
+      lastError: null,
+      onMessage: {
+        addListener(listener) {
+          messageListener = listener;
+        },
+      },
+      sendNativeMessage(_applicationID, message, callback) {
+        if (message.action === "get") {
+          callback({ ok: true, data: { status: "consumed", result: ["0x1234"] } });
+        } else if (message.action === "summary") {
+          callback({ ok: true, data: { method: "eth_requestAccounts" } });
+        } else {
+          callback({ ok: false, error: "unexpected native action" });
+        }
+      },
+    },
+    tabs: {
+      query(_query, callback) {
+        callback([
+          { id: 1, url: "https://example.com/one" },
+          { id: 2, url: "https://example.com:443/two" },
+          { id: 3, url: "https://other.example/" },
+        ]);
+      },
+      sendMessage(tabId, message) {
+        tabMessages.push({ tabId, message });
+      },
+    },
+  };
+  vm.runInNewContext(backgroundSource, { browser, Map, Promise, Set, URL });
+
+  const response = await new Promise((resolve) => {
+    messageListener(
+      { type: "ethereum.status", id: "request-1" },
+      { origin: "https://example.com" },
+      resolve,
+    );
+  });
+
+  assert.equal(response.__resolved, true);
+  assert.deepEqual(
+    tabMessages.map(({ tabId }) => tabId),
+    [1, 2],
+  );
+  assert.equal(tabMessages[0].message.type, "wallet.refreshAccounts");
+});
+
+test("account bootstrap resolves one native sender-scoped snapshot", async () => {
+  let messageListener;
+  const nativeMessages = [];
+  const browser = {
+    action: { setBadgeText() {} },
+    runtime: {
+      lastError: null,
+      onMessage: {
+        addListener(listener) {
+          messageListener = listener;
+        },
+      },
+      sendNativeMessage(_applicationID, message, callback) {
+        nativeMessages.push(message);
+        callback({ ok: true, data: { accounts: ["0x1234"] } });
+      },
+    },
+    tabs: {
+      query(_query, callback) {
+        callback([]);
+      },
+      sendMessage() {},
+    },
+  };
+  vm.runInNewContext(backgroundSource, { browser, Map, Promise, Set, URL });
+
+  const response = await new Promise((resolve) => {
+    messageListener({ type: "wallet.getAccounts" }, { origin: "https://example.com" }, resolve);
+  });
+
+  assert.deepEqual(Array.from(response.accounts), ["0x1234"]);
+  assert.equal(nativeMessages.length, 1);
+  assert.equal(nativeMessages[0].action, "visibleAccounts");
+  assert.equal(nativeMessages[0].origin, "https://example.com");
 });
 
 test("EIP-5792 methods use native-authoritative routes and preserve method spelling", async () => {

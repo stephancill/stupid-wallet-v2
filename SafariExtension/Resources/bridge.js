@@ -9,14 +9,38 @@
   const EVENT_CHANNEL = "__stupid-wallet:event";
 
   browser.runtime.onMessage.addListener((message) => {
-    if (message?.type !== "wallet.chainChanged" || typeof message.chainIdHex !== "string") {
-      return;
+    if (message?.type === "wallet.chainChanged" && typeof message.chainIdHex === "string") {
+      postChainChanged(message.chainIdHex);
+    } else if (message?.type === "wallet.refreshAccounts") {
+      void refreshAccounts();
     }
-    postChainChanged(message.chainIdHex);
   });
 
   browser.runtime.sendMessage({ type: "wallet.getChain" }).then((chain) => {
     if (chain && typeof chain.chainIdHex === "string") postChainChanged(chain.chainIdHex);
+  });
+
+  let accountRefresh;
+
+  function refreshAccounts() {
+    if (accountRefresh) return accountRefresh;
+    accountRefresh = browser.runtime
+      .sendMessage({ type: "wallet.getAccounts" })
+      .then((state) => {
+        if (state && Array.isArray(state.accounts)) postAccountsChanged(state.accounts);
+      })
+      .catch(() => {})
+      .finally(() => {
+        accountRefresh = undefined;
+      });
+    return accountRefresh;
+  }
+
+  void refreshAccounts();
+  window.addEventListener("pageshow", refreshAccounts);
+  window.addEventListener("focus", refreshAccounts);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void refreshAccounts();
   });
 
   window.addEventListener("message", (event) => {
@@ -79,6 +103,13 @@
 
   function postChainChanged(chainId) {
     window.postMessage({ __channel: EVENT_CHANNEL, event: "chainChanged", value: chainId }, "*");
+  }
+
+  function postAccountsChanged(accounts) {
+    window.postMessage(
+      { __channel: EVENT_CHANNEL, event: "accountsChanged", value: accounts },
+      "*",
+    );
   }
 
   async function pollPending(id, requestId) {

@@ -39,6 +39,24 @@ test("provider re-announces for a late EIP-6963 consumer", () => {
   assert.equal(announcements[0].provider.isStupidWallet, true);
 });
 
+test("provider injects on insecure LAN origins without crypto.randomUUID", () => {
+  const window = new EventTarget();
+  window.postMessage = () => {};
+
+  vm.runInNewContext(providerSource, {
+    Array,
+    crypto: { getRandomValues: crypto.getRandomValues.bind(crypto) },
+    CustomEvent,
+    Error,
+    Map,
+    Set,
+    Uint8Array,
+    window,
+  });
+
+  assert.equal(window.ethereum.isStupidWallet, true);
+});
+
 test("provider assigns separate stable keys to separate requests", () => {
   const posted = [];
   const window = new EventTarget();
@@ -60,4 +78,68 @@ test("provider assigns separate stable keys to separate requests", () => {
   assert.notEqual(posted[0].requestKey, posted[1].requestKey);
   assert.match(posted[0].requestKey, /^[0-9a-f-]{36}:1$/);
   assert.match(posted[1].requestKey, /^[0-9a-f-]{36}:2$/);
+});
+
+test("provider tracks account snapshots and emits only real changes", async () => {
+  const posted = [];
+  const window = new EventTarget();
+  window.postMessage = (message) => posted.push(message);
+
+  vm.runInNewContext(providerSource, {
+    Array,
+    crypto,
+    CustomEvent,
+    Error,
+    Map,
+    Set,
+    window,
+  });
+
+  const changes = [];
+  window.ethereum.on("accountsChanged", (accounts) => changes.push(Array.from(accounts)));
+  const dispatch = (data) => {
+    const event = new Event("message");
+    Object.defineProperties(event, { source: { value: window }, data: { value: data } });
+    window.dispatchEvent(event);
+  };
+
+  dispatch({
+    __channel: "__stupid-wallet:event",
+    event: "accountsChanged",
+    value: ["0x1111111111111111111111111111111111111111"],
+  });
+  assert.deepEqual(Array.from(window.ethereum.accounts), [
+    "0x1111111111111111111111111111111111111111",
+  ]);
+  assert.deepEqual(changes, [["0x1111111111111111111111111111111111111111"]]);
+
+  const connect = window.ethereum.request({ method: "eth_requestAccounts" });
+  const connectRequest = posted.at(-1);
+  dispatch({
+    __channel: "__stupid-wallet:response",
+    id: connectRequest.id,
+    ok: true,
+    result: ["0x2222222222222222222222222222222222222222"],
+  });
+  await connect;
+  assert.deepEqual(changes.at(-1), ["0x2222222222222222222222222222222222222222"]);
+
+  dispatch({
+    __channel: "__stupid-wallet:event",
+    event: "accountsChanged",
+    value: ["0x2222222222222222222222222222222222222222"],
+  });
+  assert.equal(changes.length, 2);
+
+  const disconnect = window.ethereum.request({ method: "wallet_disconnect" });
+  const disconnectRequest = posted.at(-1);
+  dispatch({
+    __channel: "__stupid-wallet:response",
+    id: disconnectRequest.id,
+    ok: true,
+    result: true,
+  });
+  await disconnect;
+  assert.deepEqual(Array.from(window.ethereum.accounts), []);
+  assert.deepEqual(changes.at(-1), []);
 });

@@ -204,6 +204,10 @@ public implementation notes.
   `eip6963:announceProvider` event with the wallet's existing metadata after the page has
   initialized. If its connector appears, inspect request/re-announcement timing and provider
   metadata rather than changing the dapp's connector configuration.
+- If a LAN-hosted HTTP fixture reports provider-not-found while the extension is enabled and allowed,
+  inspect provider initialization for secure-context-only APIs. iOS Safari exposes
+  `crypto.randomUUID` on HTTPS and trusted loopback but not ordinary LAN HTTP; use
+  `crypto.getRandomValues` for cryptographically random development-origin session IDs.
 - Preserve structured errors as `{ code, message, data? }` through every layer.
 - Native replies use `{ ok, data }` for success and `{ ok: false, error }` for failure. A background
   route must inspect the operation value inside `data` and forward `error`; treating the outer native
@@ -214,6 +218,12 @@ public implementation notes.
   payloads or user-linked activity.
 - Safari caches MV3 workers aggressively. Bump `manifest.json` after extension JavaScript
   changes so the simulator loads the corrected worker, then reinstall through `stupid-app`.
+- For app-driven disconnect or account removal, return to the existing Safari page before adding
+  polling. `bridge.js` refreshes native `visibleAccounts` on initial injection, `pageshow`, window
+  focus, and visible `visibilitychange`; `provider.js` emits `accountsChanged` only when that snapshot
+  differs. A connected dapp becoming disconnected without reload after returning from the containing
+  app proves this route. Repeatedly pressing Connect creates deliberate calls with new `requestKey`
+  values, so press it once and inspect the resulting canonical request instead of tapping again.
 
 ### 4. Inspect Popup And Queue Behavior
 

@@ -1156,6 +1156,16 @@ Exit conditions:
 
 ### Gate G: Provider account lifecycle
 
+Status: complete on 2026-08-26. The provider now owns a deduplicated account snapshot initialized
+from native `visibleAccounts`; successful connection and disconnect update the originating provider
+directly, while the background worker refreshes only tabs whose top-level origin matches the
+authoritative sender. The isolated bridge refreshes on initial injection, `pageshow`, window focus,
+and visible `visibilitychange`. Simulator and physical-iPhone evidence proved a retained connection
+after Safari relaunch and an app-side disconnect becoming visible immediately when Safari regained
+focus without a page reload. Two physical same-origin tabs also converged after Connect, while changing
+only the containing-app home account left the dapp account unchanged. These lifecycle signals were
+sufficient, so no polling was added.
+
 Exit conditions:
 
 - Provider account state matches native `eth_accounts` after connect, disconnect, relaunch, and account

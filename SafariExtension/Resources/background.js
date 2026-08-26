@@ -93,6 +93,32 @@
     });
   }
 
+  function tabOrigin(tab) {
+    if (!tab || typeof tab.url !== "string") return null;
+    try {
+      return new URL(tab.url).origin;
+    } catch {
+      return null;
+    }
+  }
+
+  function publishAccountRefresh(origin) {
+    browser.tabs.query({}, (tabs) => {
+      for (const tab of tabs || []) {
+        if (tab.id === undefined || tabOrigin(tab) !== origin) continue;
+        browser.tabs.sendMessage(tab.id, {
+          type: "wallet.refreshAccounts",
+        });
+      }
+    });
+  }
+
+  async function accountState(origin) {
+    const visible = await native({ action: "visibleAccounts", origin });
+    if (!visible.ok || !visible.data || !Array.isArray(visible.data.accounts)) return null;
+    return visible.data.accounts;
+  }
+
   async function broadcastChainChanged() {
     const chain = await activeChain();
     if (chain) publishChain(chain);
@@ -109,10 +135,15 @@
         case "ethereum.request":
           return await route(message, sender, sendResponse);
         case "ethereum.status":
-          return await status(message, sendResponse);
+          return await status(message, sender, sendResponse);
         case "wallet.getChain": {
           const chain = await activeChain();
           sendResponse(chain || { error: "Active chain unavailable" });
+          return;
+        }
+        case "wallet.getAccounts": {
+          const accounts = await accountState(originFrom(sender));
+          sendResponse(accounts ? { accounts } : { error: "Account state unavailable" });
           return;
         }
         case "popup.list":
@@ -195,10 +226,10 @@
     // Wallet-owned read that reflects the connection grant. eth_chainId / net_version
     // resolve locally with the injected account/active chain.
     if (method === "eth_accounts") {
-      const visible = await native({ action: "visibleAccounts", origin: pageOrigin });
+      const accounts = await accountState(pageOrigin);
       envelope(sendResponse, {
         ok: true,
-        result: visible.ok && visible.data ? visible.data.accounts : [],
+        result: accounts || [],
       });
       return;
     }
@@ -237,6 +268,7 @@
     if (method === "wallet_disconnect") {
       const dis = await native({ action: "disconnectSite", origin: pageOrigin });
       if (dis.ok && dis.data && dis.data.ok === true) {
+        publishAccountRefresh(pageOrigin);
         envelope(sendResponse, { ok: true, result: true });
         return;
       }
@@ -303,11 +335,11 @@
     const hasCapabilities =
       capabilities && typeof capabilities === "object" && Object.keys(capabilities).length > 0;
     if (method === "eth_requestaccounts" || (method === "wallet_connect" && !hasCapabilities)) {
-      const visible = await native({ action: "visibleAccounts", origin: pageOrigin });
-      if (visible.ok && visible.data && visible.data.accounts.length > 0) {
+      const accounts = await accountState(pageOrigin);
+      if (accounts && accounts.length > 0) {
         envelope(sendResponse, {
           ok: true,
-          result: visible.data.accounts,
+          result: accounts,
         });
         return;
       }
@@ -387,7 +419,7 @@
 
   // Polled by the bridge: mirrors the persisted native status. This is a stateless
   // read on each poll, so a suspending service worker never loses the answer.
-  async function status(message, sendResponse) {
+  async function status(message, sender, sendResponse) {
     const res = await native({ action: "get", payload: { requestId: message.id } });
     if (!res.ok || !res.data) {
       pending.delete(message.id);
@@ -401,12 +433,12 @@
     }
     if (res.data.status === "consumed") {
       const summary = await native({ action: "summary", payload: { requestId: message.id } });
-      if (
-        summary.ok &&
-        summary.data &&
-        summary.data.method.toLowerCase() === "wallet_switchethereumchain"
-      ) {
-        await broadcastChainChanged();
+      if (summary.ok && summary.data) {
+        const method = summary.data.method.toLowerCase();
+        if (method === "wallet_switchethereumchain") await broadcastChainChanged();
+        if (method === "eth_requestaccounts" || method === "wallet_connect") {
+          publishAccountRefresh(originFrom(sender));
+        }
       }
       sendResponse({ __resolved: true, result: res.data.result });
       return;

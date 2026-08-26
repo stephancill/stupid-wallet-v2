@@ -18,7 +18,7 @@ confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
 
-Multiple wallet groups and accounts are approved next-scope, and Gates A, C, D, E, and F are complete. The shared
+Multiple wallet groups and accounts are approved next-scope, and Gates A, C, D, E, F, and G are complete. The shared
 plan now supports migration only from the old Dawn v1 application. Migration from the current
 single-account rebuild (v2) is explicitly out of scope: its address registration, normalized grants,
 singleton cache, and pending-request records receive no upgrade-preservation guarantee. Fail-closed
@@ -80,7 +80,16 @@ them. Gate F is hermetically and simulator complete: a plain connect proposes th
 default; the active popup card lists grouped available accounts and performs a claimed,
 revision-checked rebind; stale approve/reject decisions fail closed; and approval recoverably commits
 the exact grant, active account, future default, and result before consuming the pending record.
-Provider account events remain behind Gate G.
+Gate G is complete: the MAIN-world provider retains a deduplicated account snapshot and emits
+`accountsChanged` only when its one-account-or-empty view changes. The worker resolves bootstrap and
+refresh snapshots through native `visibleAccounts`, sends payload-free refresh notices only to tabs
+matching the authoritative sender origin, and has each receiver resolve its own Safari-profile-bound
+native snapshot. The isolated bridge refreshes on initial injection,
+`pageshow`, focus, and visible `visibilitychange`; simulator return-to-page evidence proved this is
+sufficient for containing-app revocation, so no polling was added. Physical iPhone Wi-Fi acceptance
+then proved LAN provider injection, automatic same-origin two-tab convergence after Connect, app-side
+disconnect on Safari return, retained account bootstrap after force-quitting Safari, and no provider
+change after selecting a different containing-app home account.
 
 Gate B is now hermetically implemented and remains open for physical-device acceptance.
 `EthereumSeedPhrase` generates canonical entropy, round-trips every supported English BIP-39 size, and
@@ -407,9 +416,11 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.45`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.48`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
-  consumer initialized after the wallet.
+  consumer initialized after the wallet. Provider session UUID generation uses
+  `crypto.getRandomValues` when secure-context-only `crypto.randomUUID` is unavailable, preserving
+  injection on LAN-hosted HTTP development fixtures.
 - One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
   icons, EIP-6963 provider discovery, and the in-page request hint. The canonical 1024-point
   app asset is `Resources/AppIcon.png`; generated browser sizes remain in the extension
@@ -643,8 +654,8 @@ The first usable milestone includes:
 
 ### Multiple Wallet Groups And Accounts
 
-Approved next-scope. Gates A, C, D, E, and F are complete; Gate B is hermetically complete but still
-requires physical-device acceptance, and Gates G and H remain pending:
+Approved next-scope. Gates A, C, D, E, F, and G are complete; Gate B is hermetically complete but still
+requires physical-device acceptance, and Gate H remains pending:
 
 - Only Dawn v1 is a supported migration source. The current rebuild v2 is unsupported, and its
   `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, singleton balance cache, and
@@ -671,8 +682,8 @@ requires physical-device acceptance, and Gates G and H remain pending:
   also proved exclusion without either process being terminated: iOS granted the app a File
   Coordination suspension assertion for a 45-second diagnostic claim, the extension did not enter the
   accessor during that claim, and a fresh popup request entered and completed immediately after
-  release. Runtime Safari multi-account signer selection and popup connection selection are now
-  implemented by Gates E and F; provider account-event lifecycle remains deferred to Gate G. Rebuild source resolution, V2 grant ingestion, singleton
+  release. Runtime Safari multi-account signer selection, popup connection selection, and
+  origin-scoped provider account lifecycle are implemented by Gates E, F, and G. Rebuild source resolution, V2 grant ingestion, singleton
   cache migration, and retained rebuild-request migration have been removed.
 
 - A historical simulator upgrade investigation started from a UI-created pre-multi rebuild wallet with a
@@ -724,8 +735,8 @@ requires physical-device acceptance, and Gates G and H remain pending:
 - Use the plan's fixed cross-process order: registry-adoption claim, sorted group lifecycle claims,
   request claim, registry lock, connection lock, prepare lock, then account/chain submission claim;
   state locks never span authentication or network RPC.
-- Implement origin/profile-scoped provider account state and `accountsChanged` without broadcasting
-  another site's account.
+- Keep origin/profile-scoped provider account state and `accountsChanged` bound to native
+  `visibleAccounts`; never broadcast another site's account.
 
 The complete design, migration rules, lock domains, file-level work, gates, and verification matrix
 are maintained in `docs/multi-account-implementation-plan.md`.
@@ -1331,8 +1342,9 @@ device identifiers, or sensitive signing payloads.
   The implementation must use the lock order and recoverable commit boundaries in
   `docs/multi-account-implementation-plan.md`; independent actor isolation is insufficient.
 - **Provider account-change delivery:** iOS SafariServices exposes no containing-app equivalent of
-  macOS `SFSafariApplication.dispatchMessage`. Prove focus/visibility refresh after returning to
-  Safari and add bounded visible-page polling only if lifecycle evidence requires it.
+  macOS `SFSafariApplication.dispatchMessage`. Simulator evidence proved initial injection plus
+  `pageshow`, focus, and visible `visibilitychange` refresh after returning to Safari; no polling is
+  currently justified. Retain physical cross-profile verification under Gate H.
 
 Resolve open decisions through focused proof work. Record the result here and the
 investigation history in implementation notes.
@@ -1343,9 +1355,8 @@ investigation history in implementation notes.
    seed entropy user-presence/ThisDeviceOnly protection, generated/imported derivation, seed-backed
    signing and private-key export, and complete resumable group deletion. The hermetic implementation
    and simulator build are complete. Gate F marker reconciliation is now part of deletion cleanup.
-2. Proceed to Gate G provider account lifecycle now that Gate F popup selection and recoverable connect
-   commit are complete. Keep origin/profile-scoped `accountsChanged` delivery behind its ordered
-   acceptance boundary.
+2. Complete Gate H physical-device and Mac Safari acceptance for the multi-account connection model,
+   including cross-profile account-event isolation and foreground authentication.
 3. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
    reveal/cancellation/timeout, Forget Account, automatic migration launch, and Safari
    signing with each newly provisioned key. Raw private-key import, including recovery of a
