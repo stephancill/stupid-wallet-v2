@@ -577,6 +577,9 @@ Mac; using the same account on both requires an explicit user-authorized import 
   modules, and existing bundle identifiers retain their established casing.
 - The Safari extension keeps the production release identifier
   `co.za.stephancill.stupid-wallet.extension`.
+- Every release keeps the containing app and Safari extension
+  `CFBundleShortVersionString` values identical. `stupid-app release bump` keeps
+  `CFBundleVersion` build numbers in lockstep but does not synchronize marketing versions.
 - Shared preferences and migration data keep the App Group
   `group.co.za.stephancill.stupid-wallet`.
 - The existing team-prefixed keychain access group remains authoritative. Do not invent

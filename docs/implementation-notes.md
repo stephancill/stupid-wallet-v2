@@ -50,6 +50,65 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-27 - Corrected Internal TestFlight Build 92
+
+### Summary
+
+- Bumped the containing app and Safari extension build numbers together from 91 to 92.
+- Archived and uploaded version 1.0.0, build 92 to internal TestFlight with matching app and
+  extension marketing versions.
+
+### Why
+
+- Builds 90 and 91 contained a Safari extension marketing version of `0.1.0` while the containing app
+  used `1.0.0`, producing App Store Connect warning `ITMS-90473`. A new binary and build number were
+  required because an uploaded binary cannot be replaced.
+
+### Verification
+
+- `stupid-app release new-build` identified 92 as the next available build number.
+- `stupid-app release archive` signed the app and nested extension, packaged the IPA, and passed the
+  project-owned post-sign verifier.
+- Direct IPA inspection confirmed both the containing app and nested extension are `1.0.0 (92)` and
+  the app declares `ITSAppUsesNonExemptEncryption=false`.
+- `stupid-app release upload --wait` completed successfully. `stupid-app release status --live`
+  confirmed `processing=VALID`, `internal=IN_BETA_TESTING`, and
+  `external=READY_FOR_BETA_SUBMISSION`.
+
+### Follow-Up
+
+- None for internal TestFlight. External TestFlight submission remains a separate decision.
+
+## 2026-08-27 - Safari Extension Marketing-Version Match
+
+### Summary
+
+- Changed the Safari extension `CFBundleShortVersionString` from `0.1.0` to `1.0.0` so it matches
+  the containing app for the next App Store Connect delivery.
+- Recorded that `stupid-app release bump` synchronizes `CFBundleVersion` build numbers but does not
+  synchronize marketing versions, and added the `ITMS-90473` pre-archive check to the debugging
+  workflow.
+
+### Why
+
+- App Store Connect accepted builds 90 and 91 but warned that the nested Safari extension's
+  marketing version did not match the containing app. Inspection of the archived build 91 IPA
+  confirmed the same `1.0.0` versus `0.1.0` mismatch.
+
+### Verification
+
+- `plutil -lint Info.plist SafariExtension/Info.plist` passed, and a direct source-plist comparison
+  confirmed both marketing versions are `1.0.0`.
+- `stupid-app doctor` completed with zero failures and zero warnings.
+- `stupid-app build --configuration release` succeeded. Direct inspection of the assembled app and
+  nested extension confirmed both are `1.0.0 (91)`.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Upload a new build number after the corrected archive is created; previously uploaded binaries
+  cannot be replaced.
+
 ## 2026-08-27 - Stale Build Export Compliance Fix
 
 ### Summary

@@ -54,6 +54,11 @@ generic error text and do not bypass the canonical approval protocol.
     alone is not signing evidence; require the originating dapp to receive success (and independently
     recover the signer when the payload can be checked safely). A failure without on-device Face ID
     is useful cancellation/authentication-boundary evidence, not a seed-signing failure.
+13. Before archiving a release, compare `CFBundleShortVersionString` in the containing app and every
+    nested extension source plist, then inspect the packaged IPA values. `stupid-app release bump`
+    synchronizes `CFBundleVersion`, not marketing versions. App Store Connect warning `ITMS-90473`
+    means a nested extension's marketing version differs from its containing app even when upload and
+    TestFlight processing otherwise succeed.
 
 ## Stack Map
 
