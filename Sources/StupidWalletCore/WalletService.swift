@@ -525,6 +525,7 @@ public actor WalletService {
     return registry.groups.compactMap { group in
       guard group.lifecycle == .active else { return nil }
       let accounts = group.accounts.compactMap { account -> AvailableAccount? in
+        guard account.lifecycle == .active else { return nil }
         guard let signer = try? accountResolver.signer(address: account.address), signer.hasKey()
         else { return nil }
         return AvailableAccount(address: account.address, derivationIndex: account.derivationIndex)
@@ -679,7 +680,7 @@ public actor WalletService {
           ?? registry.groups
           .filter { $0.lifecycle == .active }
           .flatMap(\.accounts)
-          .first?.address
+          .first(where: { $0.lifecycle == .active })?.address
       }
     }
     guard let account, let signer = try? accountResolver.signer(address: account), signer.hasKey()
@@ -758,11 +759,12 @@ public actor WalletService {
       let selectedGroup = initialRegistry.groups.first(where: { group in
         group.lifecycle == .active
           && group.accounts.contains {
-            $0.address.caseInsensitiveCompare(account) == .orderedSame
+            $0.lifecycle == .active
+              && $0.address.caseInsensitiveCompare(account) == .orderedSame
           }
       }),
       let selectedAccount = selectedGroup.accounts.first(where: {
-        $0.address.caseInsensitiveCompare(account) == .orderedSame
+        $0.lifecycle == .active && $0.address.caseInsensitiveCompare(account) == .orderedSame
       })
     else { throw WalletError.bindingMismatch }
 
@@ -783,7 +785,9 @@ public actor WalletService {
         try registryStore.withLockedReady({ registry in
           registry.groups.contains { group in
             group.id == selectedGroup.id && group.lifecycle == .active
-              && group.accounts.contains { $0.address == selectedAccount.address }
+              && group.accounts.contains {
+                $0.lifecycle == .active && $0.address == selectedAccount.address
+              }
           }
         }),
         let signer = try? accountResolver.signer(address: selectedAccount.address), signer.hasKey()
@@ -1002,7 +1006,11 @@ public actor WalletService {
     guard let registryStore else { return try operation() }
     guard let account, let registry = try registryStore.loadReady(),
       let group = registry.groups.first(where: { group in
-        group.accounts.contains { $0.address.caseInsensitiveCompare(account) == .orderedSame }
+        group.lifecycle == .active
+          && group.accounts.contains {
+            $0.lifecycle == .active
+              && $0.address.caseInsensitiveCompare(account) == .orderedSame
+          }
       })
     else { throw WalletError.bindingMismatch }
     return try groupLifecycle.withClaim(groupID: group.id, operation: operation)
@@ -1117,7 +1125,9 @@ public actor WalletService {
           guard
             registry.groups.contains(where: { group in
               group.lifecycle == .active
-                && group.accounts.contains { $0.address == record.account }
+                && group.accounts.contains {
+                  $0.lifecycle == .active && $0.address == record.account
+                }
             })
           else { throw WalletError.bindingMismatch }
           try commitConnection(registry)

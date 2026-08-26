@@ -50,6 +50,151 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Account Menu Row Blockie And Trailing Switch
+
+### Summary
+
+- Revised the home account-menu row to lead with a squircle account blockie beside the home account's
+  editable label (falling back to the shortened address), followed by a small, muted trailing
+  `arrow.left.arrow.right` switch symbol.
+- This supersedes the earlier trailing-arrow-only and leading-arrow treatments; the row now reads like
+  the other menu rows while keeping the blockie and a subtle trailing switch affordance.
+
+### Why
+
+- The blockie should stay the leading account identity, and a smaller, quieter trailing symbol avoids
+  competing with the text while still signaling the switch action.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift` completed; `git diff --check` passed.
+- `swift test` passed all 294 tests in 34 suites. `swift format lint --recursive Sources Tests` reported
+  only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`, and
+  `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+  Live inspection confirmed the account-switch row leads with the squircle account blockie beside the
+  home account label with a small muted trailing `arrow.left.arrow.right` symbol, and that selecting the
+  row still opens the grouped Accounts picker. The app was returned to the home screen after acceptance.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-26 - Account Label Save Crash Fix
+
+### Summary
+
+- Fixed the Accounts picker crash when Done was pressed while an in-place wallet or account label
+  field still owned keyboard focus. The picker now resigns all label fields and yields the main actor
+  before saving labels or replacing the editable list hierarchy.
+- Replaced edit-mode pencil indicators with dotted underlines on editable wallet and account labels.
+
+### Why
+
+- The crash report identified a UIKit collection-view first-responder assertion in
+  `_resignOrRebaseFirstResponderViewWithIndexPathMapping`. Registry persistence had completed, but the
+  observed registry refresh updated the SwiftUI list while its section-header text field remained the
+  first responder.
+
+### Verification
+
+- `swift test` passed all 294 tests in 34 suites. `swift format lint --recursive Sources Tests`
+  reported only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`, and
+  `git diff --check` passed.
+- `stupid-app doctor` completed with zero failures and zero warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+  Live reproduction edited a wallet section-header field and pressed Done while that field and keyboard
+  remained active. The save succeeded twice, edit mode closed, the app process remained running, no new
+  crash report appeared, and the restored label remained correct after app restart. A subsequent live
+  inspection confirmed every unfocused pencil sits directly after its wallet/account label and only
+  each wallet/account label uses the dotted editable-field treatment.
+
+### Follow-Up
+
+- Complete the existing Gate I account-deletion fault injection and physical-device acceptance.
+
+## 2026-08-26 - Gate I Account Picker And Lifecycle Implementation
+
+### Summary
+
+- Advanced the wallet registry to schema 2 with strict persisted labels, account lifecycle, and
+  retained seed identity. Schema 1 migrates through the existing projection-first journal in one
+  revision with deterministic wallet/account labels; malformed schema-2 records fail closed.
+- Added atomic wallet-group/account label edits and recoverable individual seed-account deletion.
+  Deletion marks the registration inactive before terminalizing pending requests and removing grants,
+  active/default mappings, and balance cache state. It preserves seed entropy, activity, account-zero
+  identity, and the derivation high-water mark. Private-key and final-seed-account removal uses complete
+  group deletion.
+- Added picker Edit/Done mode using SwiftUI's native list edit state and standard red removal/Delete
+  treatment. Wallet section headers and account labels edit in place with pencil indicators; Close is
+  hidden during editing and destructive actions retain confirmation. Selection and derivation keep the
+  sheet open. Named create/import flows return to the Accounts list and do not implicitly replace an
+  existing home selection.
+- Updated signer, connection, service, and containing-app account lookups so an account marked
+  `.deleting` is not selectable, visible to a provider, or usable for protected operations.
+
+### Why
+
+- Labels are non-authoritative organization metadata, while account removal crosses several durable
+  stores and therefore needs the same fail-closed, resumable lifecycle discipline as group deletion.
+  Retaining seed identity and the derivation high-water mark prevents duplicate seed groups and index
+  reuse after removing account zero or another derived registration.
+
+### Verification
+
+- `swift test` passed all 294 tests in 34 suites. New coverage verifies schema migration, strict
+  schema-2 decoding, atomic trimmed label edits, final-seed-account rejection, pending/connection/cache
+  cleanup, retained seed identity, and monotonic derivation after account removal.
+- `swift format lint --recursive Sources Tests` reported only the three pre-existing block-comment
+  warnings in `SecurityWalletBackend.swift`; `git diff --check` passed.
+- `stupid-app doctor` completed with zero failures and zero warnings. `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+  Live inspection confirmed Close disappears in edit mode, wallet section headers and account labels
+  are directly editable with pencil indicators, native red minus controls reveal the standard trailing
+  Delete action, selection does not dismiss, and additive import requires a wallet name. The app was
+  returned to its home screen after acceptance.
+
+### Follow-Up
+
+- Add deterministic fault injection across every individual account-deletion phase, including pending
+  marker reconciliation, connection cleanup, cache removal, and final registration removal.
+- Complete physical-device acceptance for protected derivation/removal, relaunch recovery, label
+  persistence, and additive picker navigation before closing Gate I.
+
+## 2026-08-26 - Account Picker Editing Scope
+
+### Summary
+
+- Approved a follow-up multi-account gate for editable wallet-group and account labels, with a
+  top-right Edit/Done mode in the containing-app Accounts sheet.
+- Changed home selection and derivation UX so the Accounts sheet remains open. Named create/import
+  flows return to the Accounts list instead of dismissing the sheet or implicitly changing home.
+- Approved individual seed-account registration deletion. It preserves the seed, retained activity,
+  and monotonic derivation high-water mark while recoverably removing pending authority, grants,
+  active/default mappings, and the account balance cache. A removed derivation index is never reused;
+  a retained account-zero seed identity prevents duplicate group import after account-zero removal.
+- Kept complete-group deletion for a private-key account and for the final account in a seed group.
+  Labels remain display metadata and never enter signing, connection, migration, or canonical request
+  identity.
+
+### Why
+
+- The account picker should support ongoing organization rather than acting only as a dismissing
+  selector. Seed-derived keys cannot be erased independently from retained entropy, so account removal
+  is explicitly registry removal with durable cleanup rather than a false key-deletion claim.
+
+### Verification
+
+- Reconciled the new behavior with the current registry, group lifecycle, connection cleanup, pending
+  request, home-selection, and picker navigation design in the maintained handover and multi-account
+  plan.
+- Documentation-only scope update; no application behavior or tests changed.
+
+### Follow-Up
+
+- Implement Gate I with registry-schema migration, fault-injected account-deletion recovery, UI tests,
+  the normal Swift verification ladder, and simulator reinstall/launch.
+
 ## 2026-08-26 - Gate H Cross-Profile And Device-Lock Acceptance
 
 ### Summary
@@ -115,6 +260,8 @@ Use this entry template:
 - `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
   Live inspection confirmed the switch symbol occupies the account row's trailing edge, and selecting
   that row dismissed the popover and opened the grouped Accounts sheet.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` built, signed, packaged,
+  installed, and launched the app and nested Safari extension on the paired iPhone.
 
 ### Follow-Up
 

@@ -52,6 +52,7 @@ import SwiftUI
 
               AddressMenuButton(
                 address: vm.addressHex,
+                accountName: homeAccountName,
                 showAccounts: {
                   showAccountPicker = true
                 },
@@ -176,6 +177,12 @@ import SwiftUI
       }
     }
 
+    private var homeAccountName: String? {
+      vm.selectedGroup?.accounts.first {
+        $0.address.caseInsensitiveCompare(vm.addressHex) == .orderedSame
+      }?.label
+    }
+
     private var contentHeight: CGFloat {
       #if canImport(UIKit)
         UIScreen.main.bounds.height - 200
@@ -187,6 +194,7 @@ import SwiftUI
 
   private struct AddressMenuButton: View {
     let address: String
+    let accountName: String?
     let showAccounts: () -> Void
     let showActivity: () -> Void
     let showConnectedApps: () -> Void
@@ -205,8 +213,7 @@ import SwiftUI
       .accessibilityHint("Shows account menu")
       .popover(isPresented: $menuPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
         VStack(spacing: 0) {
-          menuButton(
-            displayAddress, trailingSystemImage: "arrow.left.arrow.right", action: showAccounts)
+          accountMenuButton(action: showAccounts)
           menuButton("Activity", systemImage: "clock", action: showActivity)
           menuButton(
             "Connected Apps", systemImage: "puzzlepiece.extension", action: showConnectedApps)
@@ -222,10 +229,37 @@ import SwiftUI
       address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
     }
 
+    private func accountMenuButton(action: @escaping () -> Void) -> some View {
+      Button {
+        menuPresented = false
+        Task { @MainActor in
+          try? await Task.sleep(for: .milliseconds(250))
+          action()
+        }
+      } label: {
+        HStack(spacing: 12) {
+          Image(uiImage: BlockieView.image(seed: address.lowercased()))
+            .resizable()
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .frame(width: 24, height: 24)
+          Text(accountName ?? displayAddress)
+          Spacer(minLength: 12)
+          Image(systemName: "arrow.left.arrow.right")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .font(.body)
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 16)
+        .frame(height: 50)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+    }
+
     private func menuButton(
       _ title: String,
       systemImage: String? = nil,
-      trailingSystemImage: String? = nil,
       action: @escaping () -> Void
     ) -> some View {
       Button {
@@ -242,9 +276,6 @@ import SwiftUI
           }
           Text(title)
           Spacer(minLength: 12)
-          if let trailingSystemImage {
-            Image(systemName: trailingSystemImage)
-          }
         }
         .font(.body)
         .foregroundStyle(.primary)

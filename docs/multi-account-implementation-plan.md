@@ -20,6 +20,8 @@ signing input or creates key material.
 - Make the address item in the home account menu open an account picker.
 - Let the home picker select an account, derive an account in a seed group, create a new seed group,
   import a seed phrase, or import a private key.
+- Let users name wallet groups and edit wallet-group and account labels from the home picker.
+- Let users remove individual account registrations without reusing seed derivation indexes.
 - Scope home balance, Activity, Connected Apps, Settings, authorizations, and private-key export to
   the independently selected home account.
 - Let the active plain-connect request select an existing account by pressing the account in the
@@ -39,8 +41,9 @@ signing input or creates key material.
 - Selecting an account from a queued popup request.
 - Rebinding SIWE, message, typed-data, transaction, batch, or chain requests after preparation.
 - Creating, importing, or deriving accounts from the Safari popup.
-- Deleting or hiding one derived account while retaining its seed group.
-- BIP-39 passphrases, non-English word lists, custom derivation paths, account renaming, hardware
+- Hiding a removed account while retaining it as a selectable account, or restoring a removed
+  account registration automatically.
+- BIP-39 passphrases, non-English word lists, custom derivation paths, hardware
   wallets, watch-only accounts, or cross-device key synchronization.
 - Per-account chain selection, network metadata, or RPC preferences. Those remain installation-wide.
 - Silently adopting orphaned keychain items that are not represented by an authenticated registry
@@ -62,8 +65,18 @@ signing input or creates key material.
   remains in scope. That downgrade-safety boundary is separate from supporting v2 as an upgrade source.
 - A seed group stores one protected BIP-39 entropy item. Derived private keys are produced only in
   memory when needed and are not copied into separate persistent keychain items.
+- Wallet-group and account labels are editable display metadata. They never identify an account for
+  signing, authorization, migration, deduplication, or approval binding.
+- Removing a seed-derived account deletes its registry registration, connection state, pending
+  authority, and balance cache while retaining the group's seed and monotonic derivation high-water
+  mark. The removed derivation index is never reused or restored implicitly.
+- The last registered account in a seed group cannot be removed independently; the user must remove
+  the wallet group and its seed. Removing a private-key account removes its one-account group and key.
 - Forgetting a seed-backed wallet removes the complete group, including its entropy and every
   derived account registration.
+- Selecting a home account never dismisses the Accounts sheet. Successful additive create/import
+  flows return to the Accounts list and preserve the prior home selection until the user selects an
+  account there.
 - Home account selection and default connection account selection are independent and persist
   independently.
 - A popup account choice becomes the default connection account only after Connect succeeds.
@@ -117,6 +130,10 @@ validate that origin's signing, sending, chain, capability, and call-status requ
 - `ActivityStore` persists `from_address` correctly but global and connected-app queries do not
   consistently filter it.
 - `BalanceCache` retains one account snapshot rather than one snapshot per account.
+- The registry and picker derive fixed group/account titles from wallet kind and derivation index; they
+  have no persisted editable labels or account-level deletion lifecycle.
+- The picker dismisses after account selection, derivation, and successful additive group creation or
+  import.
 - The popup shows a connect account in its body and intentionally omits it from the sticky bar.
 - Canonical `payloadDigest` hashes only request ID plus params. Existing `intentDigest` is transport
   retry identity for page-supplied intent, not approval identity, and therefore does not separately
@@ -152,6 +169,8 @@ struct WalletGroup: Codable, Sendable, Identifiable {
   let id: UUID
   let kind: WalletGroupKind
   let createdAt: Date
+  let seedIdentityAddress: String?
+  var label: String
   var nextDerivationIndex: UInt32?
   var accounts: [WalletAccount]
   var lifecycle: WalletGroupLifecycle
@@ -166,20 +185,31 @@ struct WalletAccount: Codable, Sendable, Identifiable {
   let address: String
   let derivationIndex: UInt32?
   let createdAt: Date
+  var label: String
+  var lifecycle: WalletAccountLifecycle
 
   var id: String { address.lowercased() }
+}
+
+enum WalletAccountLifecycle: String, Codable, Sendable {
+  case active
+  case deleting
 }
 ```
 
 Registry invariants:
 
 - Every address is a valid EIP-55 account and is globally unique case-insensitively.
-- A private-key group has exactly one account with no derivation index.
-- A seed group has one or more accounts with unique indexes below `2^31`.
+- Every group and account label is trimmed and nonempty. Labels need not be unique.
+- A private-key group has exactly one account with no derivation index and no seed identity.
+- A seed group has one or more registered accounts with unique indexes below `2^31`.
+- A seed group's immutable `seedIdentityAddress` is its account-zero address. It remains reserved to
+  that group even if account zero is later removed, preventing the same seed from being imported as a
+  second group. It may equal that group's registered account zero but no address in another group.
 - Account indexes are monotonic and never reused.
 - `nextDerivationIndex` is greater than every registered index and advances only when account
-  registration commits.
-- `homeSelectedAddress`, when present, resolves to a registered account whose group is active.
+  registration commits. Deleting an account never lowers it.
+- `homeSelectedAddress`, when present, resolves to an active registered account whose group is active.
 - `legacyWalletAddressFallbackRemoved` must be true before seed groups, additional accounts, or home
   selection changes are enabled.
 - Only `.complete` is usable by ordinary app or extension operations. `.migrating` is a durable,
@@ -188,6 +218,15 @@ Registry invariants:
 - Unknown or malformed registry versions fail loudly; they do not fall back to an arbitrary keychain
   item.
 - A monotonically increasing revision lets asynchronous UI and signing work reject stale snapshots.
+
+Advancing the registry schema for labels and account lifecycle must decode the current multi-account
+schema through one explicit migration. Existing groups receive deterministic labels such as
+`Wallet 1`; existing seed accounts receive `Account {derivationIndex + 1}` and private-key accounts
+receive `Account 1`. Existing seed groups derive `seedIdentityAddress` from their required account-zero
+registration. The migration preserves IDs, addresses, derivation indexes, creation dates, group
+lifecycle, home selection, and `nextDerivationIndex`. This is a migration of the already-authoritative
+multi-account registry schema, not adoption of the unsupported singleton rebuild. Unknown schemas
+still fail loudly.
 
 New code reads the registry as authority. `sw2.walletAddress` is not a migration input. Startup and
 every projection transition remove and verify the absence of any value introduced by a downgraded
@@ -436,6 +475,9 @@ The production resolver reads a validated registry snapshot and constructs:
 - `PrivateKeySigner` for a private-key group account.
 - `SeedAccountSigner` for a seed group address and derivation index.
 
+Both the group and account registration must be `.active`. An account marked `.deleting` is absent
+from every resolver, public account list, home/default repair candidate, and provider-visible snapshot.
+
 The signer is selected from native authoritative context, never from page-provided account metadata.
 Request handling resolves accounts as follows:
 
@@ -473,11 +515,12 @@ selection or an ungranted default.
 Any operation that reads both account registration and connection state, including
 `visibleAccounts`, existing-connect short-circuiting, default-grant reactivation, connected-method
 preparation, and disconnect cleanup, acquires the registry lock and then the connection-state lock,
-reloads both files, and validates the account against an active group before returning or mutating.
-The locks cover only local validation/persistence. Group deletion marks the group `.deleting` before
-later connection cleanup, so even a retained active mapping immediately becomes invisible. A
-signature-producing approval additionally retains that account's group lifecycle claim while it
-revalidates connection state and uses the protected key.
+reloads both files, and validates the account and group as active before returning or mutating. The
+locks cover only local validation/persistence. Group deletion marks the group `.deleting` before later
+connection cleanup, and seed-account deletion similarly marks the registration `.deleting`, so even a
+retained active mapping immediately becomes invisible. A signature-producing approval additionally
+retains that account's group lifecycle claim while it revalidates active group/account membership,
+connection state, and the protected key.
 
 ## Containing-App Flows
 
@@ -531,30 +574,34 @@ adopted as Dawn state.
 
 ### Create a seed wallet group
 
-1. Generate supported BIP-39 entropy with `SecRandomCopyBytes`.
-2. Encode the English mnemonic and display it in a privacy-sensitive backup flow.
-3. Require explicit backup confirmation before registration.
-4. Save entropy under the new group ID with `.userPresence` and `ThisDeviceOnly`.
-5. Authenticated-load the entropy once.
-6. Derive index zero, its address, and a fixed self-test signature.
-7. Recover and require the exact address.
-8. Atomically register the group, account zero, and `nextDerivationIndex = 1`.
-9. If the creation flow requested selection, invoke the journaled home-selection flow only after
-   registration commits.
-10. Delete the newly inserted entropy if authenticated verification or registry registration fails.
+1. Require a trimmed, nonempty wallet-group name before backup confirmation.
+2. Generate supported BIP-39 entropy with `SecRandomCopyBytes`.
+3. Encode the English mnemonic and display it in a privacy-sensitive backup flow.
+4. Require explicit backup confirmation before registration.
+5. Save entropy under the new group ID with `.userPresence` and `ThisDeviceOnly`.
+6. Authenticated-load the entropy once.
+7. Derive index zero, its address, and a fixed self-test signature.
+8. Recover and require the exact address.
+9. Atomically register the named group, immutable account-zero seed identity, account zero with the
+   default `Account 1` label, and `nextDerivationIndex = 1`.
+10. During additive creation, return to the Accounts list without dismissing its sheet or changing
+    home selection. During initial setup, select account zero and enter the wallet home as before.
+11. Delete the newly inserted entropy if authenticated verification or registry registration fails.
 
 The generated mnemonic exists only in transient UI state and protected entropy. Backgrounding,
 cancellation, and completion clear the visible phrase and mutable buffers.
 
 ### Import a seed wallet group
 
-1. Validate English vocabulary, count, and checksum.
-2. Recover canonical entropy from the mnemonic.
-3. Derive account zero and reject a duplicate address before saving.
-4. Save entropy under a new group ID.
-5. Authenticated-load and verify account zero with sign-and-recover.
-6. Register only after proof succeeds.
-7. Preserve the previous home account and all other state on cancellation or failure.
+1. Require a trimmed, nonempty wallet-group name.
+2. Validate English vocabulary, count, and checksum.
+3. Recover canonical entropy from the mnemonic.
+4. Derive account zero and reject a duplicate address before saving.
+5. Save entropy under a new group ID.
+6. Authenticated-load and verify account zero with sign-and-recover.
+7. Register only after proof succeeds. An additive import returns to the Accounts list without
+   dismissing its sheet or changing home selection; initial setup selects account zero and enters home.
+8. Preserve the previous home account and all other state on cancellation or failure.
 
 Importing the same seed as an existing group is rejected through account-zero identity. Importing a
 seed whose account zero already exists as a private-key group is also rejected; converting that group
@@ -564,7 +611,10 @@ is outside this scope.
 
 Retain the current exact-key verification behavior for uninstall-surviving items, but remove the
 single-wallet prohibition. Register one private-key group only after authenticated reload and
-sign-and-recover proof. A duplicate address is rejected rather than linked to two groups.
+sign-and-recover proof. Require a group name and assign the account its default `Account 1` label. An
+additive import returns to the Accounts list without dismissing the sheet or changing home selection;
+initial setup selects the account and enters home. A duplicate address is rejected rather than linked
+to two groups.
 
 ### Derive an account in a seed group
 
@@ -577,7 +627,8 @@ sign-and-recover proof. A duplicate address is rejected rather than linked to tw
    index if the derivation policy skips one.
 7. Reject any address collision.
 8. Atomically append the account and advance `nextDerivationIndex`.
-9. If requested, invoke the journaled home-selection flow only after registration commits.
+9. Give the account the default label `Account {actualDerivationIndex + 1}` and keep the Accounts
+   sheet open. Home selection changes only if the user subsequently selects it.
 10. Clear every transient secret buffer and release the claim.
 
 Concurrent derive operations must never allocate the same index.
@@ -594,6 +645,43 @@ Concurrent derive operations must never allocate the same index.
 
 This operation does not change the default connection account, grants, active origin accounts,
 pending requests, or provider account state.
+
+### Edit wallet and account labels
+
+Label edits are registry-only, revisioned mutations under the registry lock. Trim and validate every
+edited label before committing all edits from one editing session in one registry revision. A failed
+save leaves the prior labels authoritative and keeps the picker in editing mode with an actionable
+error. Label changes do not alter addresses, group IDs, home/default/active selection, grants,
+pending-request bindings, activity ownership, compatibility projection, or keychain identifiers.
+
+Native Safari account summaries may display the latest labels, but addresses remain the account
+identity and labels are never included in canonical request bindings. A label change while a request
+is pending therefore does not invalidate, rebind, or otherwise mutate that request.
+
+### Remove an account registration
+
+Use a recoverable account-deletion state because account visibility, pending requests, connection
+state, and balance cache span multiple stores:
+
+1. Require destructive confirmation that identifies the account by label and shortened address.
+2. For a private-key account, run the existing complete group-deletion flow because its group and
+   protected key have no other account.
+3. Reject independent removal of the last registered account in a seed group and direct the user to
+   Remove Wallet, which deletes the seed group.
+4. Acquire the seed group's lifecycle claim, choose a deterministic surviving home account when the
+   removed account is home-selected, and use `commitRegistryTransition` to mark the account
+   `.deleting`, update home selection and compatibility projection, and commit the next revision.
+5. Reconcile or terminalize that account's pending records under the same marker rules as group
+   deletion. No protected signing operation beginning after `.deleting` commits may resolve it.
+6. Under registry-then-connection locks, atomically remove the account's grants and active mappings
+   and repair `defaultAccount` to the surviving home or first active account.
+7. Remove the account's balance cache. Preserve activity rows under their canonical address.
+8. Remove the inactive account registration from the group without changing `nextDerivationIndex`.
+
+Relaunch resumes an interrupted account deletion. The seed entropy remains protected and usable by
+the group's surviving accounts, but the removed derivation path is not presented, selected, signed,
+or automatically re-registered. The group's retained account-zero seed identity makes an explicit
+re-import of the same seed duplicate group input, not an account-restore mechanism.
 
 ### Forget a wallet group
 
@@ -632,19 +720,25 @@ menu and presents `AccountPickerView`.
 The picker uses a navigation sheet and contains:
 
 - One section per wallet group.
-- Seed accounts labeled by derivation order, with blockie and shortened address.
-- The one private-key account with blockie and shortened address.
+- The editable wallet-group label as each section heading.
+- Accounts labeled by their editable account label, with blockie and shortened address.
 - A checkmark on the home-selected account.
 - `Add Account` inside a seed-group section.
 - An add flow offering Create New Wallet, Import Seed Phrase, and Import Private Key.
 - No derive action for a private-key group.
+- A top-right `Edit` button that enters editing mode, exposes group/account label fields, and provides
+  destructive account-removal controls. Dotted underlines identify editable wallet and account labels.
+  The button becomes `Done` while editing; the sheet retains its separate close control.
 
-Selecting an account dismisses only after persistence succeeds. Failure leaves the old account and
-its visible state unchanged.
+Selecting an account persists and refreshes home state without dismissing the sheet. Failure leaves
+the old account and its visible state unchanged and shows the error in the sheet. Adding a derived
+account also leaves the sheet open.
 
 `ImportWalletView` must distinguish initial setup from adding a group. It may not dismiss merely
 because some wallet already exists. Generated seed creation requires a separate backup/confirmation
-view rather than the current immediate random-private-key button.
+view rather than the current immediate random-private-key button. Every additive group flow includes
+a wallet-group name field. On success it pops back to the root Accounts list rather than dismissing
+the outer sheet; the new account is visible there but is not implicitly home-selected.
 
 Account-bound navigation must use an account snapshot or stable address identity. Switching home
 accounts dismisses or reconstructs Settings, Private Key, Activity, and Connected Apps so an already
@@ -966,7 +1060,7 @@ migration source.
   locks, group lifecycle, and separate home selection.
 - New `WalletRegistry.swift`: value types, validation, atomic persistence, migration, and mutations.
 - `WalletFactory.swift`: create/import group operations, derive-account operation, duplicate handling,
-  group deletion, and rollback/recovery.
+  labels, account/group deletion, and rollback/recovery.
 - `BIP39.swift`: entropy encoding/decoding, mnemonic generation, arbitrary account index derivation,
   and buffer clearing.
 - `KeychainKeyStore.swift`: retain private-key items and add reusable protected-data mechanics without
@@ -989,11 +1083,12 @@ migration source.
 
 ### Containing app
 
-- `WalletViewModel.swift`: registry state, home selection, group operations, task cancellation,
-  revision guards, account-scoped balance, and deletion recovery.
+- `WalletViewModel.swift`: registry state, home selection, labels, group operations, task cancellation,
+  revision guards, account-scoped balance, and account/group deletion recovery.
 - `ContentView.swift`: active address-menu action, picker presentation, account-scoped destinations,
   and selection identity.
-- New `AccountPickerView.swift`: grouped account list and add flows.
+- New `AccountPickerView.swift`: grouped account list, persistent edit mode, label fields, removal, and
+  add-flow navigation that returns to the list.
 - `SetupView.swift`: generated seed-group creation instead of immediate random private key.
 - `ImportWalletView.swift`: initial versus add-group modes and success-driven dismissal.
 - New seed backup view: generated mnemonic display, confirmation, privacy clearing, and cancellation.
@@ -1005,7 +1100,8 @@ migration source.
 ### Safari native extension
 
 - `SafariWebExtensionHandler.swift`: remove global home signer construction; dispatch account-list,
-  visible-account, connect-rebind, and account-specific approval actions through the core.
+  visible-account, connect-rebind, and account-specific approval actions through the core. Public
+  account summaries include the latest group/account labels without treating them as identity.
 
 ### Safari JavaScript
 
@@ -1021,7 +1117,8 @@ migration source.
 
 ### Tests and documentation
 
-- `WalletFactoryTests.swift`: groups, duplicate imports, derivation, rollback, and deletion recovery.
+- `WalletFactoryTests.swift`: groups, labels, duplicate imports, derivation, rollback, and account/group
+  deletion recovery.
 - `SeedPhraseTests.swift`: entropy/mnemonic vectors and account indexes.
 - `MigrationTests.swift`: Dawn migration states, conflicts, authenticated proof, and retained secrets.
 - `ConnectedSitesTests.swift`: Dawn hostname migration, multiple accounts, active/default separation, and
@@ -1209,6 +1306,30 @@ Exit conditions:
   terminal decision after unlock.
 - Mac compatibility Safari proves the same account model without platform-specific web behavior.
 
+### Gate I: Account labels and picker editing
+
+Status: core behavior implemented and simulator-verified on 2026-08-26. The Done transition resigns
+focused in-place label fields before registry publication so SwiftUI does not remove or update a
+first-responder list header during a collection-view batch update. Full account-deletion fault
+injection and physical-device acceptance remain before this gate is complete.
+
+Exit conditions:
+
+- Current multi-account registries migrate to deterministic nonempty group/account labels without
+  changing IDs, addresses, derivation indexes, home selection, or secret storage, and seed groups gain
+  a retained account-zero identity that prevents duplicate seed-group import after account removal.
+- The Accounts sheet has a top-right Edit/Done control for editing group/account labels and removing
+  accounts with destructive confirmation.
+- Label edits persist across relaunch and never affect signing identity, grants, activity ownership,
+  or pending-request bindings.
+- Selecting or deriving an account keeps the Accounts sheet open.
+- Create/import group flows require a group name and return to the Accounts list without dismissing
+  it or implicitly changing home selection.
+- Seed-account deletion is resumable, removes only that registration and its live account-bound state,
+  preserves activity and the group seed, and never reuses its derivation index.
+- Removing a private-key account deletes its complete one-account group; removing the final seed
+  account requires complete wallet-group deletion.
+
 ## Verification Matrix
 
 ### Migration test setup
@@ -1234,6 +1355,10 @@ fixtures into its App Group or keychain:
 - Registry encoding, validation, revision, lock exclusion, corruption, and migration.
 - BIP-39 entropy/mnemonic round trips and BIP-32 indexes zero, one, and maximum valid boundaries.
 - Concurrent derive requests and invalid-child handling.
+- Registry label-schema migration, label validation, concurrent edits, and labels excluded from
+  canonical request identity.
+- Seed-account deletion interruption at registry, pending, connection, cache, and final-registration
+  boundaries; deleted indexes remain below an unchanged monotonic high-water mark.
 - Duplicate seed/private-key/address imports.
 - Seed/private-key item absence and orphan non-adoption.
 - Fault injection before and after journal, projection, registry, adoption-state, connection-state,
@@ -1260,6 +1385,12 @@ fixtures into its App Group or keychain:
 - Exercise synthetic Dawn registry adoption and corruption handling; real Dawn key migration remains a
   physical-device acceptance test.
 - Create a seed group, confirm backup, derive account one, import a private-key group, and switch home.
+- Edit group/account labels, relaunch, and verify they persist while account addresses and connections
+  remain unchanged.
+- Select an account and verify the Accounts sheet remains open; create a named group and verify the
+  flow returns to the Accounts list without changing home selection.
+- Remove a non-final seed account and verify its sibling accounts remain usable and the next derived
+  account does not reuse the removed index.
 - Verify different home balances and account-scoped Activity/Connected Apps.
 - Connect one site to account A, then use a second new site to select account B in its connect popup.
 - Verify that the first site's account-A grant and active account remain intact, home selection remains
@@ -1276,6 +1407,8 @@ fixtures into its App Group or keychain:
 - User-presence protection for seed entropy and private-key items.
 - Generated phrase backup clearing and cancellation.
 - Seed import, account derivation, private-key export, signing, and complete group deletion.
+- Individual seed-account removal while a sibling remains signable, followed by derivation that skips
+  the removed index.
 - App/extension registry and connection-state sharing.
 - Popup account selection while Safari remains foregrounded.
 - Existing-grant signing from two accounts and exact recovered-signer verification.
@@ -1301,7 +1434,9 @@ fixtures into its App Group or keychain:
 - Supported Dawn v1 users retain their exact account and history in one private-key group. Current
   rebuild v2 installations have no migration guarantee.
 - Seed groups derive deterministic sibling accounts without persisting child keys.
+- Wallet groups and accounts have editable labels that never replace address/group identity.
 - The home picker controls only containing-app account scope.
+- Account selection keeps the home picker open, and named group creation returns to that picker.
 - Activity and Connected Apps show only the home-selected account.
 - A new connect popup proposes the persisted default connection account.
 - The active connect account can be changed from the sticky bar using existing accounts only.
@@ -1316,3 +1451,5 @@ fixtures into its App Group or keychain:
 - No non-connect request can be rebound from the popup.
 - Provider account results and events never expose an ungranted account or cross an origin/profile.
 - Forgetting one wallet group cannot delete, disconnect, hide, or sign with another group.
+- Removing one seed account registration cannot remove its siblings or seed, and its derivation index
+  is never reused.

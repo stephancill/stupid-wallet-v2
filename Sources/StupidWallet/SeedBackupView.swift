@@ -7,11 +7,16 @@ import SwiftUI
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var mnemonic = ""
+    @State private var groupName = ""
     @State private var didConfirmBackup = false
     @State private var generationError: String?
 
     var body: some View {
       List {
+        Section("Wallet Name") {
+          TextField("Wallet name", text: $groupName)
+        }
+
         Section {
           Text(
             "Write these words down in order. Anyone with this phrase can control every account in this wallet."
@@ -45,14 +50,16 @@ import SwiftUI
           .accessibilityValue(didConfirmBackup ? "Confirmed" : "Not confirmed")
           Button("Create Wallet") {
             Task {
-              if await vm.createSeedWallet(mnemonic: mnemonic) {
+              if await vm.createSeedWallet(mnemonic: mnemonic, groupName: groupName) {
                 clear()
                 onSuccess()
                 dismiss()
               }
             }
           }
-          .disabled(!didConfirmBackup || mnemonic.isEmpty || vm.isSaving)
+          .disabled(
+            !didConfirmBackup || mnemonic.isEmpty
+              || groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || vm.isSaving)
         }
 
         if let error = generationError ?? vm.errorMessage {

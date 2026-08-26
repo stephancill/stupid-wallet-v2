@@ -6,14 +6,17 @@ import SwiftUI
     var onSuccess: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var inputText = ""
+    @State private var groupName = ""
     @FocusState private var isInputFocused: Bool
 
     private var isValid: Bool {
       let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
       let hex = trimmed.lowercased().hasPrefix("0x") ? String(trimmed.dropFirst(2)) : trimmed
       let words = trimmed.split(whereSeparator: \.isWhitespace)
-      return (hex.count == 64 && hex.allSatisfy(\.isHexDigit))
-        || [12, 15, 18, 21, 24].contains(words.count)
+      let hasName = !groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      return hasName
+        && ((hex.count == 64 && hex.allSatisfy(\.isHexDigit))
+          || [12, 15, 18, 21, 24].contains(words.count))
     }
 
     var body: some View {
@@ -23,6 +26,9 @@ import SwiftUI
           Text("import wallet")
             .font(.largeTitle)
             .fontWeight(.bold)
+          TextField("wallet name", text: $groupName)
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.center)
           TextField("enter private key or seed phrase", text: $inputText, axis: .vertical)
             .textInputAutocapitalization(.never)
             .disableAutocorrection(true)
@@ -37,8 +43,9 @@ import SwiftUI
 
           Button {
             Task {
-              if await vm.importWallet(input: inputText) {
+              if await vm.importWallet(input: inputText, groupName: groupName) {
                 inputText = ""
+                groupName = ""
                 onSuccess()
                 dismiss()
               }

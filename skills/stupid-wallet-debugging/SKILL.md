@@ -99,6 +99,11 @@ https://app.uniswap.org/swap?chain=base&inputCurrency=<token>&outputCurrency=NAT
   the provider bridge. For profile tests, confirm the extension is enabled separately for each profile
   and inspect the page-menu badge/popup from a tab in that profile; never infer isolation from the
   containing app alone.
+- A crash after saving an in-place SwiftUI `List` header field can be a UIKit first-responder update
+  assertion rather than persistence corruption. Look for
+  `UICollectionView _resignOrRebaseFirstResponderViewWithIndexPathMapping` in the crash report. Bind
+  the editable fields to `FocusState`, clear focus, and allow that state transition to run before
+  publishing list data or replacing the editable row/header hierarchy.
 
 ### 2. Locate The Boundary
 

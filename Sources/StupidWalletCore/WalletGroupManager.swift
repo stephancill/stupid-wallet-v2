@@ -13,6 +13,9 @@ public enum WalletGroupManagerError: Error, Sendable, Equatable {
   case registryChanged
   case pendingRequestBusy
   case corruptState
+  case invalidLabel
+  case accountNotFound
+  case lastSeedAccount
 }
 
 /// Gate B wallet-group provisioning over the authoritative registry.
@@ -65,7 +68,11 @@ public struct WalletGroupManager: Sendable {
   }
 
   @discardableResult
-  public func importPrivateKey(privateKey: String) throws -> WalletGroup {
+  public func importPrivateKey(
+    privateKey: String,
+    label: String = "Private Key Wallet"
+  ) throws -> WalletGroup {
+    let label = try Self.validatedLabel(label)
     guard var secret = Hex.data(privateKey), secret.count == 32,
       let pair = try? EthereumKeypair.from(secret: secret)
     else {
@@ -123,7 +130,8 @@ public struct WalletGroupManager: Sendable {
         accounts: [
           WalletAccount(address: pair.address, derivationIndex: nil, createdAt: createdAt)
         ],
-        lifecycle: .active)
+        lifecycle: .active,
+        label: label)
       let updated = try registryStore.update(expectedRevision: current.revision) { registry in
         WalletRegistry(
           revision: registry.revision + 1,
@@ -141,14 +149,21 @@ public struct WalletGroupManager: Sendable {
   }
 
   @discardableResult
-  public func importSeedGroup(mnemonic: String) throws -> WalletGroup {
+  public func importSeedGroup(
+    mnemonic: String,
+    label: String = "Seed Wallet"
+  ) throws -> WalletGroup {
     var entropy = try EthereumSeedPhrase.entropy(mnemonic: mnemonic)
     defer { entropy = [UInt8](repeating: 0, count: entropy.count) }
-    return try registerSeedGroup(entropy: entropy)
+    return try registerSeedGroup(entropy: entropy, label: label)
   }
 
   @discardableResult
-  public func registerSeedGroup(entropy: [UInt8]) throws -> WalletGroup {
+  public func registerSeedGroup(
+    entropy: [UInt8],
+    label: String = "Seed Wallet"
+  ) throws -> WalletGroup {
+    let label = try Self.validatedLabel(label)
     guard let registry = try registryStore.loadReady() else {
       throw WalletGroupManagerError.registryNotReady
     }
@@ -202,7 +217,9 @@ public struct WalletGroupManager: Sendable {
         accounts: [
           WalletAccount(address: account, derivationIndex: 0, createdAt: createdAt)
         ],
-        lifecycle: .active)
+        lifecycle: .active,
+        label: label,
+        seedIdentityAddress: account)
       let updated = try registryStore.update(expectedRevision: current.revision) { registry in
         var groups = registry.groups
         groups.append(group)
@@ -267,7 +284,8 @@ public struct WalletGroupManager: Sendable {
       }
 
       let walletAccount = WalletAccount(
-        address: account, derivationIndex: derived.derivationIndex, createdAt: Date())
+        address: account, derivationIndex: derived.derivationIndex, createdAt: Date(),
+        label: "Account \(derived.derivationIndex + 1)")
       _ = try registryStore.update(expectedRevision: current.revision) { registry in
         var groups = registry.groups
         guard let index = groups.firstIndex(where: { $0.id == groupID }) else {
@@ -297,11 +315,12 @@ public struct WalletGroupManager: Sendable {
       let group = current.groups.first(where: { group in
         group.lifecycle == .active
           && group.accounts.contains {
-            $0.address.caseInsensitiveCompare(address) == .orderedSame
+            $0.lifecycle == .active
+              && $0.address.caseInsensitiveCompare(address) == .orderedSame
           }
       }),
       let account = group.accounts.first(where: {
-        $0.address.caseInsensitiveCompare(address) == .orderedSame
+        $0.lifecycle == .active && $0.address.caseInsensitiveCompare(address) == .orderedSame
       })
     else {
       throw WalletGroupManagerError.groupNotFound
@@ -324,7 +343,9 @@ public struct WalletGroupManager: Sendable {
       guard
         registry.groups.contains(where: { candidate in
           candidate.id == group.id && candidate.lifecycle == .active
-            && candidate.accounts.contains { $0.address == account.address }
+            && candidate.accounts.contains {
+              $0.lifecycle == .active && $0.address == account.address
+            }
         })
       else {
         throw WalletGroupManagerError.registryChanged
@@ -338,11 +359,66 @@ public struct WalletGroupManager: Sendable {
     }
   }
 
+  @discardableResult
+  public func updateLabels(
+    groupLabels: [UUID: String],
+    accountLabels: [String: String]
+  ) throws -> WalletRegistry {
+    guard let current = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    let validatedGroupLabels = try Dictionary(
+      uniqueKeysWithValues: groupLabels.map { ($0.key, try Self.validatedLabel($0.value)) })
+    var validatedAccountLabels: [String: String] = [:]
+    for (address, label) in accountLabels {
+      let normalized = address.lowercased()
+      guard validatedAccountLabels[normalized] == nil else {
+        throw WalletGroupManagerError.registryChanged
+      }
+      validatedAccountLabels[normalized] = try Self.validatedLabel(label)
+    }
+
+    return try registryStore.update(expectedRevision: current.revision) { registry in
+      var groups = registry.groups
+      for (groupID, label) in validatedGroupLabels {
+        guard let index = groups.firstIndex(where: { $0.id == groupID && $0.lifecycle == .active })
+        else { throw WalletGroupManagerError.registryChanged }
+        groups[index].label = label
+      }
+      for (address, label) in validatedAccountLabels {
+        guard
+          let groupIndex = groups.firstIndex(where: { group in
+            group.lifecycle == .active
+              && group.accounts.contains {
+                $0.lifecycle == .active && $0.address.lowercased() == address
+              }
+          }),
+          let accountIndex = groups[groupIndex].accounts.firstIndex(where: {
+            $0.lifecycle == .active && $0.address.lowercased() == address
+          })
+        else { throw WalletGroupManagerError.registryChanged }
+        groups[groupIndex].accounts[accountIndex].label = label
+      }
+      return WalletRegistry(
+        revision: registry.revision + 1,
+        adoptionState: registry.adoptionState,
+        groups: groups,
+        homeSelectedAddress: registry.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: registry.legacyWalletAddressFallbackRemoved)
+    }
+  }
+
   /// Marks the group inactive before deleting any secret, then commits each cleanup phase
   /// forward. A later adoption entry resumes any group left in `.deleting`.
   public func deleteGroup(groupID: UUID) throws {
     try lifecycle.withClaim(groupID: groupID) {
       try deleteClaimedGroup(groupID: groupID)
+    }
+  }
+
+  public func deleteAccount(groupID: UUID, address: String) throws {
+    try lifecycle.withClaim(groupID: groupID) {
+      try deleteClaimedAccount(groupID: groupID, address: address)
     }
   }
 
@@ -352,6 +428,106 @@ public struct WalletGroupManager: Sendable {
       try lifecycle.withClaim(groupID: group.id) {
         try deleteClaimedGroup(groupID: group.id)
       }
+    }
+    guard let refreshed = try registryStore.loadReady() else { return }
+    for group in refreshed.groups where group.lifecycle == .active {
+      for account in group.accounts where account.lifecycle == .deleting {
+        try lifecycle.withClaim(groupID: group.id) {
+          try deleteClaimedAccount(groupID: group.id, address: account.address)
+        }
+      }
+    }
+  }
+
+  private func deleteClaimedAccount(groupID: UUID, address: String) throws {
+    guard var registry = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    guard var group = registry.groups.first(where: { $0.id == groupID }) else {
+      throw WalletGroupManagerError.groupNotFound
+    }
+    guard group.lifecycle == .active else { throw WalletGroupManagerError.groupNotActive }
+    guard
+      var account = group.accounts.first(where: {
+        $0.address.caseInsensitiveCompare(address) == .orderedSame
+      })
+    else { throw WalletGroupManagerError.accountNotFound }
+
+    if group.kind == .privateKey {
+      try deleteClaimedGroup(groupID: groupID)
+      return
+    }
+
+    if account.lifecycle == .active {
+      guard group.accounts.filter({ $0.lifecycle == .active }).count > 1 else {
+        throw WalletGroupManagerError.lastSeedAccount
+      }
+      let removedAddress = account.address.lowercased()
+      let survivingHome: String?
+      if registry.homeSelectedAddress?.lowercased() == removedAddress {
+        survivingHome =
+          registry.groups.lazy
+          .filter { $0.lifecycle == .active }
+          .flatMap(\.accounts)
+          .first(where: {
+            $0.lifecycle == .active && $0.address.lowercased() != removedAddress
+          })?.address
+      } else {
+        survivingHome = registry.homeSelectedAddress
+      }
+      registry = try registryStore.update(expectedRevision: registry.revision) { current in
+        var groups = current.groups
+        guard let groupIndex = groups.firstIndex(where: { $0.id == groupID }),
+          groups[groupIndex].lifecycle == .active,
+          let accountIndex = groups[groupIndex].accounts.firstIndex(where: {
+            $0.lifecycle == .active
+              && $0.address.caseInsensitiveCompare(address) == .orderedSame
+          })
+        else { throw WalletGroupManagerError.registryChanged }
+        groups[groupIndex].accounts[accountIndex].lifecycle = .deleting
+        return WalletRegistry(
+          revision: current.revision + 1,
+          adoptionState: current.adoptionState,
+          groups: groups,
+          homeSelectedAddress: survivingHome,
+          legacyWalletAddressFallbackRemoved: current.legacyWalletAddressFallbackRemoved)
+      }
+      guard let updatedGroup = registry.groups.first(where: { $0.id == groupID }),
+        let updatedAccount = updatedGroup.accounts.first(where: {
+          $0.address.caseInsensitiveCompare(address) == .orderedSame
+        })
+      else { throw WalletGroupManagerError.registryChanged }
+      group = updatedGroup
+      account = updatedAccount
+    }
+
+    guard account.lifecycle == .deleting else { throw WalletGroupManagerError.registryChanged }
+    let removedAccounts = Set([account.address.lowercased()])
+    try terminalizePendingRequests(accounts: removedAccounts)
+    try removeConnections(accounts: removedAccounts)
+    try balanceCache.remove(account: account.address)
+
+    guard let current = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    _ = try registryStore.update(expectedRevision: current.revision) { value in
+      var groups = value.groups
+      guard let groupIndex = groups.firstIndex(where: { $0.id == group.id }),
+        groups[groupIndex].lifecycle == .active,
+        groups[groupIndex].accounts.contains(where: {
+          $0.lifecycle == .deleting
+            && $0.address.caseInsensitiveCompare(account.address) == .orderedSame
+        })
+      else { throw WalletGroupManagerError.registryChanged }
+      groups[groupIndex].accounts.removeAll {
+        $0.address.caseInsensitiveCompare(account.address) == .orderedSame
+      }
+      return WalletRegistry(
+        revision: value.revision + 1,
+        adoptionState: value.adoptionState,
+        groups: groups,
+        homeSelectedAddress: value.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: value.legacyWalletAddressFallbackRemoved)
     }
   }
 
@@ -369,7 +545,7 @@ public struct WalletGroupManager: Sendable {
           registry.groups
           .filter { $0.id != groupID && $0.lifecycle == .active }
           .flatMap(\.accounts)
-          .first?.address
+          .first(where: { $0.lifecycle == .active })?.address
       } else {
         survivingHome = registry.homeSelectedAddress
       }
@@ -512,7 +688,7 @@ public struct WalletGroupManager: Sendable {
         ?? registry.groups
         .filter { $0.lifecycle == .active }
         .flatMap(\.accounts)
-        .first?.address
+        .first(where: { $0.lifecycle == .active })?.address
       _ = try connectionStore.mutate { current in
         if current.connectCommits.contains(where: { accounts.contains($0.account.lowercased()) }) {
           throw WalletGroupManagerError.corruptState
@@ -535,9 +711,18 @@ public struct WalletGroupManager: Sendable {
   }
 
   private static func contains(account: String, in registry: WalletRegistry) -> Bool {
-    registry.groups.flatMap(\.accounts).contains {
-      $0.address.caseInsensitiveCompare(account) == .orderedSame
+    registry.groups.contains { group in
+      group.seedIdentityAddress?.caseInsensitiveCompare(account) == .orderedSame
+        || group.accounts.contains {
+          $0.address.caseInsensitiveCompare(account) == .orderedSame
+        }
     }
+  }
+
+  private static func validatedLabel(_ label: String) throws -> String {
+    let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { throw WalletGroupManagerError.invalidLabel }
+    return trimmed
   }
 
   private static func verify(privateKey: [UInt8], expectedAccount: String) throws {

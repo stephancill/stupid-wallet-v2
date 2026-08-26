@@ -18,7 +18,12 @@ confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
 
-Multiple wallet groups and accounts are approved next-scope, and Gates A, C, D, E, F, and G are complete. The shared
+Multiple wallet groups and accounts are approved next-scope, and Gates A through H are complete. Gate
+I is implemented hermetically and on the simulator: wallet-group/account labels are editable (with
+focused fields resigned before Done publishes registry changes),
+individual account-registration removal is recoverable, and the Accounts sheet remains open across
+selection and returns from named additive group flows. Full account-deletion fault injection and
+physical-device acceptance remain before Gate I is closed. The shared
 plan now supports migration only from the old Dawn v1 application. Migration from the current
 single-account rebuild (v2) is explicitly out of scope: its address registration, normalized grants,
 singleton cache, and pending-request records receive no upgrade-preservation guarantee. Fail-closed
@@ -307,8 +312,9 @@ independent RPCs agreed on receipt success and 21,000 gas used.
 The Gate 6 containing-app shell now follows the shipped app's SwiftUI screen hierarchy and
 presentation: the lowercase welcome and import screens; centered large native balance with
 an anchored details popover; top-trailing Copy Address icon beside the account blockie menu popover,
-which uses a continuous-corner squircle and begins with a regular shortened-address account-switch
-row with a trailing `arrow.left.arrow.right` icon, followed by Activity,
+which uses a continuous-corner squircle and begins with a regular account-switch row that leads with a
+squircle blockie beside the account name (or shortened address), followed by a small muted
+`arrow.left.arrow.right` trailing symbol, then Activity,
 Connected Apps, and Settings actions; Settings sheet; Connected Apps list/detail/disconnect
 with origin/profile-filtered activity; reciprocal navigation from an activity detail to its
 currently connected app detail;
@@ -573,6 +579,12 @@ Mac; using the same account on both requires an explicit user-authorized import 
   estimates.
 - Wallet groups are either seed-backed with accounts derived at `m/44'/60'/0'/0/{index}` or
   private-key-backed with exactly one account.
+- Wallet-group and account labels are editable, non-authoritative display metadata. Addresses and group
+  IDs remain the identity for signing, grants, activity, migration, and canonical requests.
+- Removing a seed-derived account deletes only its registration and live account-bound state, preserves
+  the seed and activity, and never reuses its derivation index. A retained account-zero seed identity
+  prevents duplicate group import after account-zero removal. The final seed account requires complete
+  group deletion; removing a private-key account deletes its one-account group and key.
 - Existing installations adopt their proven account as a one-account private-key group. Shipped
   formats did not retain seed phrases and must not be treated as expandable seed groups.
 - Home account selection is independent from the default account proposed for new dapp connections.
@@ -584,6 +596,9 @@ Mac; using the same account on both requires an explicit user-authorized import 
   and decision, so a stale popup cannot decide a connect request after another popup rebinds it.
 - A popup selection becomes the default for future new connections only after Connect succeeds;
   rejection and failure leave the prior default unchanged, and existing grants remain intact.
+- The containing-app Accounts sheet remains open after selecting or deriving an account. New/imported
+  wallet groups require a name and return to the Accounts list without dismissing it or implicitly
+  changing home selection.
 
 ## Existing App Findings
 
@@ -717,6 +732,24 @@ Safari account model are complete:
 - Open an account picker from the home account-menu address and support selecting existing accounts,
   deriving the next seed account, creating a seed group, importing a seed, and importing a private
   key.
+- Add a top-right Edit/Done mode to that picker for wallet-group/account labels and destructive account
+  removal. Persist account deletion through an account-level `.deleting` barrier before cleaning its
+  pending requests, grants, active/default mappings, and cache; preserve seed entropy and derivation
+  high-water state.
+- Registry schema 2 strictly requires labels, account lifecycle, and seed identity. Schema 1 migrates
+  through the projection-first journal in one revision, assigning deterministic `Wallet N` and
+  `Account N` labels while preserving group/account identity and seed derivation high-water state.
+  Missing schema-2 lifecycle metadata fails closed rather than reactivating an account.
+- The Accounts sheet keeps separate Close and Edit/Done controls, hiding Close while editing. Native
+  list edit mode supplies the standard red removal control and trailing Delete action. Wallet section
+  headers and account labels edit in place with dotted underlines identifying editable fields, plus
+  confirmed destructive removal.
+  Selection and derivation leave the sheet open; named additive create/import flows pop back to the
+  list and preserve the prior home account.
+- Individual seed-account deletion marks the registration `.deleting`, immediately removes it from
+  signer/provider/home/default resolution, terminalizes pending authority, removes connection and
+  balance state, and then removes only the registration. The seed identity and next derivation index
+  remain reserved. Private-key accounts and final seed accounts route through complete group deletion.
 - Scope containing-app balance, Activity, Connected Apps, Settings, authorizations, and private-key
   export to the home-selected account.
 - Replace the runtime origin/profile-only grant store with atomic account + origin + profile connection
@@ -1382,19 +1415,22 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Continue Gate 6 with the remaining focused backup timeout/screen-capture and broader
+1. Complete Gate I hardening with fault injection at each individual account-deletion boundary and
+   physical-device acceptance for label persistence, picker navigation, protected derivation, pending
+   authority cleanup, and seed-account removal/relaunch recovery.
+2. Continue Gate 6 with the remaining focused backup timeout/screen-capture and broader
    cancellation/passcode-fallback checks. Multi-account Gate H, including its pending-request
    device-lock acceptance, is complete.
    Raw private-key import, protected seed import, generated-backup cancellation, seed-derived export,
    group deletion, and Safari signing are proven on the physical iPhone.
-2. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every other
+3. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every other
    supported iOS version. The product owner chose seamless authorization for pre-existing
    hostname grants; consider a later user-visible reconnect campaign before removing that
    compatibility fallback.
-3. Finish parity details that do not weaken the new model: richer activity detail and broader
+4. Finish parity details that do not weaken the new model: richer activity detail and broader
    optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
    inside Gate 6.
-4. Gate 7 and later per the implementation gates.
+5. Gate 7 and later per the implementation gates.
 
 ## Reference Sources
 

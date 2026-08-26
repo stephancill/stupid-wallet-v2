@@ -240,6 +240,7 @@ public struct ConnectionState: Codable, Sendable, Equatable {
       registry.groups
         .filter { $0.lifecycle == .active }
         .flatMap(\.accounts)
+        .filter { $0.lifecycle == .active }
         .map { $0.address.lowercased() })
 
     if let defaultAccount, !activeAccounts.contains(defaultAccount.lowercased()) {

@@ -184,6 +184,96 @@ struct WalletGroupManagerTests {
       try environment.registry.loadReady()?.homeSelectedAddress == environment.existingAddress)
   }
 
+  @Test("label edits trim and commit atomically in one registry revision")
+  func updatesLabels() throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(
+      mnemonic: mnemonic, label: " Test Wallet ")
+    let account = group.accounts[0]
+    let before = try #require(try environment.registry.loadReady())
+
+    let updated = try environment.manager.updateLabels(
+      groupLabels: [group.id: " Savings "],
+      accountLabels: [account.address: " Daily "])
+
+    #expect(updated.revision == before.revision + 1)
+    #expect(updated.groups.first { $0.id == group.id }?.label == "Savings")
+    #expect(updated.groups.first { $0.id == group.id }?.accounts[0].label == "Daily")
+
+    #expect(throws: WalletGroupManagerError.invalidLabel) {
+      try environment.manager.updateLabels(
+        groupLabels: [group.id: "   "], accountLabels: [account.address: "Changed"])
+    }
+    let afterFailure = try #require(try environment.registry.loadReady())
+    #expect(afterFailure == updated)
+  }
+
+  @Test("seed account deletion preserves entropy and never reuses its index")
+  func deletesSeedAccountRegistration() async throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+    let accountOne = try environment.manager.deriveAccount(groupID: group.id)
+    _ = try environment.manager.selectHomeAccount(address: group.accounts[0].address)
+    let origin = "https://account-delete.example"
+    _ = try environment.connection.mutate { state in
+      state.defaultAccount = group.accounts[0].address
+      state.grants.append(
+        ConnectionGrant(
+          account: group.accounts[0].address, origin: origin,
+          legacyDomain: "account-delete.example", profileID: nil, connectedAt: .now,
+          precision: .exact))
+      state.activeConnections.append(
+        ActiveConnection(origin: origin, profileID: nil, account: group.accounts[0].address))
+    }
+    try environment.cache.save(balance: "1.000000", account: group.accounts[0].address)
+    let request = WalletPendingRequest(
+      kind: .message, method: "personal_sign", origin: origin, chainId: "1",
+      account: group.accounts[0].address, params: .array([]), payloadDigest: "test",
+      bindingVersion: 2)
+    try await environment.pending.insert(request)
+
+    try environment.manager.deleteAccount(groupID: group.id, address: group.accounts[0].address)
+
+    let deleted = try #require(try environment.registry.loadReady())
+    let retained = try #require(deleted.groups.first { $0.id == group.id })
+    let connection = try #require(try environment.connection.load())
+    let terminal = try #require(await environment.pending.record(request.id))
+    #expect(retained.seedIdentityAddress == group.accounts[0].address)
+    #expect(retained.accounts.map(\.address) == [accountOne.address])
+    #expect(retained.nextDerivationIndex == 2)
+    #expect(environment.seeds.contains(groupID: group.id))
+    #expect(deleted.homeSelectedAddress == environment.existingAddress)
+    #expect(connection.defaultAccount == environment.existingAddress)
+    #expect(connection.grants.isEmpty)
+    #expect(connection.activeConnections.isEmpty)
+    #expect(try environment.cache.entry(account: group.accounts[0].address) == nil)
+    #expect(terminal.status == .failed)
+    #expect(throws: WalletGroupManagerError.duplicateAccount) {
+      try environment.manager.importSeedGroup(mnemonic: mnemonic)
+    }
+
+    let accountTwo = try environment.manager.deriveAccount(groupID: group.id)
+    #expect(accountTwo.derivationIndex == 2)
+    #expect(
+      try environment.registry.loadReady()?.groups.first { $0.id == group.id }?
+        .nextDerivationIndex == 3)
+  }
+
+  @Test("the final seed account requires complete group deletion")
+  func rejectsFinalSeedAccountDeletion() throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+
+    #expect(throws: WalletGroupManagerError.lastSeedAccount) {
+      try environment.manager.deleteAccount(groupID: group.id, address: group.accounts[0].address)
+    }
+    #expect(try environment.registry.loadReady()?.groups.contains { $0.id == group.id } == true)
+    #expect(environment.seeds.contains(groupID: group.id))
+  }
+
   @Test("group deletion removes only that group's pending, connection, cache, and secret state")
   func deletesGroup() async throws {
     let environment = try Environment()

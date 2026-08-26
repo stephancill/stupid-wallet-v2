@@ -22,7 +22,8 @@ final class WalletViewModel: ObservableObject {
     walletGroups.first { group in
       group.lifecycle == .active
         && group.accounts.contains {
-          $0.address.caseInsensitiveCompare(addressHex) == .orderedSame
+          $0.lifecycle == .active
+            && $0.address.caseInsensitiveCompare(addressHex) == .orderedSame
         }
     }
   }
@@ -71,13 +72,16 @@ final class WalletViewModel: ObservableObject {
   }
 
   @discardableResult
-  func createSeedWallet(mnemonic: String) async -> Bool {
+  func createSeedWallet(mnemonic: String, groupName: String) async -> Bool {
     isSaving = true
     defer { isSaving = false }
     errorMessage = nil
+    let shouldSelect = !hasWallet
     do {
-      let group = try groupManager.importSeedGroup(mnemonic: mnemonic)
-      _ = try groupManager.selectHomeAccount(address: group.accounts[0].address)
+      let group = try groupManager.importSeedGroup(mnemonic: mnemonic, label: groupName)
+      if shouldSelect {
+        _ = try groupManager.selectHomeAccount(address: group.accounts[0].address)
+      }
       await adoptAndLoad()
       await refreshBalance()
       return true
@@ -90,20 +94,23 @@ final class WalletViewModel: ObservableObject {
   }
 
   @discardableResult
-  func importWallet(input: String) async -> Bool {
+  func importWallet(input: String, groupName: String) async -> Bool {
     isSaving = true
     defer { isSaving = false }
     errorMessage = nil
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     let words = trimmed.split(whereSeparator: \.isWhitespace)
+    let shouldSelect = !hasWallet
     do {
       let group: WalletGroup
       if words.count == 1 {
-        group = try groupManager.importPrivateKey(privateKey: trimmed)
+        group = try groupManager.importPrivateKey(privateKey: trimmed, label: groupName)
       } else {
-        group = try groupManager.importSeedGroup(mnemonic: trimmed)
+        group = try groupManager.importSeedGroup(mnemonic: trimmed, label: groupName)
       }
-      _ = try groupManager.selectHomeAccount(address: group.accounts[0].address)
+      if shouldSelect {
+        _ = try groupManager.selectHomeAccount(address: group.accounts[0].address)
+      }
       await adoptAndLoad()
       await refreshBalance()
       return true
@@ -122,7 +129,63 @@ final class WalletViewModel: ObservableObject {
     errorMessage = nil
     do {
       let account = try groupManager.deriveAccount(groupID: groupID)
-      _ = try groupManager.selectHomeAccount(address: account.address)
+      _ = account
+      await adoptAndLoad()
+      return true
+    } catch {
+      let errorMessage = message(for: error)
+      await adoptAndLoad()
+      self.errorMessage = errorMessage
+      return false
+    }
+  }
+
+  @discardableResult
+  func saveLabels(
+    groupLabels: [UUID: String],
+    accountLabels: [String: String]
+  ) async -> Bool {
+    isSaving = true
+    defer { isSaving = false }
+    errorMessage = nil
+    do {
+      _ = try groupManager.updateLabels(
+        groupLabels: groupLabels, accountLabels: accountLabels)
+      await adoptAndLoad()
+      return true
+    } catch {
+      errorMessage = message(for: error)
+      return false
+    }
+  }
+
+  @discardableResult
+  func removeAccount(groupID: UUID, address: String) async -> Bool {
+    isSaving = true
+    defer { isSaving = false }
+    errorMessage = nil
+    do {
+      try groupManager.deleteAccount(groupID: groupID, address: address)
+      networkBalances = []
+      await adoptAndLoad()
+      await refreshBalance()
+      return true
+    } catch {
+      let errorMessage = message(for: error)
+      await adoptAndLoad()
+      self.errorMessage = errorMessage
+      return false
+    }
+  }
+
+  @discardableResult
+  func removeGroup(groupID: UUID) async -> Bool {
+    isSaving = true
+    defer { isSaving = false }
+    errorMessage = nil
+    do {
+      try groupManager.deleteGroup(groupID: groupID)
+      networkBalances = []
       await adoptAndLoad()
       await refreshBalance()
       return true
@@ -158,7 +221,8 @@ final class WalletViewModel: ObservableObject {
       let group = registry.groups.first(where: { group in
         group.lifecycle == .active
           && group.accounts.contains {
-            $0.address.caseInsensitiveCompare(account) == .orderedSame
+            $0.lifecycle == .active
+              && $0.address.caseInsensitiveCompare(account) == .orderedSame
           }
       })
     else { throw WalletGroupManagerError.groupNotFound }
@@ -243,6 +307,12 @@ final class WalletViewModel: ObservableObject {
       return "Only seed wallets can add another account."
     case WalletGroupManagerError.registryChanged:
       return "Wallet state changed. Please try again."
+    case WalletGroupManagerError.invalidLabel:
+      return "Enter a name for every wallet and account."
+    case WalletGroupManagerError.lastSeedAccount:
+      return "Remove the wallet to delete its final account."
+    case WalletGroupManagerError.accountNotFound:
+      return "That account is no longer available."
     default:
       return "The wallet could not be saved. Please try again."
     }

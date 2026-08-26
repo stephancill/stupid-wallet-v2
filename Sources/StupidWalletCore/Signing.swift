@@ -154,7 +154,7 @@ public struct WalletAccountResolver: AccountResolving, Sendable {
     }
     for group in registry.groups where group.lifecycle == .active {
       if let account = group.accounts.first(where: {
-        $0.address.caseInsensitiveCompare(address) == .orderedSame
+        $0.lifecycle == .active && $0.address.caseInsensitiveCompare(address) == .orderedSame
       }) {
         return Context(group: group, account: account)
       }

@@ -88,6 +88,12 @@ struct WalletRegistryTests {
         home: firstAddress
       ).validate()
     }
+
+    var finalAccountDeleting = seedGroup(addresses: [firstAddress])
+    finalAccountDeleting.accounts[0].lifecycle = .deleting
+    #expect(throws: WalletRegistryError.invalid(.invalidSeedGroup)) {
+      try registry(groups: [finalAccountDeleting], home: nil).validate()
+    }
   }
 
   @Test("registry rejects malformed, duplicate, and noncanonical addresses")
@@ -164,14 +170,79 @@ struct WalletRegistryTests {
     #expect(try store.load() == nil)
 
     let unsupported = WalletRegistry(
-      schemaVersion: 2, revision: 0, adoptionState: .complete, groups: [],
+      schemaVersion: 3, revision: 0, adoptionState: .complete, groups: [],
       homeSelectedAddress: nil, legacyWalletAddressFallbackRemoved: true)
-    #expect(throws: WalletRegistryError.unsupportedSchemaVersion(2)) {
+    #expect(throws: WalletRegistryError.unsupportedSchemaVersion(3)) {
       try store.create(unsupported)
     }
 
     try Data("not-json".utf8).write(
       to: directory.appendingPathComponent("wallet-registry.json"))
+    #expect(throws: WalletRegistryError.corrupt) {
+      try store.load()
+    }
+  }
+
+  @Test("schema one migrates labels and seed identity in one revision")
+  func migratesSchemaOne() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let firstAddress = try address(secret: 1)
+    let secondAddress = try address(secret: 2)
+    let payload: [String: Any] = [
+      "schemaVersion": 1,
+      "revision": 7,
+      "adoptionState": "complete",
+      "groups": [
+        [
+          "id": UUID().uuidString,
+          "kind": "seed",
+          "createdAt": 1_000,
+          "nextDerivationIndex": 2,
+          "accounts": [
+            ["address": firstAddress, "derivationIndex": 0, "createdAt": 1_000],
+            ["address": secondAddress, "derivationIndex": 1, "createdAt": 1_000],
+          ],
+          "lifecycle": "active",
+        ]
+      ],
+      "homeSelectedAddress": firstAddress,
+      "legacyWalletAddressFallbackRemoved": true,
+    ]
+    try JSONSerialization.data(withJSONObject: payload).write(
+      to: directory.appendingPathComponent("wallet-registry.json"))
+
+    let migrated = try #require(try WalletRegistryStore(directory: directory).loadReady())
+
+    #expect(migrated.schemaVersion == WalletRegistry.currentSchemaVersion)
+    #expect(migrated.revision == 8)
+    #expect(migrated.groups[0].label == "Wallet 1")
+    #expect(migrated.groups[0].seedIdentityAddress == firstAddress)
+    #expect(migrated.groups[0].accounts.map(\.label) == ["Account 1", "Account 2"])
+    #expect(migrated.groups[0].accounts.allSatisfy { $0.lifecycle == .active })
+  }
+
+  @Test("schema two requires explicit labels and account lifecycle")
+  func schemaTwoRequiresNewFields() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let address = try address(secret: 1)
+    let store = WalletRegistryStore(directory: directory)
+    try store.create(
+      WalletRegistry(
+        revision: 0, adoptionState: .migrating,
+        groups: [privateKeyGroup(address: address)], homeSelectedAddress: address,
+        legacyWalletAddressFallbackRemoved: false))
+    let file = directory.appendingPathComponent("wallet-registry.json")
+    var root = try #require(
+      try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+    var groups = try #require(root["groups"] as? [[String: Any]])
+    var accounts = try #require(groups[0]["accounts"] as? [[String: Any]])
+    accounts[0].removeValue(forKey: "lifecycle")
+    groups[0]["accounts"] = accounts
+    root["groups"] = groups
+    try JSONSerialization.data(withJSONObject: root).write(to: file)
+
     #expect(throws: WalletRegistryError.corrupt) {
       try store.load()
     }

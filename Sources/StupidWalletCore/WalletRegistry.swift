@@ -16,17 +16,53 @@ public enum WalletGroupLifecycle: String, Codable, Sendable {
   case deleting
 }
 
+public enum WalletAccountLifecycle: String, Codable, Sendable {
+  case active
+  case deleting
+}
+
 public struct WalletAccount: Codable, Sendable, Equatable, Identifiable {
   public let address: String
   public let derivationIndex: UInt32?
   public let createdAt: Date
+  public var label: String
+  public var lifecycle: WalletAccountLifecycle
 
   public var id: String { address.lowercased() }
 
-  public init(address: String, derivationIndex: UInt32?, createdAt: Date) {
+  public init(
+    address: String,
+    derivationIndex: UInt32?,
+    createdAt: Date,
+    label: String? = nil,
+    lifecycle: WalletAccountLifecycle = .active
+  ) {
     self.address = address
     self.derivationIndex = derivationIndex
     self.createdAt = createdAt
+    self.label = label ?? Self.defaultLabel(derivationIndex: derivationIndex)
+    self.lifecycle = lifecycle
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case address
+    case derivationIndex
+    case createdAt
+    case label
+    case lifecycle
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    address = try values.decode(String.self, forKey: .address)
+    derivationIndex = try values.decodeIfPresent(UInt32.self, forKey: .derivationIndex)
+    createdAt = try values.decode(Date.self, forKey: .createdAt)
+    label = try values.decode(String.self, forKey: .label)
+    lifecycle = try values.decode(WalletAccountLifecycle.self, forKey: .lifecycle)
+  }
+
+  private static func defaultLabel(derivationIndex: UInt32?) -> String {
+    derivationIndex.map { "Account \($0 + 1)" } ?? "Account 1"
   }
 }
 
@@ -34,6 +70,8 @@ public struct WalletGroup: Codable, Sendable, Equatable, Identifiable {
   public let id: UUID
   public let kind: WalletGroupKind
   public let createdAt: Date
+  public let seedIdentityAddress: String?
+  public var label: String
   public var nextDerivationIndex: UInt32?
   public var accounts: [WalletAccount]
   public var lifecycle: WalletGroupLifecycle
@@ -44,19 +82,69 @@ public struct WalletGroup: Codable, Sendable, Equatable, Identifiable {
     createdAt: Date,
     nextDerivationIndex: UInt32?,
     accounts: [WalletAccount],
-    lifecycle: WalletGroupLifecycle
+    lifecycle: WalletGroupLifecycle,
+    label: String? = nil,
+    seedIdentityAddress: String? = nil
   ) {
     self.id = id
     self.kind = kind
     self.createdAt = createdAt
+    self.seedIdentityAddress =
+      kind == .seed
+      ? seedIdentityAddress
+        ?? accounts.first(where: { $0.derivationIndex == 0 })?.address
+      : nil
+    self.label = label ?? (kind == .seed ? "Seed Wallet" : "Private Key Wallet")
     self.nextDerivationIndex = nextDerivationIndex
     self.accounts = accounts
     self.lifecycle = lifecycle
   }
+
+  private enum CodingKeys: String, CodingKey {
+    case id
+    case kind
+    case createdAt
+    case seedIdentityAddress
+    case label
+    case nextDerivationIndex
+    case accounts
+    case lifecycle
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(UUID.self, forKey: .id)
+    kind = try values.decode(WalletGroupKind.self, forKey: .kind)
+    createdAt = try values.decode(Date.self, forKey: .createdAt)
+    nextDerivationIndex = try values.decodeIfPresent(UInt32.self, forKey: .nextDerivationIndex)
+    accounts = try values.decode([WalletAccount].self, forKey: .accounts)
+    lifecycle = try values.decode(WalletGroupLifecycle.self, forKey: .lifecycle)
+    label = try values.decode(String.self, forKey: .label)
+    seedIdentityAddress =
+      kind == .seed
+      ? try values.decode(String.self, forKey: .seedIdentityAddress)
+      : nil
+  }
+}
+
+private struct LegacyWalletAccount: Decodable {
+  let address: String
+  let derivationIndex: UInt32?
+  let createdAt: Date
+}
+
+private struct LegacyWalletGroup: Decodable {
+  let id: UUID
+  let kind: WalletGroupKind
+  let createdAt: Date
+  let nextDerivationIndex: UInt32?
+  let accounts: [LegacyWalletAccount]
+  let lifecycle: WalletGroupLifecycle
 }
 
 public struct WalletRegistry: Codable, Sendable, Equatable {
-  public static let currentSchemaVersion = 1
+  public static let currentSchemaVersion = 2
+  fileprivate static let legacySchemaVersion = 1
 
   public let schemaVersion: Int
   public let revision: UInt64
@@ -81,25 +169,64 @@ public struct WalletRegistry: Codable, Sendable, Equatable {
     self.legacyWalletAddressFallbackRemoved = legacyWalletAddressFallbackRemoved
   }
 
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion
+    case revision
+    case adoptionState
+    case groups
+    case homeSelectedAddress
+    case legacyWalletAddressFallbackRemoved
+  }
+
+  public init(from decoder: any Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+    revision = try values.decode(UInt64.self, forKey: .revision)
+    adoptionState = try values.decode(WalletRegistryAdoptionState.self, forKey: .adoptionState)
+    homeSelectedAddress = try values.decodeIfPresent(String.self, forKey: .homeSelectedAddress)
+    legacyWalletAddressFallbackRemoved = try values.decode(
+      Bool.self, forKey: .legacyWalletAddressFallbackRemoved)
+    if schemaVersion == Self.legacySchemaVersion {
+      groups = try values.decode([LegacyWalletGroup].self, forKey: .groups).map { group in
+        let accounts = group.accounts.map {
+          WalletAccount(
+            address: $0.address, derivationIndex: $0.derivationIndex, createdAt: $0.createdAt)
+        }
+        return WalletGroup(
+          id: group.id, kind: group.kind, createdAt: group.createdAt,
+          nextDerivationIndex: group.nextDerivationIndex, accounts: accounts,
+          lifecycle: group.lifecycle)
+      }
+    } else {
+      groups = try values.decode([WalletGroup].self, forKey: .groups)
+    }
+  }
+
   public func validate() throws {
-    guard schemaVersion == Self.currentSchemaVersion else {
+    guard schemaVersion == Self.currentSchemaVersion || schemaVersion == Self.legacySchemaVersion
+    else {
       throw WalletRegistryError.unsupportedSchemaVersion(schemaVersion)
     }
 
     var groupIDs = Set<UUID>()
     var addresses = Set<String>()
     var activeAddresses = Set<String>()
+    var seedIdentities = Set<String>()
     var accountCount = 0
 
     for group in groups {
       guard groupIDs.insert(group.id).inserted else {
         throw WalletRegistryError.invalid(.duplicateGroup)
       }
+      guard Self.isValidLabel(group.label) else {
+        throw WalletRegistryError.invalid(.invalidLabel)
+      }
 
       switch group.kind {
       case .privateKey:
         guard group.accounts.count == 1, group.nextDerivationIndex == nil,
-          group.accounts[0].derivationIndex == nil
+          group.accounts[0].derivationIndex == nil, group.seedIdentityAddress == nil,
+          group.accounts[0].lifecycle == .active
         else {
           throw WalletRegistryError.invalid(.invalidPrivateKeyGroup)
         }
@@ -123,9 +250,23 @@ public struct WalletRegistry: Codable, Sendable, Equatable {
         guard previousIndex.map({ nextDerivationIndex > $0 }) ?? false else {
           throw WalletRegistryError.invalid(.invalidNextDerivationIndex)
         }
+        guard let seedIdentityAddress = group.seedIdentityAddress,
+          Self.isCanonicalAddress(seedIdentityAddress),
+          seedIdentities.insert(seedIdentityAddress.lowercased()).inserted
+        else {
+          throw WalletRegistryError.invalid(.invalidSeedGroup)
+        }
+        guard
+          group.lifecycle != .active || group.accounts.contains(where: { $0.lifecycle == .active })
+        else {
+          throw WalletRegistryError.invalid(.invalidSeedGroup)
+        }
       }
 
       for account in group.accounts {
+        guard Self.isValidLabel(account.label) else {
+          throw WalletRegistryError.invalid(.invalidLabel)
+        }
         guard Self.isCanonicalAddress(account.address) else {
           throw WalletRegistryError.invalid(.invalidAddress)
         }
@@ -133,10 +274,23 @@ public struct WalletRegistry: Codable, Sendable, Equatable {
         guard addresses.insert(normalized).inserted else {
           throw WalletRegistryError.invalid(.duplicateAddress)
         }
-        if group.lifecycle == .active {
+        if group.lifecycle == .active, account.lifecycle == .active {
           activeAddresses.insert(normalized)
         }
         accountCount += 1
+      }
+    }
+
+    for group in groups where group.kind == .seed {
+      guard let identity = group.seedIdentityAddress?.lowercased() else {
+        throw WalletRegistryError.invalid(.invalidSeedGroup)
+      }
+      let belongsToAnotherGroup = groups.contains { candidate in
+        candidate.id != group.id
+          && candidate.accounts.contains { $0.address.lowercased() == identity }
+      }
+      guard !belongsToAnotherGroup else {
+        throw WalletRegistryError.invalid(.duplicateAddress)
       }
     }
 
@@ -167,6 +321,10 @@ public struct WalletRegistry: Codable, Sendable, Equatable {
     }
     return EIP55.checksum(from: bytes) == address
   }
+
+  private static func isValidLabel(_ label: String) -> Bool {
+    !label.isEmpty && label == label.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
 }
 
 public enum WalletRegistryValidationError: Sendable, Equatable {
@@ -179,6 +337,7 @@ public enum WalletRegistryValidationError: Sendable, Equatable {
   case invalidNextDerivationIndex
   case invalidHomeSelection
   case legacyFallbackStillEnabled
+  case invalidLabel
 }
 
 public enum WalletRegistryError: Error, Sendable, Equatable {
@@ -399,7 +558,7 @@ public struct WalletRegistryStore: Sendable {
       throw WalletRegistryError.corrupt
     }
 
-    let current = try loadRegistryUnlocked()
+    let current = try loadPersistedRegistryUnlocked()
     switch transition.previousRegistry {
     case .absent:
       guard transition.nextRegistry.revision == 0,
@@ -438,6 +597,18 @@ public struct WalletRegistryStore: Sendable {
   }
 
   private func loadRegistryUnlocked() throws -> WalletRegistry? {
+    guard let registry = try loadPersistedRegistryUnlocked() else { return nil }
+    guard registry.schemaVersion == WalletRegistry.legacySchemaVersion else { return registry }
+    guard registry.revision < UInt64.max else { throw WalletRegistryError.invalidRevision }
+
+    let migrated = try Self.persistenceNormalized(Self.migrateLegacyRegistry(registry))
+    try migrated.validate()
+    try Self.validateTransition(from: registry, to: migrated)
+    try commitOrRecoverUnlocked(previous: registry, next: migrated)
+    return migrated
+  }
+
+  private func loadPersistedRegistryUnlocked() throws -> WalletRegistry? {
     guard let fileURL else { throw WalletRegistryError.unavailable }
     guard case .present(let data) = try Self.readFileState(at: fileURL) else { return nil }
 
@@ -469,7 +640,10 @@ public struct WalletRegistryStore: Sendable {
   private static func validateTransition(from current: WalletRegistry, to next: WalletRegistry)
     throws
   {
-    guard current.schemaVersion == next.schemaVersion,
+    guard
+      current.schemaVersion == next.schemaVersion
+        || (current.schemaVersion == WalletRegistry.legacySchemaVersion
+          && next.schemaVersion == WalletRegistry.currentSchemaVersion),
       !(current.adoptionState == .complete && next.adoptionState != .complete),
       !(current.legacyWalletAddressFallbackRemoved
         && !next.legacyWalletAddressFallbackRemoved)
@@ -501,6 +675,7 @@ public struct WalletRegistryStore: Sendable {
         continue
       }
       guard updated.kind == group.kind, updated.createdAt == group.createdAt,
+        updated.seedIdentityAddress == group.seedIdentityAddress,
         !(group.lifecycle == .deleting && updated.lifecycle != .deleting)
       else {
         throw WalletRegistryError.invalidTransition
@@ -513,21 +688,37 @@ public struct WalletRegistryStore: Sendable {
           throw WalletRegistryError.invalidTransition
         }
       } else if group.kind == .privateKey {
-        guard updated.accounts == group.accounts else {
+        guard Self.sameAccounts(group.accounts, updated.accounts) else {
           throw WalletRegistryError.invalidTransition
         }
       } else {
-        if updated.accounts == group.accounts {
+        if Self.sameAccounts(group.accounts, updated.accounts) {
           guard updated.nextDerivationIndex == group.nextDerivationIndex else {
             throw WalletRegistryError.invalidTransition
           }
           continue
         }
+
+        if Self.isAccountDeletionStart(from: group.accounts, to: updated.accounts) {
+          guard updated.nextDerivationIndex == group.nextDerivationIndex else {
+            throw WalletRegistryError.invalidTransition
+          }
+          continue
+        }
+        if Self.isAccountDeletionFinish(from: group.accounts, to: updated.accounts) {
+          guard updated.nextDerivationIndex == group.nextDerivationIndex else {
+            throw WalletRegistryError.invalidTransition
+          }
+          continue
+        }
+
         let addedAccounts = updated.accounts.dropFirst(group.accounts.count)
-        guard updated.accounts.starts(with: group.accounts), addedAccounts.count == 1,
+        guard Self.startsWithSameAccounts(updated.accounts, prefix: group.accounts),
+          addedAccounts.count == 1,
           let currentIndex = group.nextDerivationIndex,
           let nextIndex = updated.nextDerivationIndex,
           let addedIndex = addedAccounts.first?.derivationIndex,
+          addedAccounts.first?.lifecycle == .active,
           addedIndex >= currentIndex, addedIndex < WalletRegistry.derivationIndexLimit,
           nextIndex == addedIndex + 1
         else {
@@ -542,7 +733,8 @@ public struct WalletRegistryStore: Sendable {
       }
       if group.kind == .seed {
         guard group.accounts.count == 1, group.accounts[0].derivationIndex == 0,
-          group.nextDerivationIndex == 1
+          group.accounts[0].lifecycle == .active, group.nextDerivationIndex == 1,
+          group.seedIdentityAddress == group.accounts[0].address
         else {
           throw WalletRegistryError.invalidTransition
         }
@@ -556,10 +748,75 @@ public struct WalletRegistryStore: Sendable {
     }
   }
 
+  private static func migrateLegacyRegistry(_ registry: WalletRegistry) -> WalletRegistry {
+    var groups = registry.groups
+    for index in groups.indices {
+      groups[index].label = "Wallet \(index + 1)"
+      for accountIndex in groups[index].accounts.indices {
+        let derivationIndex = groups[index].accounts[accountIndex].derivationIndex
+        groups[index].accounts[accountIndex].label =
+          derivationIndex.map { "Account \($0 + 1)" } ?? "Account 1"
+        groups[index].accounts[accountIndex].lifecycle = .active
+      }
+    }
+    return WalletRegistry(
+      revision: registry.revision + 1,
+      adoptionState: registry.adoptionState,
+      groups: groups,
+      homeSelectedAddress: registry.homeSelectedAddress,
+      legacyWalletAddressFallbackRemoved: registry.legacyWalletAddressFallbackRemoved)
+  }
+
+  private static func sameAccounts(_ lhs: [WalletAccount], _ rhs: [WalletAccount]) -> Bool {
+    guard lhs.count == rhs.count else { return false }
+    return zip(lhs, rhs).allSatisfy { sameAccount($0.0, $0.1) }
+  }
+
+  private static func startsWithSameAccounts(
+    _ accounts: [WalletAccount], prefix: [WalletAccount]
+  ) -> Bool {
+    guard accounts.count >= prefix.count else { return false }
+    return zip(prefix, accounts).allSatisfy { sameAccount($0.0, $0.1) }
+  }
+
+  private static func sameAccount(_ lhs: WalletAccount, _ rhs: WalletAccount) -> Bool {
+    lhs.address == rhs.address && lhs.derivationIndex == rhs.derivationIndex
+      && lhs.createdAt == rhs.createdAt && lhs.lifecycle == rhs.lifecycle
+  }
+
+  private static func isAccountDeletionStart(
+    from current: [WalletAccount], to next: [WalletAccount]
+  ) -> Bool {
+    guard current.count == next.count else { return false }
+    var changed = 0
+    for (old, new) in zip(current, next) {
+      guard old.address == new.address, old.derivationIndex == new.derivationIndex,
+        old.createdAt == new.createdAt
+      else { return false }
+      if old.lifecycle != new.lifecycle {
+        guard old.lifecycle == .active, new.lifecycle == .deleting else { return false }
+        changed += 1
+      }
+    }
+    return changed == 1 && next.contains { $0.lifecycle == .active }
+  }
+
+  private static func isAccountDeletionFinish(
+    from current: [WalletAccount], to next: [WalletAccount]
+  ) -> Bool {
+    guard current.count == next.count + 1,
+      current.filter({ $0.lifecycle == .deleting }).count == 1
+    else { return false }
+    let retained = current.filter { $0.lifecycle != .deleting }
+    return sameAccounts(retained, next)
+  }
+
   private static func projection(for registry: WalletRegistry) throws -> WalletRegistryFileState {
     guard let home = registry.homeSelectedAddress else { return .absent }
     for group in registry.groups where group.lifecycle == .active {
-      guard group.accounts.contains(where: { $0.address == home }) else { continue }
+      guard group.accounts.contains(where: { $0.address == home && $0.lifecycle == .active }) else {
+        continue
+      }
       guard group.kind == .privateKey else { return .absent }
       guard let data = home.appending("\n").data(using: .utf8) else {
         throw WalletRegistryError.unavailable
