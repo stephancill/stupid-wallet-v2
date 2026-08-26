@@ -10,12 +10,20 @@ public enum WalletGroupManagerError: Error, Sendable, Equatable {
   case secureStorage
   case verificationFailed
   case derivationExhausted
+  case derivationIndexUnavailable
   case registryChanged
   case pendingRequestBusy
   case corruptState
   case invalidLabel
   case accountNotFound
   case lastSeedAccount
+}
+
+public struct DerivedAccountPreview: Sendable, Equatable, Identifiable {
+  public let derivationIndex: UInt32
+  public let address: String
+
+  public var id: UInt32 { derivationIndex }
 }
 
 /// Gate B wallet-group provisioning over the authoritative registry.
@@ -240,6 +248,24 @@ public struct WalletGroupManager: Sendable {
 
   @discardableResult
   public func deriveAccount(groupID: UUID) throws -> WalletAccount {
+    try deriveAccountsInternal(groupID: groupID, derivationIndexes: nil)[0]
+  }
+
+  @discardableResult
+  public func deriveAccount(groupID: UUID, derivationIndex: UInt32) throws -> WalletAccount {
+    try deriveAccountsInternal(groupID: groupID, derivationIndexes: [derivationIndex])[0]
+  }
+
+  public func deriveAccounts(groupID: UUID, derivationIndexes: [UInt32]) throws
+    -> [WalletAccount]
+  {
+    guard !derivationIndexes.isEmpty else { return [] }
+    return try deriveAccountsInternal(groupID: groupID, derivationIndexes: derivationIndexes)
+  }
+
+  private func deriveAccountsInternal(groupID: UUID, derivationIndexes: [UInt32]?) throws
+    -> [WalletAccount]
+  {
     try lifecycle.withClaim(groupID: groupID) {
       guard let initial = try registryStore.loadReady() else {
         throw WalletGroupManagerError.registryNotReady
@@ -248,10 +274,16 @@ public struct WalletGroupManager: Sendable {
         throw WalletGroupManagerError.groupNotFound
       }
       guard group.lifecycle == .active else { throw WalletGroupManagerError.groupNotActive }
-      guard group.kind == .seed, let requestedIndex = group.nextDerivationIndex else {
+      guard group.kind == .seed, let nextIndex = group.nextDerivationIndex else {
         throw WalletGroupManagerError.wrongGroupKind
       }
-      guard requestedIndex < 0x8000_0000 else {
+      let requestedIndexes = derivationIndexes.map { Array(Set($0)).sorted() } ?? [nextIndex]
+      guard requestedIndexes.count == (derivationIndexes?.count ?? 1),
+        requestedIndexes.allSatisfy({ $0 >= nextIndex })
+      else {
+        throw WalletGroupManagerError.derivationIndexUnavailable
+      }
+      guard requestedIndexes.allSatisfy({ $0 < 0x8000_0000 }) else {
         throw WalletGroupManagerError.derivationExhausted
       }
 
@@ -263,11 +295,30 @@ public struct WalletGroupManager: Sendable {
         throw WalletGroupManagerError.secureStorage
       }
       defer { entropy = [UInt8](repeating: 0, count: entropy.count) }
-      var derived = try EthereumSeedPhrase.derivePrivateKey(
-        entropy: entropy, index: requestedIndex)
-      defer { derived.privateKey = [UInt8](repeating: 0, count: derived.privateKey.count) }
-      let account = try EthereumKeypair.from(secret: derived.privateKey).address
-      try Self.verify(privateKey: derived.privateKey, expectedAccount: account)
+      var walletAccounts: [WalletAccount] = []
+      var derivedIndexes = Set<UInt32>()
+      var derivedAddresses = Set<String>()
+      for requestedIndex in requestedIndexes {
+        var derived = try EthereumSeedPhrase.derivePrivateKey(
+          entropy: entropy, index: requestedIndex)
+        defer { derived.privateKey = [UInt8](repeating: 0, count: derived.privateKey.count) }
+        guard derivedIndexes.insert(derived.derivationIndex).inserted else {
+          throw WalletGroupManagerError.derivationIndexUnavailable
+        }
+        guard walletAccounts.last?.derivationIndex.map({ $0 < derived.derivationIndex }) ?? true
+        else {
+          throw WalletGroupManagerError.derivationIndexUnavailable
+        }
+        let account = try EthereumKeypair.from(secret: derived.privateKey).address
+        try Self.verify(privateKey: derived.privateKey, expectedAccount: account)
+        guard derivedAddresses.insert(account.lowercased()).inserted else {
+          throw WalletGroupManagerError.duplicateAccount
+        }
+        walletAccounts.append(
+          WalletAccount(
+            address: account, derivationIndex: derived.derivationIndex, createdAt: Date(),
+            label: "Account \(derived.derivationIndex + 1)"))
+      }
 
       guard let current = try registryStore.loadReady(),
         let currentGroup = current.groups.first(where: { $0.id == groupID })
@@ -275,24 +326,24 @@ public struct WalletGroupManager: Sendable {
         throw WalletGroupManagerError.registryChanged
       }
       guard currentGroup.lifecycle == .active, currentGroup.kind == .seed,
-        currentGroup.nextDerivationIndex == requestedIndex
+        currentGroup.nextDerivationIndex == nextIndex
       else {
         throw WalletGroupManagerError.registryChanged
       }
-      guard !Self.contains(account: account, in: current) else {
+      guard walletAccounts.allSatisfy({ !Self.contains(account: $0.address, in: current) }) else {
         throw WalletGroupManagerError.duplicateAccount
       }
 
-      let walletAccount = WalletAccount(
-        address: account, derivationIndex: derived.derivationIndex, createdAt: Date(),
-        label: "Account \(derived.derivationIndex + 1)")
+      guard let lastDerivationIndex = walletAccounts.last?.derivationIndex else {
+        throw WalletGroupManagerError.derivationExhausted
+      }
       _ = try registryStore.update(expectedRevision: current.revision) { registry in
         var groups = registry.groups
         guard let index = groups.firstIndex(where: { $0.id == groupID }) else {
           throw WalletGroupManagerError.registryChanged
         }
-        groups[index].accounts.append(walletAccount)
-        groups[index].nextDerivationIndex = derived.derivationIndex + 1
+        groups[index].accounts.append(contentsOf: walletAccounts)
+        groups[index].nextDerivationIndex = lastDerivationIndex + 1
         return WalletRegistry(
           revision: registry.revision + 1,
           adoptionState: registry.adoptionState,
@@ -300,8 +351,55 @@ public struct WalletGroupManager: Sendable {
           homeSelectedAddress: registry.homeSelectedAddress,
           legacyWalletAddressFallbackRemoved: registry.legacyWalletAddressFallbackRemoved)
       }
-      return walletAccount
+      return walletAccounts
     }
+  }
+
+  public func previewNextAccounts(groupID: UUID, count: Int) throws -> [DerivedAccountPreview] {
+    guard count > 0 else { return [] }
+    guard let initial = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    guard let group = initial.groups.first(where: { $0.id == groupID }) else {
+      throw WalletGroupManagerError.groupNotFound
+    }
+    guard group.lifecycle == .active else { throw WalletGroupManagerError.groupNotActive }
+    guard group.kind == .seed, var requestedIndex = group.nextDerivationIndex else {
+      throw WalletGroupManagerError.wrongGroupKind
+    }
+    let registered = Set(group.accounts.compactMap(\.derivationIndex))
+
+    var entropy: [UInt8]
+    do {
+      entropy = try seedStore.load(
+        groupID: groupID, reason: "Unlock your wallet to preview accounts")
+    } catch {
+      throw WalletGroupManagerError.secureStorage
+    }
+    defer { entropy = [UInt8](repeating: 0, count: entropy.count) }
+
+    var previews: [DerivedAccountPreview] = []
+    while requestedIndex < 0x8000_0000, previews.count < count {
+      if registered.contains(requestedIndex) {
+        requestedIndex += 1
+        continue
+      }
+      var derived = try EthereumSeedPhrase.derivePrivateKey(
+        entropy: entropy, index: requestedIndex)
+      defer { derived.privateKey = [UInt8](repeating: 0, count: derived.privateKey.count) }
+      let address = try EthereumKeypair.from(secret: derived.privateKey).address
+      previews.append(
+        DerivedAccountPreview(derivationIndex: derived.derivationIndex, address: address))
+      requestedIndex = derived.derivationIndex + 1
+    }
+    guard !previews.isEmpty else { throw WalletGroupManagerError.derivationExhausted }
+
+    guard let current = try registryStore.loadReady(),
+      let currentGroup = current.groups.first(where: { $0.id == groupID }),
+      currentGroup.lifecycle == .active, currentGroup.kind == .seed,
+      currentGroup.nextDerivationIndex == group.nextDerivationIndex
+    else { throw WalletGroupManagerError.registryChanged }
+    return previews
   }
 
   /// Selects containing-app state only. Connection defaults, grants, and active accounts

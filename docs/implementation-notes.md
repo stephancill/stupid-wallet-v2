@@ -50,6 +50,274 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Initial Wallet-State Loading Gate
+
+### Summary
+
+- Added an explicit initial-state loading flag to `WalletViewModel` and gated the containing app's
+  root content and account toolbar on it.
+- The app now renders a neutral loading indicator while registry adoption resolves, then chooses the
+  wallet or setup surface from authoritative loaded state instead of treating default empty values as
+  a real no-wallet result.
+- Added the startup-state boundary to the project debugging skill.
+
+### Why
+
+- The asynchronous adoption task previously began after `ContentView` had already rendered, so an
+  installed wallet briefly showed the create/import setup screen on every cold launch.
+
+### Verification
+
+- `swift test` passed all 297 tests across 34 suites.
+- `stupid-app build` completed successfully, and `stupid-app run --simulator` rebuilt, installed, and
+  launched the app on the preferred iOS simulator.
+- Terminated and cold-launched the installed app, then inspected the Simulator accessibility state.
+  The first observed app state contained the restored wallet controls and no create/import setup
+  content.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-26 - Seed Import Account Selection Handoff
+
+### Summary
+
+- Changed wallet import to return the newly registered wallet group to the UI.
+- A successful recovery-phrase import now pushes the existing Add Accounts discovery screen for that
+  seed group instead of immediately returning to Accounts. Finishing or backing out of discovery then
+  closes the import flow.
+- Deferred the containing-app view-model reload for seed imports until discovery exits, preventing an
+  initial wallet import from replacing its own navigation stack before the selector appears. The
+  protected source and registry group remain durably committed during the selector step.
+- Kept private-key imports on the immediate completion path because they expose exactly one account.
+
+### Why
+
+- Seed import should include account discovery in one continuous flow so users can select all known
+  derived accounts before returning to the wallet-group list.
+
+### Verification
+
+- `swift test` passed all 297 tests in 34 suites, `stupid-app build` succeeded, and
+  `git diff --check` passed.
+- No additional seed wallet was created solely for simulator verification, avoiding leftover protected
+  test material; the final build was reinstalled and launched on the preferred simulator.
+
+### Follow-Up
+
+- Exercise the complete import-to-selection transition during the next intentional seed import on a
+  simulator or physical device.
+
+## 2026-08-26 - Account Navigation Visual Consistency
+
+### Summary
+
+- Updated the home account-menu switcher row to use the shared squircle `BlockieView`, with the muted
+  shortened address beneath the account label.
+- Added the native trailing disclosure chevron to Add Account while retaining its blue additive tint
+  and long-press Add Next Account shortcut.
+- Applied the same blue tint to Create New Wallet and Import Wallet navigation labels.
+- Renamed More to Load More and removed its inset-grouped pill background so it reads as a standalone
+  pagination action. The action now sits directly beneath the final account row and is replaced by a
+  centered spinner while another page is loading.
+
+### Why
+
+- Account identity and navigation actions should use one consistent visual language and clearly
+  distinguish navigation from immediate actions.
+
+### Verification
+
+- `swift test` passed all 297 tests in 34 suites, and `git diff --check` passed.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid <clean-simulator>` rebuilt,
+  installed, and launched the app.
+- Live simulator inspection confirmed the squircle blockie and two-line account-menu identity row,
+  Add Account disclosure chevrons, blue Add Wallet navigation labels, and standalone Load More action
+  without a pill background.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-26 - Multi-Select Account Discovery
+
+### Summary
+
+- Inverted the seed-group Add Account interaction: a normal tap now navigates to an Add Accounts
+  screen, while long press is the shortcut for immediately adding the monotonic next account.
+- The discovery screen authenticated-loads ten blockie, default-label, and shortened-address previews,
+  supports multiple selection, and uses More to load ten additional previews without clearing the
+  current selection. It does not expose raw derivation paths.
+- Added bulk derivation under one group claim and one authenticated seed read. Every selected child is
+  sign-and-recover verified and the ascending selection is appended in one registry revision. The
+  high-water mark advances past the highest selection, and the UI warns when lower unselected previews
+  will be skipped.
+- Expanded registry transition validation to accept a non-empty, strictly increasing batch of active
+  derived accounts while preserving the existing monotonic and no-index-reuse constraints.
+
+### Why
+
+- Account discovery is easier to scan and extend on a full mobile screen, and multi-selection avoids
+  repeating the import flow for several known accounts. Long press remains a fast path for the common
+  next-account action.
+
+### Verification
+
+- The focused `WalletGroupManagerTests` suite passed all 17 tests. Its new regression derives indexes
+  1, 3, and 5 with one protected seed load and one registry revision, verifies ascending labels and
+  high-water advancement, and rejects duplicate selections.
+- `swift test` passed all 297 tests in 34 suites. The first complete run hit a transient existing
+  SQLite `database is locked` failure in one activity migration test; the complete ActivityStore suite
+  and the subsequent full run both passed.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid <clean-simulator>` rebuilt,
+  installed, and launched the app.
+- Live simulator inspection confirmed that tap navigates to ten blockie/address rows, selecting two
+  rows updates the toolbar to Add 2, More exposes the next ten rows without clearing selection, and the
+  Add Next Account accessibility shortcut adds exactly the current next account. The multi-selection
+  confirmation was not invoked, so the simulator wallet was changed only by that single shortcut.
+
+### Follow-Up
+
+- Physical-device acceptance remains required for LocalAuthentication behavior.
+
+## 2026-08-26 - Long-Press Account Preview Menu
+
+### Summary
+
+- Added a long-press account chooser to each seed wallet group's Add Account row. After fresh native
+  authentication, it shows the next five available accounts as blockies and shortened addresses,
+  excludes indexes already registered in the group, and does not expose raw derivation paths.
+- Preview generation derives only the public addresses needed for the transient menu, zeroizes each
+  temporary child key and the loaded entropy, and persists neither previews nor extended public keys.
+- Added explicit-index derivation to `WalletGroupManager` under the existing group lifecycle claim,
+  authenticated entropy load, sign-and-recover proof, and atomic registry update.
+- Kept a normal Add Account tap on the current monotonic next index. Selecting a preview performs a
+  separate authenticated derivation and advances beyond it; stale or lower selections fail rather
+  than reusing skipped or deleted indexes.
+
+### Why
+
+- Users need to recognize the account they want by its familiar visual identity and address without
+  interpreting a raw derivation path or weakening the registry's monotonic allocation, concurrency,
+  or protected-secret boundaries.
+
+### Verification
+
+- The focused explicit-derivation regression passed, proving candidate exclusion, selection of a
+  future index, label assignment, monotonic advancement, and rejection of a stale lower index.
+- `swift test` passed all 296 tests in 34 suites. `swift format lint --recursive Sources Tests`
+  reported only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`, and
+  `git diff --check` passed.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid <clean-simulator>` rebuilt,
+  installed, and launched the app.
+- A real held touch on a seed group's Add Account row completed the simulator's protected seed read
+  and opened a popover with exactly five distinct blockies and shortened addresses. The accessibility
+  tree retained each full address and exposed no derivation paths. The live group already contained
+  indexes 0, 1, and 2, so the previews represented the next five available accounts. The popover was
+  dismissed without selecting a preview or changing wallet state.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-26 - Native Import Wallet Form
+
+### Summary
+
+- Replaced Import Wallet's centered lowercase hero layout and custom gray input surface with the
+  native inset-grouped list structure used by Accounts, Settings, and wallet backup.
+- Split wallet-group label and secret input into labeled sections, added accepted-format guidance, renamed
+  the action from `Save` to `Import Wallet`, and added an inline importing progress state.
+- Kept the recovery phrase/private key visible for user review while marking it privacy-sensitive and
+  retaining disabled capitalization and autocorrection.
+
+### Why
+
+- Wallet import should use the app's established native hierarchy and controls while making required
+  input formats easier to understand on mobile.
+
+### Verification
+
+- `swift test` passed all 295 tests in 34 suites. `swift format lint --recursive Sources Tests`
+  reported only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`, and
+  `git diff --check` passed.
+- The first `stupid-app build` exposed an iOS-only SwiftUI section-initializer mismatch that the
+  macOS package-test build cannot compile. Converting the titled sections to explicit
+  content/header/footer initializers fixed it; this boundary is now recorded in the project debugging
+  skill.
+- `stupid-app build` then succeeded, and
+  `stupid-app run --simulator --udid <clean-simulator>` rebuilt, installed, and launched the app.
+- Live simulator inspection confirmed the form uses title-case inline navigation, native grouped
+  sections, readable field sizing and guidance, and a standard disabled Import Wallet row without
+  clipping at the default phone size.
+- Renamed the first field from Wallet Name to Wallet Group Label, including its placeholder and
+  guidance, to match the registry terminology; live simulator inspection confirmed all three strings
+  render without clipping at the default phone size.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-26 - Selected Account Settings Header
+
+### Summary
+
+- Added a display-only selected-account identity row at the top of Settings, with a 52-point blockie,
+  editable account label, and muted shortened address.
+- Kept navigation and destructive account management out of the header so Accounts remains the only
+  account-selection and removal surface.
+
+### Why
+
+- The selected account should remain clear while viewing account-scoped settings, using the familiar
+  identity hierarchy of the Apple Settings account row.
+
+### Verification
+
+- `swift test` passed all 295 tests in 34 suites. `swift format lint --recursive Sources Tests`
+  reported only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`, and
+  `git diff --check` passed.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid <clean-simulator>` rebuilt,
+  installed, and launched the app.
+- Live simulator inspection confirmed the selected account appears in a separate top Settings card
+  with its large rounded blockie, label, muted shortened address, and a combined accessibility value
+  containing the full address. The ordinary settings links remain in the section below.
+
+### Follow-Up
+
+- None.
+
+## 2026-08-26 - Remove Settings Forget Account Action
+
+### Summary
+
+- Removed the separate destructive `Forget Account` / `Forget Wallet` section and its confirmation
+  state from Settings.
+- Kept account and wallet removal in the Accounts screen's edit-mode flow, which retains its scoped
+  confirmation and recoverable deletion behavior.
+
+### Why
+
+- Destructive account management should have one clear entry point in the Accounts screen instead of
+  a second button tied only to the currently selected home account.
+
+### Verification
+
+- `swift test` passed all 295 tests in 34 suites after one timing-sensitive expiry test transiently
+  returned `unavailable`; that test passed in isolation and the complete rerun passed.
+- `swift format lint --recursive Sources Tests` reported only the three pre-existing block-comment
+  warnings in `SecurityWalletBackend.swift`; `git diff --check` passed.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid <clean-simulator>` rebuilt,
+  installed, and launched the app.
+- Live simulator inspection confirmed Settings contains only Networks, Authorizations, and Private
+  Key, with no Forget Account/Wallet section.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-26 - Safari Account Picker Labels And Avatar Spacing
 
 ### Summary

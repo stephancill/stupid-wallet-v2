@@ -17,35 +17,38 @@ generic error text and do not bypass the canonical approval protocol.
 3. Load the `ios-simulator-skill`; load `simulator-ocr` for Safari web content and extension
    popups because their useful elements are often absent from the accessibility tree.
 4. Load `stupid-app-cli` before building, installing, or launching.
-5. Preserve unrelated worktree changes. Never edit App Group records to force progress.
-6. If the simulator skill's live `log_monitor.py` does not terminate at its requested
+5. `swift test` runs against macOS and does not compile views guarded by `#if os(iOS)`. After every
+   iOS-only SwiftUI change, run `stupid-app build` before treating package-test compilation as proof;
+   the iOS SDK can expose SwiftUI overload or availability errors that the test build never sees.
+6. Preserve unrelated worktree changes. Never edit App Group records to force progress.
+7. If the simulator skill's live `log_monitor.py` does not terminate at its requested
    duration, stop it rather than waiting indefinitely. Continue with bounded `simctl`,
    App Group inspection, and RPC checks; a log-stream helper hang is not evidence that the
    app hung.
-7. On Apple Silicon Mac, a copied compatibility wrapper plus LaunchServices registration can
+8. On Apple Silicon Mac, a copied compatibility wrapper plus LaunchServices registration can
    launch the containing iOS app without creating the MobileInstallation/PlugInKit records Safari
    needs for its nested extension. Xcode's `IDEInstallService` uses private InstallCoordination and
    `InstallLocalProvisioned` entitlements; a non-Apple CLI is rejected before installation. Treat a
    Safari `0xe8008015`/`No matching profile found` after an otherwise valid direct wrapper install as
    an installation-boundary failure, not another prompt to mutate signatures or profiles. Verify
    extension-bearing builds through Xcode or TestFlight.
-8. On a USB iPhone, use `idevicesyslog --udid <udid> --process StupidWalletSafari` for bounded
+9. On a USB iPhone, use `idevicesyslog --udid <udid> --process StupidWalletSafari` for bounded
    extension authentication diagnosis. A `LocalAuthentication evaluateAccessControl` immediately
    around registry readiness checks means a supposedly metadata-only keychain probe touched a
    protected item. `SecItemCopyMatching` can authenticate even with `kSecReturnData=false`; bind an
    `LAContext` with `interactionNotAllowed=true` and treat `errSecInteractionNotAllowed` as evidence
    that the exact protected item exists.
-9. Never hold or deliberately pause a containing app on an App Group `flock` while backgrounding it
+10. Never hold or deliberately pause a containing app on an App Group `flock` while backgrounding it
    to Safari. RunningBoard terminates that process with `0xDEAD10CC` because suspended apps may not
    retain shared-container file locks. An extension proceeding only after that kill proves exclusion,
    but it does not prove a safe production coordination boundary.
-10. Use the stable App Group claim URL with synchronous `NSFileCoordinator` for registry adoption.
+11. Use the stable App Group claim URL with synchronous `NSFileCoordinator` for registry adoption.
     Device logs should show a `File Coordination Claim` RunningBoard assertion while the containing
     app accessor runs. A competing extension accessor may be canceled rather than visibly wait; verify
     it did not enter during the claim and that a fresh popup request enters after release. The popup's
     no-request state alone does not prove native success because its transport fallback can render an
     empty list.
-11. iPhone Mirroring can drive the containing app, Safari page menu, popup review, account selection,
+12. iPhone Mirroring can drive the containing app, Safari page menu, popup review, account selection,
     and decision buttons, but it does not satisfy the protected Face ID release. Complete Face ID on
     the physical phone. A mirrored `Confirming…` state, popup dismissal, or pending-record transition
     alone is not signing evidence; require the originating dapp to receive success (and independently
@@ -104,6 +107,11 @@ https://app.uniswap.org/swap?chain=base&inputCurrency=<token>&outputCurrency=NAT
   `UICollectionView _resignOrRebaseFirstResponderViewWithIndexPathMapping` in the crash report. Bind
   the editable fields to `FocusState`, clear focus, and allow that state transition to run before
   publishing list data or replacing the editable row/header hierarchy.
+- A containing app whose registry adoption starts asynchronously must distinguish “initial state not
+  loaded” from a successfully loaded empty registry. Default empty published values can otherwise
+  flash setup or no-wallet UI before the persisted home account arrives. Gate the root content and
+  account toolbar on an explicit initial-load completion flag; do not infer emptiness until adoption
+  returns.
 
 ### 2. Locate The Boundary
 

@@ -9,16 +9,29 @@ import SwiftUI
 #if os(iOS)
   struct SettingsView: View {
     let address: String
-    let groupKind: WalletGroupKind
-    let accountCount: Int
-    let forgetAccount: () async throws -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var isConfirmingForget = false
-    @State private var forgetError: String?
+    let accountName: String?
 
     var body: some View {
       NavigationView {
         List {
+          Section {
+            HStack(spacing: 14) {
+              BlockieView(seed: address.lowercased())
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .frame(width: 52, height: 52)
+              VStack(alignment: .leading, spacing: 3) {
+                Text(accountName ?? shortAddress)
+                  .font(.headline)
+                Text(shortAddress)
+                  .font(.subheadline)
+                  .foregroundStyle(.secondary)
+              }
+            }
+            .padding(.vertical, 6)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Selected account, \(accountName ?? shortAddress), \(address)")
+          }
+
           Section {
             NavigationLink(destination: NetworksView()) {
               Text("Networks")
@@ -30,60 +43,15 @@ import SwiftUI
               Text("Private Key")
             }
           }
-          Section {
-            Button(forgetLabel, role: .destructive) {
-              isConfirmingForget = true
-            }
-          }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-        .alert(
-          forgetTitle,
-          isPresented: $isConfirmingForget
-        ) {
-          Button(forgetLabel, role: .destructive) {
-            Task {
-              do {
-                try await forgetAccount()
-                dismiss()
-              } catch {
-                forgetError = "The account could not be forgotten. Please try again."
-              }
-            }
-          }
-          Button("Cancel", role: .cancel) {}
-        } message: {
-          Text(forgetMessage)
-        }
-        .alert("Could Not Forget Account", isPresented: errorIsPresented) {
-          Button("OK", role: .cancel) {}
-        } message: {
-          Text(forgetError ?? "")
-        }
       }
     }
 
-    private var errorIsPresented: Binding<Bool> {
-      Binding(
-        get: { forgetError != nil },
-        set: { if !$0 { forgetError = nil } }
-      )
-    }
-
-    private var forgetLabel: String { groupKind == .seed ? "Forget Wallet" : "Forget Account" }
-
-    private var forgetTitle: String {
-      groupKind == .seed ? "Forget this wallet?" : "Forget this account?"
-    }
-
-    private var forgetMessage: String {
-      if groupKind == .seed {
-        return
-          "This removes the seed and all \(accountCount) derived accounts from this device. Make sure you have a backup."
-      }
-      return "This removes the private key from this device. Make sure you have a backup."
+    private var shortAddress: String {
+      address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
     }
   }
 

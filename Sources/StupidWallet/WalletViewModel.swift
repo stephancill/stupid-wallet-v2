@@ -13,6 +13,7 @@ final class WalletViewModel: ObservableObject {
   @Published var chainID = ChainStore.defaultChainID
   @Published var includedNetworkCount = 0
   @Published var isSaving = false
+  @Published private(set) var isLoadingInitialState = true
   @Published var errorMessage: String?
 
   var hasWallet: Bool { !addressHex.isEmpty }
@@ -37,6 +38,7 @@ final class WalletViewModel: ObservableObject {
   /// continues to drive the visible account.
   @MainActor
   private func adoptAndLoad() async {
+    defer { isLoadingInitialState = false }
     stateGeneration += 1
     do {
       let result = try await WalletRegistryAdoption().ensureAdopted()
@@ -94,7 +96,7 @@ final class WalletViewModel: ObservableObject {
   }
 
   @discardableResult
-  func importWallet(input: String, groupName: String) async -> Bool {
+  func importWallet(input: String, groupName: String) async -> WalletGroup? {
     isSaving = true
     defer { isSaving = false }
     errorMessage = nil
@@ -111,8 +113,38 @@ final class WalletViewModel: ObservableObject {
       if shouldSelect {
         _ = try groupManager.selectHomeAccount(address: group.accounts[0].address)
       }
+      if group.kind == .privateKey {
+        await finishWalletImport()
+      }
+      return group
+    } catch {
+      let errorMessage = message(for: error)
       await adoptAndLoad()
-      await refreshBalance()
+      self.errorMessage = errorMessage
+      return nil
+    }
+  }
+
+  func finishWalletImport() async {
+    await adoptAndLoad()
+    await refreshBalance()
+  }
+
+  @discardableResult
+  func deriveAccount(groupID: UUID, derivationIndex: UInt32? = nil) async -> Bool {
+    isSaving = true
+    defer { isSaving = false }
+    errorMessage = nil
+    do {
+      let account: WalletAccount
+      if let derivationIndex {
+        account = try groupManager.deriveAccount(
+          groupID: groupID, derivationIndex: derivationIndex)
+      } else {
+        account = try groupManager.deriveAccount(groupID: groupID)
+      }
+      _ = account
+      await adoptAndLoad()
       return true
     } catch {
       let errorMessage = message(for: error)
@@ -122,14 +154,26 @@ final class WalletViewModel: ObservableObject {
     }
   }
 
-  @discardableResult
-  func deriveAccount(groupID: UUID) async -> Bool {
+  func previewNextAccounts(groupID: UUID, count: Int) async -> [DerivedAccountPreview]? {
     isSaving = true
     defer { isSaving = false }
     errorMessage = nil
     do {
-      let account = try groupManager.deriveAccount(groupID: groupID)
-      _ = account
+      return try groupManager.previewNextAccounts(groupID: groupID, count: count)
+    } catch {
+      errorMessage = message(for: error)
+      return nil
+    }
+  }
+
+  @discardableResult
+  func deriveAccounts(groupID: UUID, derivationIndexes: [UInt32]) async -> Bool {
+    isSaving = true
+    defer { isSaving = false }
+    errorMessage = nil
+    do {
+      _ = try groupManager.deriveAccounts(
+        groupID: groupID, derivationIndexes: derivationIndexes)
       await adoptAndLoad()
       return true
     } catch {
@@ -307,6 +351,8 @@ final class WalletViewModel: ObservableObject {
       return "Only seed wallets can add another account."
     case WalletGroupManagerError.registryChanged:
       return "Wallet state changed. Please try again."
+    case WalletGroupManagerError.derivationIndexUnavailable:
+      return "That derivation index is no longer available. Choose a current index and try again."
     case WalletGroupManagerError.invalidLabel:
       return "Enter a name for every wallet and account."
     case WalletGroupManagerError.lastSeedAccount:

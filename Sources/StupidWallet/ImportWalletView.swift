@@ -1,3 +1,4 @@
+import StupidWalletCore
 import SwiftUI
 
 #if os(iOS)
@@ -7,7 +8,7 @@ import SwiftUI
     @Environment(\.dismiss) private var dismiss
     @State private var inputText = ""
     @State private var groupName = ""
-    @FocusState private var isInputFocused: Bool
+    @State private var importedSeedGroupID: UUID?
 
     private var isValid: Bool {
       let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -20,65 +21,87 @@ import SwiftUI
     }
 
     var body: some View {
-      VStack(spacing: 32) {
-        Spacer()
-        VStack(spacing: 24) {
-          Text("import wallet")
-            .font(.largeTitle)
-            .fontWeight(.bold)
-          TextField("wallet name", text: $groupName)
-            .textFieldStyle(.roundedBorder)
-            .multilineTextAlignment(.center)
-          TextField("enter private key or seed phrase", text: $inputText, axis: .vertical)
+      List {
+        Section {
+          TextField("Wallet group label", text: $groupName)
+            .textInputAutocapitalization(.words)
+        } header: {
+          Text("Wallet Group Label")
+        } footer: {
+          Text("Use a label that helps you recognize this wallet group.")
+        }
+
+        Section {
+          TextField("Enter recovery phrase or private key", text: $inputText, axis: .vertical)
             .textInputAutocapitalization(.never)
             .disableAutocorrection(true)
-            .font(.system(.body, design: .monospaced))
-            .multilineTextAlignment(.center)
-            .lineLimit(5...10)
-            .frame(height: 120)
-            .padding(12)
-            .background(Color.secondary.opacity(0.2))
-            .cornerRadius(12)
-            .focused($isInputFocused)
+            .lineLimit(4...8)
+            .frame(minHeight: 96, alignment: .topLeading)
+            .privacySensitive()
+        } header: {
+          Text("Recovery Phrase or Private Key")
+        } footer: {
+          Text(
+            "Enter a 12, 15, 18, 21, or 24-word recovery phrase, or a 64-character private key."
+          )
+        }
 
+        Section {
           Button {
             Task {
-              if await vm.importWallet(input: inputText, groupName: groupName) {
-                inputText = ""
-                groupName = ""
+              guard let group = await vm.importWallet(input: inputText, groupName: groupName) else {
+                return
+              }
+              inputText = ""
+              groupName = ""
+              if group.kind == .seed {
+                importedSeedGroupID = group.id
+              } else {
                 onSuccess()
                 dismiss()
               }
             }
           } label: {
-            HStack {
+            HStack(spacing: 8) {
               if vm.isSaving {
-                ProgressView().tint(.white)
-              } else {
-                Text("Save").font(.headline)
+                ProgressView()
               }
+              Text(vm.isSaving ? "Importing…" : "Import Wallet")
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
           }
-          .buttonStyle(.borderedProminent)
           .disabled(!isValid || vm.isSaving)
+        }
 
-          if let error = vm.errorMessage, !error.isEmpty {
+        if let error = vm.errorMessage, !error.isEmpty {
+          Section {
             Text(error)
               .foregroundStyle(.red)
-              .font(.footnote)
-              .multilineTextAlignment(.center)
           }
         }
-        .padding(.horizontal, 32)
-        Spacer()
-        Spacer()
       }
+      .listStyle(.insetGrouped)
+      .navigationTitle("Import Wallet")
       .navigationBarTitleDisplayMode(.inline)
-      .contentShape(Rectangle())
+      .scrollDismissesKeyboard(.interactively)
       .onAppear { vm.errorMessage = nil }
-      .onTapGesture { isInputFocused = false }
+      .navigationDestination(
+        isPresented: Binding(
+          get: { importedSeedGroupID != nil },
+          set: { isPresented in
+            guard !isPresented, importedSeedGroupID != nil else { return }
+            importedSeedGroupID = nil
+            Task {
+              await vm.finishWalletImport()
+              onSuccess()
+              dismiss()
+            }
+          })
+      ) {
+        if let groupID = importedSeedGroupID {
+          AccountDiscoveryView(vm: vm, groupID: groupID)
+        }
+      }
     }
   }
 #endif

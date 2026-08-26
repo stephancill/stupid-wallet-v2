@@ -43,6 +43,61 @@ struct WalletGroupManagerTests {
     #expect(environment.seeds.savedGroupIDs == [group.id])
   }
 
+  @Test("explicit derivation candidates exclude registered indexes and advance monotonically")
+  func derivesSelectedFutureAccount() throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+
+    let beforePreview = try #require(try environment.registry.loadReady())
+    let previews = try environment.manager.previewNextAccounts(groupID: group.id, count: 5)
+    #expect(previews.map(\.derivationIndex) == [1, 2, 3, 4, 5])
+    #expect(Set(group.accounts.compactMap(\.derivationIndex)).isDisjoint(with: previews.map(\.id)))
+    #expect(previews[0].address == "0x70997970C51812dc3A010C7d01b50e0d17dc79C8")
+    #expect(try environment.registry.loadReady() == beforePreview)
+
+    let account = try environment.manager.deriveAccount(groupID: group.id, derivationIndex: 4)
+    let updated = try #require(
+      try environment.registry.loadReady()?.groups.first { $0.id == group.id })
+
+    #expect(account.derivationIndex == 4)
+    #expect(account.label == "Account 5")
+    #expect(updated.accounts.compactMap(\.derivationIndex) == [0, 4])
+    #expect(updated.nextDerivationIndex == 5)
+    #expect(
+      try environment.manager.previewNextAccounts(groupID: group.id, count: 5).map(
+        \.derivationIndex)
+        == [5, 6, 7, 8, 9])
+    #expect(throws: WalletGroupManagerError.derivationIndexUnavailable) {
+      try environment.manager.deriveAccount(groupID: group.id, derivationIndex: 2)
+    }
+  }
+
+  @Test("selected accounts derive under one authenticated atomic update")
+  func derivesSelectedAccountsTogether() throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+    let revision = try #require(try environment.registry.loadReady()).revision
+    let loadCount = environment.seeds.loadCount(groupID: group.id)
+
+    let accounts = try environment.manager.deriveAccounts(
+      groupID: group.id, derivationIndexes: [5, 1, 3])
+    let registry = try #require(try environment.registry.loadReady())
+    let updated = try #require(registry.groups.first { $0.id == group.id })
+
+    #expect(accounts.compactMap(\.derivationIndex) == [1, 3, 5])
+    #expect(accounts.map(\.label) == ["Account 2", "Account 4", "Account 6"])
+    #expect(updated.accounts.compactMap(\.derivationIndex) == [0, 1, 3, 5])
+    #expect(updated.nextDerivationIndex == 6)
+    #expect(registry.revision == revision + 1)
+    #expect(environment.seeds.loadCount(groupID: group.id) == loadCount + 1)
+
+    #expect(throws: WalletGroupManagerError.derivationIndexUnavailable) {
+      try environment.manager.deriveAccounts(groupID: group.id, derivationIndexes: [6, 6])
+    }
+  }
+
   @Test("concurrent derivations allocate distinct monotonic indexes")
   func concurrentDerivations() async throws {
     let environment = try Environment()

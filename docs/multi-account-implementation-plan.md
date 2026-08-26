@@ -621,14 +621,22 @@ to two groups.
 1. Acquire the group lifecycle claim.
 2. Validate that the group is seed-backed and active.
 3. Capture its monotonic `nextDerivationIndex` below `2^31`.
+   A normal Add Account tap opens an authenticated discovery screen with ten public-address previews;
+   Load More loads ten additional previews and the user may select several. Preview generation persists
+   neither secrets nor extended public keys and zeroizes temporary child keys and entropy. Confirming
+   a selection authenticated-loads the seed once, verifies every selected child, and appends the
+   ascending selection in one atomic revision. The high-water mark advances past the highest selected
+   child, permanently skipping unselected lower paths so indexes remain monotonic and are never
+   reused. Long-pressing Add Account is the shortcut for deriving only the current next index.
 4. Authenticated-load the protected entropy.
 5. Derive the child, address, and sign-and-recover proof.
 6. Handle invalid BIP-32 children without claiming the wrong path; persist the actual next attempted
    index if the derivation policy skips one.
 7. Reject any address collision.
-8. Atomically append the account and advance `nextDerivationIndex`.
-9. Give the account the default label `Account {actualDerivationIndex + 1}` and keep the Accounts
-   sheet open. Home selection changes only if the user subsequently selects it.
+8. Atomically append the account or ascending selected account set and advance
+   `nextDerivationIndex` past the highest derived child.
+9. Give each account the default label `Account {actualDerivationIndex + 1}` and keep the Accounts
+   sheet open. Home selection changes only if the user subsequently selects an account.
 10. Clear every transient secret buffer and release the claim.
 
 Concurrent derive operations must never allocate the same index.
@@ -742,13 +750,20 @@ view rather than the current immediate random-private-key button. Every additive
 a wallet-group name field. On success it pops back to the root Accounts list rather than dismissing
 the outer sheet; the new account is visible there but is not implicitly home-selected.
 
+The import surface uses the same inset-grouped native form hierarchy as the account picker, Settings,
+and seed backup: title-case navigation, separate wallet-group-label and recovery-phrase/private-key sections,
+accepted-format guidance, a full-row import action, and section-scoped errors.
+Successful seed-phrase import pushes the new group's Add Accounts discovery screen before returning to
+Accounts. Private-key import completes immediately because that group has no derivable account list.
+
 Account-bound navigation must use an account snapshot or stable address identity. Switching home
 accounts dismisses or reconstructs Settings, Private Key, Activity, and Connected Apps so an already
 open destination cannot reveal or mutate the wrong account.
 
-Settings presents `Forget Wallet` for a seed group and explains that its seed and every derived
-account will be removed. A private-key group may retain `Forget Account` wording because the group has
-exactly one account.
+Settings begins with a display-only identity row for the selected account, using its blockie, editable
+label, and muted shortened address. It does not present a separate `Forget Wallet` or `Forget Account`
+action. Destructive removal is available only from the Accounts screen's edit mode, where the
+confirmation explains whether one account or its complete protected wallet source will be removed.
 
 ## Account-Scoped Activity and Connected Apps
 

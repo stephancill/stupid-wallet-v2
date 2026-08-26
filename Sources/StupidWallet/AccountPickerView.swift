@@ -1,6 +1,10 @@
 import StupidWalletCore
 import SwiftUI
 
+#if canImport(UIKit)
+  import UIKit
+#endif
+
 #if os(iOS)
   struct AccountPickerView: View {
     @ObservedObject var vm: WalletViewModel
@@ -66,10 +70,7 @@ import SwiftUI
               .deleteDisabled(vm.isSaving)
 
               if group.kind == .seed && !isEditing {
-                Button("Add Account", systemImage: "plus") {
-                  Task { _ = await vm.deriveAccount(groupID: group.id) }
-                }
-                .disabled(vm.isSaving)
+                AddAccountRow(vm: vm, groupID: group.id)
               }
             } header: {
               if isEditing {
@@ -89,11 +90,17 @@ import SwiftUI
 
           if !isEditing {
             Section("Add Wallet") {
-              NavigationLink("Create New Wallet") {
+              NavigationLink {
                 SeedBackupView(vm: vm)
+              } label: {
+                Text("Create New Wallet")
+                  .foregroundStyle(.tint)
               }
-              NavigationLink("Import Wallet") {
+              NavigationLink {
                 ImportWalletView(vm: vm)
+              } label: {
+                Text("Import Wallet")
+                  .foregroundStyle(.tint)
               }
             }
           }
@@ -230,6 +237,181 @@ import SwiftUI
     private enum LabelField: Hashable {
       case group(UUID)
       case account(String)
+    }
+  }
+
+  private struct AddAccountRow: View {
+    @ObservedObject var vm: WalletViewModel
+    let groupID: UUID
+    @State private var showsAccountBrowser = false
+
+    var body: some View {
+      HStack {
+        Label("Add Account", systemImage: "plus")
+          .foregroundStyle(vm.isSaving ? Color.secondary : Color.accentColor)
+        Spacer()
+        Image(systemName: "chevron.right")
+          .font(.footnote.weight(.semibold))
+          .foregroundStyle(.tertiary)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+      .gesture(
+        LongPressGesture(minimumDuration: 0.5)
+          .exclusively(before: TapGesture())
+          .onEnded { value in
+            guard !vm.isSaving else { return }
+            switch value {
+            case .first(true):
+              addNextAccount()
+            case .second:
+              showsAccountBrowser = true
+            default:
+              break
+            }
+          }
+      )
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("Add Account")
+      .accessibilityAddTraits(.isButton)
+      .accessibilityAction { showsAccountBrowser = true }
+      .accessibilityAction(named: "Add Next Account") { addNextAccount() }
+      .navigationDestination(isPresented: $showsAccountBrowser) {
+        AccountDiscoveryView(vm: vm, groupID: groupID)
+      }
+    }
+
+    private func addNextAccount() {
+      Task { _ = await vm.deriveAccount(groupID: groupID) }
+    }
+  }
+
+  struct AccountDiscoveryView: View {
+    @ObservedObject var vm: WalletViewModel
+    let groupID: UUID
+    @Environment(\.dismiss) private var dismiss
+    @State private var previews: [DerivedAccountPreview] = []
+    @State private var selectedIndexes = Set<UInt32>()
+    @State private var isLoading = false
+
+    var body: some View {
+      List {
+        Section {
+          ForEach(previews) { preview in
+            Button {
+              if selectedIndexes.contains(preview.derivationIndex) {
+                selectedIndexes.remove(preview.derivationIndex)
+              } else {
+                selectedIndexes.insert(preview.derivationIndex)
+              }
+            } label: {
+              HStack(spacing: 12) {
+                Image(uiImage: BlockieView.image(seed: preview.address.lowercased()))
+                  .resizable()
+                  .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                  .frame(width: 40, height: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                  Text("Account \(preview.derivationIndex + 1)")
+                    .foregroundStyle(.primary)
+                  Text(shortAddress(preview.address))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if selectedIndexes.contains(preview.derivationIndex) {
+                  Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                } else {
+                  Image(systemName: "circle")
+                    .font(.title3)
+                    .foregroundStyle(.tertiary)
+                }
+              }
+              .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.isSaving)
+            .accessibilityLabel(
+              "Account \(preview.derivationIndex + 1), \(preview.address)"
+            )
+            .accessibilityValue(
+              selectedIndexes.contains(preview.derivationIndex) ? "Selected" : "Not selected")
+          }
+        } footer: {
+          VStack(spacing: 8) {
+            if skipsAccounts {
+              Text("Unselected accounts below the highest selection will be skipped.")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if isLoading {
+              ProgressView()
+                .frame(maxWidth: .infinity)
+            } else {
+              Button("Load More") {
+                loadMore()
+              }
+              .buttonStyle(.plain)
+              .font(.body)
+              .foregroundStyle(.tint)
+              .frame(maxWidth: .infinity)
+              .disabled(vm.isSaving)
+            }
+          }
+          .padding(.top, 6)
+          .textCase(nil)
+        }
+
+        if let error = vm.errorMessage {
+          Section {
+            Text(error).foregroundStyle(.red)
+          }
+        }
+      }
+      .navigationTitle("Add Accounts")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button(selectedIndexes.count > 1 ? "Add \(selectedIndexes.count)" : "Add") {
+            let indexes = selectedIndexes.sorted()
+            Task {
+              if await vm.deriveAccounts(groupID: groupID, derivationIndexes: indexes) {
+                dismiss()
+              }
+            }
+          }
+          .disabled(selectedIndexes.isEmpty || vm.isSaving)
+        }
+      }
+      .task {
+        if previews.isEmpty { loadMore() }
+      }
+    }
+
+    private func loadMore() {
+      isLoading = true
+      Task {
+        defer { isLoading = false }
+        guard
+          let values = await vm.previewNextAccounts(
+            groupID: groupID, count: previews.count + 10)
+        else { return }
+        previews = values
+      }
+    }
+
+    private var skipsAccounts: Bool {
+      guard let firstIndex = previews.first?.derivationIndex,
+        let lastSelectedIndex = selectedIndexes.max()
+      else { return false }
+      return previews.contains {
+        $0.derivationIndex >= firstIndex && $0.derivationIndex < lastSelectedIndex
+          && !selectedIndexes.contains($0.derivationIndex)
+      }
+    }
+
+    private func shortAddress(_ address: String) -> String {
+      address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
     }
   }
 #endif

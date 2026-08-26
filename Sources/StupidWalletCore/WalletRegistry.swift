@@ -713,14 +713,18 @@ public struct WalletRegistryStore: Sendable {
         }
 
         let addedAccounts = updated.accounts.dropFirst(group.accounts.count)
+        let addedIndexes = addedAccounts.compactMap(\.derivationIndex)
         guard Self.startsWithSameAccounts(updated.accounts, prefix: group.accounts),
-          addedAccounts.count == 1,
+          !addedAccounts.isEmpty, addedIndexes.count == addedAccounts.count,
           let currentIndex = group.nextDerivationIndex,
           let nextIndex = updated.nextDerivationIndex,
-          let addedIndex = addedAccounts.first?.derivationIndex,
-          addedAccounts.first?.lifecycle == .active,
-          addedIndex >= currentIndex, addedIndex < WalletRegistry.derivationIndexLimit,
-          nextIndex == addedIndex + 1
+          let firstAddedIndex = addedIndexes.first,
+          let lastAddedIndex = addedIndexes.last,
+          addedAccounts.allSatisfy({ $0.lifecycle == .active }),
+          firstAddedIndex >= currentIndex,
+          addedIndexes.allSatisfy({ $0 < WalletRegistry.derivationIndexLimit }),
+          zip(addedIndexes, addedIndexes.dropFirst()).allSatisfy({ $0.0 < $0.1 }),
+          nextIndex == lastAddedIndex + 1
         else {
           throw WalletRegistryError.invalidTransition
         }

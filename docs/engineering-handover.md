@@ -56,8 +56,9 @@ activity backfill. New pending requests carry the approved account-inclusive bin
 required monotonic revision; unsupported bindings are omitted from review/status and cannot be
 approved or rejected. The barrier is wired into the request entries: the Safari handler and the containing-app
 view model run `ensureAdopted()` before handling, and the
-`WalletService` used by the extension is registry-gated and fails closed while `.migrating`. The containing app publishes
-no wallet state until adoption succeeds and reads the validated registry home; the Safari extension
+`WalletService` used by the extension is registry-gated and fails closed while `.migrating`. The containing app gates
+its root content and account toolbar behind an explicit initial-load state, then publishes wallet or
+setup state only after adoption succeeds and reads the validated registry home; the Safari extension
 also constructs its singleton signer from that registry rather than the removed UserDefaults
 fallback. Gate C is hermetically complete. `ConnectedSitesStore` now uses `connection-state.json` as
 its runtime authority and resolves account visibility under registry-then-connection locking. It
@@ -345,14 +346,45 @@ and timestamp share one Signature section rather than splitting verification met
 second section. Activity list and detail content uses regular system typography throughout;
 hashes, addresses, signatures, and typed-data hex values are not monospaced.
 
-Settings also includes a separate destructive Forget Account section. Its modal confirmation
-alert warns that the protected source will be removed and requires an explicit destructive choice.
-Confirming resolves the home account's registry group and runs the recoverable group-deletion
-lifecycle, which terminalizes matching pending requests, removes the exact protected source,
-account caches, migration material, and only that group's grants/active mappings, then repairs home
-and connection defaults. It dismisses Settings and reloads the surviving home account or returns to
-setup. Secret-deletion and registry failures do not silently clear visible authority. Activity and
+Settings begins with an Apple Settings-style identity row for the currently selected account: a large
+blockie, editable account label, and muted shortened address. Account removal is available only from
+the Accounts screen's edit-mode removal flow. The separate
+destructive Forget Account/Wallet section and confirmation are no longer shown in Settings. The
+Accounts removal confirmation warns when the protected source will be removed and requires an
+explicit destructive choice. Confirming group removal runs the recoverable group-deletion lifecycle,
+which terminalizes matching pending requests, removes the exact protected source, account caches,
+migration material, and only that group's grants/active mappings, then repairs home and connection
+defaults. Secret-deletion and registry failures do not silently clear visible authority. Activity and
 network preferences are retained.
+
+Import Wallet follows the containing app's native inset-grouped form design: title-case navigation,
+separate wallet-group-label and recovery-phrase/private-key sections, concise accepted-format guidance, a
+standard full-row import action with progress state, and section-scoped errors. The secret field uses
+regular system typography, remains visible for review, disables capitalization and correction, and is
+marked privacy-sensitive. A successful recovery-phrase import navigates directly to the imported seed
+group's Add Accounts discovery screen so the user can choose additional accounts before returning to
+Accounts; backing out keeps the already imported account zero and closes the import flow. A private-key
+import retains the immediate completion path because it has no derived-account discovery step.
+Seed import defers publishing the updated view-model home state until discovery exits so initial setup
+cannot replace its navigation stack before the selector appears; the registry and protected seed are
+already durable during that interval.
+
+For seed-backed wallet groups, tapping Add Account navigates to an authenticated account-discovery
+screen. It initially shows ten available accounts with their default account labels, blockies,
+shortened addresses, and multi-selection controls; Load More authenticated-loads ten additional previews
+while retaining the selection. Preview generation keeps only public addresses in memory after
+zeroizing temporary child keys and entropy; it persists neither previews, an extended public key, nor
+secret material. Confirming a selection performs one fresh authenticated seed read, verifies every
+selected child, and appends the ascending selection in one atomic registry update. The high-water mark
+advances beyond the highest selected child, so unselected lower previews are intentionally skipped and
+never reused. Long-pressing Add Account is the shortcut for deriving only the current monotonic next
+index. Stale or lower selections fail closed.
+
+The home account-menu switcher row uses the same squircle blockie as native account rows and places
+the muted shortened address beneath the account label. Accounts uses a trailing disclosure chevron on
+Add Account to communicate navigation, and its Create New Wallet and Import Wallet navigation labels
+use the same blue tint as additive account actions. The discovery screen presents Load More as a
+standalone tinted action without an inset-grouped pill background.
 
 The aggregate native balance uses an account-bound, atomically written App Group cache.
 The containing app hydrates the last successful formatted total during initialization, keeps

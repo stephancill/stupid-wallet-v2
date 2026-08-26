@@ -18,7 +18,11 @@ import SwiftUI
     var body: some View {
       NavigationView {
         Group {
-          if vm.hasWallet {
+          if vm.isLoadingInitialState {
+            ProgressView()
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .accessibilityLabel("Loading wallet")
+          } else if vm.hasWallet {
             walletView
           } else {
             SetupView(vm: vm) { showAccountPicker = true }
@@ -41,7 +45,7 @@ import SwiftUI
           .hidden()
         }
         .toolbar {
-          if vm.hasWallet {
+          if !vm.isLoadingInitialState && vm.hasWallet {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
               Button {
                 UIPasteboard.general.string = vm.addressHex
@@ -77,14 +81,8 @@ import SwiftUI
           Task { await vm.refreshBalance() }
         }
       ) {
-        SettingsView(
-          address: vm.addressHex,
-          groupKind: vm.selectedGroup?.kind ?? .privateKey,
-          accountCount: vm.selectedGroup?.accounts.count ?? 1
-        ) {
-          try await vm.forgetAccount()
-        }
-        .id(vm.addressHex.lowercased())
+        SettingsView(address: vm.addressHex, accountName: homeAccountName)
+          .id(vm.addressHex.lowercased())
       }
       .sheet(isPresented: $showAccountPicker) {
         AccountPickerView(vm: vm)
@@ -238,11 +236,14 @@ import SwiftUI
         }
       } label: {
         HStack(spacing: 12) {
-          Image(uiImage: BlockieView.image(seed: address.lowercased()))
-            .resizable()
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .frame(width: 24, height: 24)
-          Text(accountName ?? displayAddress)
+          BlockieView(seed: address.lowercased())
+            .frame(width: 28, height: 28)
+          VStack(alignment: .leading, spacing: 2) {
+            Text(accountName ?? displayAddress)
+            Text(displayAddress)
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+          }
           Spacer(minLength: 12)
           Image(systemName: "arrow.left.arrow.right")
             .font(.caption)
@@ -251,7 +252,7 @@ import SwiftUI
         .font(.body)
         .foregroundStyle(.primary)
         .padding(.horizontal, 16)
-        .frame(height: 50)
+        .frame(height: 58)
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
