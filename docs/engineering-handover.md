@@ -418,7 +418,7 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.48`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.49`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet. Provider session UUID generation uses
   `crypto.getRandomValues` when secure-context-only `crypto.randomUUID` is unavailable, preserving
@@ -435,7 +435,7 @@ origin/profile rather than falling back to the hostname entry.
   non-interactive; review and approval stay exclusively in the toolbar popup.
 - `PrototypeDapp/` — a wagmi v3 + viem + React + Vite test dapp (`bun create wagmi
   --template vite-react`) exercising connect, `personal_sign`, `eth_signTypedData_v4`,
-  `eth_sendTransaction`, `wallet_switchEthereumChain`, and disconnect against the injected
+  `eth_sendTransaction`, generic `eth_blockNumber` passthrough, `wallet_switchEthereumChain`, and disconnect against the injected
   provider. Dev server runs `--host` on port 5173 for the physical iPhone.
 
 As of Gate 5 fixing: the signing path reads the `.userPresence` keychain exactly once, only
@@ -656,9 +656,9 @@ The first usable milestone includes:
 
 ### Multiple Wallet Groups And Accounts
 
-Approved next-scope. Gates A through G are complete. Gate H's physical-iPhone multi-account lifecycle
-and foreground-authentication portion is complete; cross-profile/device-lock acceptance and the Mac
-compatibility Safari account model remain pending:
+Approved next-scope. Gates A through G are complete. Gate H's physical-iPhone multi-account lifecycle,
+foreground authentication, and Mac compatibility Safari account model are complete;
+cross-profile/device-lock acceptance remains pending:
 
 - Only Dawn v1 is a supported migration source. The current rebuild v2 is unsupported, and its
   `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, singleton balance cache, and
@@ -1261,20 +1261,35 @@ Exit conditions:
   records. The tracked `Mac/` XcodeGen project is the local development exception; TestFlight is
   still required to prove the distribution path.
 
-Current Mac propagation status (2026-08-24): request preparation and prompt popup listing are
-proven with Safari Technology Preview. Safari Settings had retained two
-enabled production-identity rows at different manifest versions even though PlugInKit showed one
-current registration; the stale row selected old web resources. Keep only the current row enabled.
+Current Mac propagation status (2026-08-26): the multi-account Safari compatibility model is
+accepted with Safari Technology Preview. A real TestFlight Dawn installation was upgraded in place
+by the current Xcode compatibility build; the wallet opened without setup fallback, adopted the
+legacy private-key wallet as one active group, removed the downgrade fallback, and then added a
+separate disposable seed group with a derived account. Safari listed all grouped accounts in its
+fixed-height popup, rebound a connection to the derived seed account, completed the grant, and a
+second same-origin tab bootstrapped the same provider account. Rejection cleared the request and
+badge. A protected `personal_sign` request produced a consumed 65-byte signature whose recovered
+signer matched the persisted request account. Generic `eth_blockNumber` passthrough returned through
+the active native resolver.
+
+TestFlight installation had reintroduced multiple production-identity Safari rows and pointed
+PlugInKit at the TestFlight extension. Quit Safari, unregister the exact stale TestFlight and local
+appex paths, rerun the current Xcode scheme, then keep only the current manifest row enabled. The
+account picker now bounds itself to the popup viewport and owns vertical scrolling so derived rows
+do not clip or scroll the underlying dapp. The status reader also treats temporary request-claim
+contention during popup approval as pending after rechecking profile and binding, rather than falsely
+reporting the request missing; a clean current-build connection completed back to the originating
+page after this fix.
+
 The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
 the background worker cannot delay the review surface, while retaining the background route as a
 transport fallback for Safari environments where direct native messaging is unavailable. Manifest
-`0.1.45` contains the dedicated monochrome toolbar action icons, current request-review layout, and
-the direct-popup synchronization
-introduced in `0.1.23`: after a successful
-decision it notifies the worker before the popup closes,
+`0.1.49` contains the dedicated monochrome toolbar action icons, current request-review layout,
+the viewport-bounded account picker, and the direct-popup synchronization introduced in `0.1.23`:
+after a successful decision it notifies the worker before the popup closes,
 and an empty worker request set clears the badge with an empty string rather than displaying `0`.
-Live rejection proved the one-item badge disappears immediately. The test requests were rejected
-without signing. Mac transaction broadcast plus a network-verified receipt remains unproven.
+Live rejection proved the one-item badge disappears immediately. Mac transaction broadcast plus a
+network-verified receipt remains unproven and is not part of the multi-account Gate H exit condition.
 
 ## Test Strategy
 
@@ -1354,9 +1369,9 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Complete the remaining Gate H cross-profile/device-lock and Mac Safari acceptance for the
-   multi-account connection model. Physical-iPhone account selection, protected seed signing,
-   import/derivation/export, and group deletion are complete.
+1. Complete the remaining Gate H cross-profile and device-lock acceptance. Physical-iPhone account
+   selection, protected seed signing, import/derivation/export, group deletion, and the Mac Safari
+   multi-account compatibility model are complete.
 2. Continue Gate 6 with the remaining focused backup timeout/screen-capture and device-lock checks.
    Raw private-key import, protected seed import, generated-backup cancellation, seed-derived export,
    group deletion, and Safari signing are proven on the physical iPhone.

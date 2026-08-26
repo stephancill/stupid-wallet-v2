@@ -7,6 +7,18 @@ const popupSource = await readFile(
   new URL("../../SafariExtension/Resources/popup.js", import.meta.url),
   "utf8",
 );
+const popupStyle = await readFile(
+  new URL("../../SafariExtension/Resources/popup.css", import.meta.url),
+  "utf8",
+);
+
+test("account picker stays scrollable inside the fixed Safari popup viewport", () => {
+  const panelRule = popupStyle.match(/\.account-picker-panel\s*\{([^}]*)\}/)?.[1] ?? "";
+
+  assert.match(panelRule, /max-height:\s*calc\(100vh - 24px\)/);
+  assert.match(panelRule, /overflow-y:\s*auto/);
+  assert.match(panelRule, /overscroll-behavior:\s*contain/);
+});
 
 test("popup lists pending requests directly through native messaging", async () => {
   const nativeMessages = [];

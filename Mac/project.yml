@@ -51,7 +51,7 @@ targets:
       properties:
         CFBundleDisplayName: "stupid wallet"
         CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "5"
+        CFBundleVersion: "7"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.Safari.web-extension
           NSExtensionPrincipalClass: StupidWalletSafari.SafariWebExtensionHandler
@@ -83,7 +83,7 @@ targets:
       properties:
         CFBundleDisplayName: "stupid wallet"
         CFBundleShortVersionString: "1.0.0"
-        CFBundleVersion: "5"
+        CFBundleVersion: "7"
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
     settings:

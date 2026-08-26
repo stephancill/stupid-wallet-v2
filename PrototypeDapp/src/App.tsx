@@ -255,6 +255,12 @@ export default function App() {
         <h2>4. Network</h2>
         <button
           disabled={!isConnected || busy}
+          onClick={() => run("eth_blockNumber", () => rawRequest({ method: "eth_blockNumber" }))}
+        >
+          eth_blockNumber
+        </button>
+        <button
+          disabled={!isConnected || busy}
           onClick={() =>
             run("wallet_addEthereumChain (Anvil)", () =>
               rawRequest({

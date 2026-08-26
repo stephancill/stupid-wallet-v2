@@ -145,6 +145,9 @@ public implementation notes.
 
 ### 1b. Apple Silicon Mac Notes
 
+- The tracked XcodeGen project enumerates source membership. After adding Swift source files, run
+  `xcodegen generate --spec Mac/project.yml` before diagnosing missing-type build errors; an old
+  `project.pbxproj` can compile a stale subset even when the files exist in the worktree.
 - The current `stupid-app run --mac` rejects extension-bearing projects because its public
   installer cannot create the launch records native messaging needs. Mac native-messaging testing
   routes through the tracked XcodeGen project at `Mac/` (build with `xcodebuild
@@ -179,6 +182,14 @@ public implementation notes.
   keep the current row enabled. If that removes the shared toolbar item, restore the current item
   through View → Customize Toolbar. A stale web-extension row can keep page/popup JavaScript old
   while the native plugin executable is current.
+- Installing the TestFlight app can repoint the production PlugInKit registration even while a
+  current Xcode row remains visible. Map every Safari version row to its actual manifest, quit
+  Safari, unregister only the exact stale TestFlight or `.MacInstall` appex paths, rerun the tracked
+  Xcode scheme, and enable only the current row. Never unregister by bundle identifier alone.
+- **Derived accounts clipped in the popup:** a fixed-height Safari popover needs the account-picker
+  panel bounded by the viewport with its own vertical overflow and overscroll containment. If the
+  lowest account rows are clipped while wheel input moves the dapp underneath, the page—not the
+  picker—owns the scroll.
 - On macOS, the popup's canonical `list`/`approve`/`reject` operations should reach native directly
   so page-status polling cannot starve the review surface. Preserve a background-worker fallback
   for Safari environments where direct popup-to-native transport reports an error. If a pending
@@ -189,6 +200,12 @@ public implementation notes.
   request before closing the popup so it deletes the ID and updates its badge. Render zero pending
   requests with `browser.action.setBadgeText({ text: "" })`; the string `"0"` is still badge text,
   not a request to clear it. Regression-test both the one-to-zero transition and the empty string.
+- **Consumed signature followed by “Request no longer available”:** inspect the retained request
+  before blaming signing. Popup approval holds the one-time claim through authentication and its
+  terminal write; a concurrent provider status poll can observe the canonical pending record while
+  failing to acquire that claim. Claim contention is transient pending state, not absence. Recheck
+  the persisted profile and binding before returning pending, then let the next poll read the
+  consumed result. Keep a regression test that owns the claim during `status`.
 - Xcode Debug's split executable (`ENABLE_DEBUG_DYLIB`) can leave Safari launching a stale
   monolithic plugin image while `.XCInstall` contains a current stub + debug dylib. Symptoms are
   current source strings in `.XCInstall`, but fresh records retain an old schema and current native

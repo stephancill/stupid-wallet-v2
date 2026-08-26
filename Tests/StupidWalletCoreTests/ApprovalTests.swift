@@ -830,6 +830,22 @@ struct ApprovalTests {
       try context.connection.load()?.connectCommits.contains { $0.requestID == conflictID } == true)
   }
 
+  @Test("Gate F status remains pending while a decision owns the request claim")
+  func gateFStatusDuringDecisionClaim() async throws {
+    let context = try GateFContext()
+    defer { context.remove() }
+    let id = try await context.service.prepare(
+      method: "personal_sign",
+      params: .array([.string("0x6869"), .string(context.first)]),
+      origin: "https://connected.example", profileID: context.profile)
+    let claim = try #require(context.pending.claim(id))
+    defer { context.pending.releaseClaim(claim) }
+
+    let status = await context.service.status(for: id, profileID: context.profile)
+    #expect(status?.status == "pending")
+    #expect(await context.service.status(for: id, profileID: "other-profile") == nil)
+  }
+
   @Test("Gate F terminal connect status survives later account removal")
   func gateFTerminalStatusAfterAccountRemoval() async throws {
     let context = try GateFContext()

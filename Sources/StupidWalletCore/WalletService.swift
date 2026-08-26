@@ -1156,7 +1156,16 @@ public actor WalletService {
       let account = markerAccount ?? initial?.account
       guard initial != nil || account != nil else { return nil }
       return try withGroupClaim(account: account) {
-        guard let claim = store.claim(id) else { return nil }
+        guard let claim = store.claim(id) else {
+          // Approval and rejection hold the one-time claim while they authenticate and
+          // persist their terminal result. A concurrent provider poll must keep waiting;
+          // treating this short-lived contention as a missing request loses the result.
+          guard let initial, initial.profileID == profileID, initial.bindingVersion == 2 else {
+            return nil
+          }
+          return RequestStatus(
+            status: initial.status.rawValue, result: initial.result, error: initial.error)
+        }
         defer { store.releaseClaim(claim) }
         let raw = try rawRecord(id)
         if let recovered = try reconcileConnectCommit(request: id, record: raw) {

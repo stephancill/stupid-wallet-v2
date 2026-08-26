@@ -50,6 +50,57 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Mac Safari Multi-Account Acceptance
+
+### Summary
+
+- Completed the Apple Silicon Mac portion of multi-account Gate H using the production-identity
+  TestFlight app, the tracked Xcode compatibility project, and Safari Technology Preview.
+- Regenerated the tracked XcodeGen project so current multi-account Swift sources belong to the Mac
+  targets. Upgraded a real disposable Dawn installation in place, verified registry adoption without
+  setup fallback or identity replacement, then added a separate seed group and derived account.
+- Fixed the Safari popup account picker so all grouped accounts remain reachable inside the fixed
+  viewport without wheel input falling through to the dapp. Manifest version is now `0.1.49` and the
+  Mac compatibility build number is 7.
+- Fixed a provider completion race: a status poll arriving while approval owns the request claim now
+  remains pending after profile/binding validation instead of reporting the request missing. Added a
+  deterministic regression test for that lock overlap.
+- Added an `eth_blockNumber` action to the local prototype dapp for explicit generic-passthrough
+  acceptance.
+
+### Why
+
+- TestFlight can replace the production PlugInKit registration and leave multiple Safari rows, so
+  visible version labels and exact appex paths must be reconciled before runtime conclusions.
+- The popup must own its account-list scroll region on Mac, and durable provider polling must
+  distinguish a temporarily claimed record from a genuinely absent record.
+
+### Verification
+
+- Safari Technology Preview exposed only the current extension after stale TestFlight/local
+  registrations were removed. EIP-6963 discovery, grouped account rendering and rebind, connection
+  completion, rejection and badge clearing, same-origin bootstrap, and generic `eth_blockNumber`
+  passthrough succeeded without Mac-specific web code.
+- Native protected signing produced a consumed 65-byte signature. Independent recovery with
+  `cast wallet verify` matched the persisted request account. No seed phrase, private key, complete
+  address, request identifier, or signature is recorded here.
+- `swift test` passed 289 tests, including the new decision-claim status regression.
+- `node --test Tests/JavaScript/*.test.mjs` passed 20 tests, including the popup overflow check.
+- `bun run build` passed for `PrototypeDapp`.
+- `stupid-app doctor` completed with zero failures and zero warnings; `stupid-app build` produced the
+  arm64 iOS debug app.
+- `xcodegen generate --spec Mac/project.yml` regenerated the tracked compatibility project, and
+  `xcodebuild -project Mac/StupidWalletMac.xcodeproj -scheme StupidWallet -destination
+  'platform=macOS,arch=arm64' -derivedDataPath /tmp/StupidWalletMacDerivedData build` succeeded with
+  only the existing orientation and launch-configuration warnings.
+- Safari's temporary “Press Tab to highlight each item on a webpage” setting was restored to its
+  original disabled value, and the temporary diagnostic log was removed.
+
+### Follow-Up
+
+- Gate H now retains only cross-profile and device-lock acceptance. Mac transaction broadcast and a
+  network receipt remain separate transaction-release evidence, not a multi-account Gate H blocker.
+
 ## 2026-08-26 - Gate B Physical Seed And Account-Lifecycle Acceptance
 
 ### Summary
