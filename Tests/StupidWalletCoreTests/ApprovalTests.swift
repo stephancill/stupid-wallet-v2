@@ -62,6 +62,39 @@ struct ApprovalTests {
     }
   }
 
+  @Test("provider retries converge after terminal completion and changed intent fails")
+  func retainedRequestRetryIdentity() async throws {
+    let svc = service()
+    let params: JSONValue = .array([.string("0x6869"), .string("0x1234")])
+    let id = try await svc.prepare(
+      method: "personal_sign", params: params, origin: "https://dapp.example",
+      requestKey: "provider-request")
+    _ = try await svc.approve(request: id)
+
+    #expect(
+      try await svc.prepare(
+        method: "personal_sign", params: params, origin: "https://dapp.example",
+        requestKey: "provider-request") == id)
+    await #expect(throws: WalletError.invalidParams) {
+      try await svc.prepare(
+        method: "personal_sign",
+        params: .array([.string("0x68656c6c6f"), .string("0x1234")]),
+        origin: "https://dapp.example", requestKey: "provider-request")
+    }
+  }
+
+  @Test("retained retry scanning does not decode unsupported binding records")
+  func retainedRetryIgnoresUnsupportedBindings() async throws {
+    let svc = service()
+    let unsupported = svc.store.directory.appendingPathComponent("\(UUID().uuidString).json")
+    try Data(#"{"bindingVersion":1}"#.utf8).write(to: unsupported)
+
+    let id = try await svc.prepare(
+      method: "personal_sign", params: .array([.string("0x6869"), .string("0x1234")]),
+      origin: "https://dapp.example", requestKey: "provider-request")
+    #expect(try await svc.store.record(id)?.bindingVersion == 2)
+  }
+
   @Test("prepare of a passthrough method is rejected with methodNotApproved")
   func passthroughNotPrepared() async throws {
     let svc = service()
@@ -575,6 +608,272 @@ struct ApprovalTests {
     #expect(try await context.service.store.record(id)?.account == context.first)
   }
 
+  @Test("Gate F summaries expose revision and grouped available registry accounts")
+  func gateFRebindAndAccounts() async throws {
+    let context = try GateFContext()
+    defer { context.remove() }
+    let id = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+      profileID: context.profile, requestKey: "provider-request")
+    let original = try #require(await context.pending.record(id))
+    let groups = try await context.service.availableAccountGroups()
+
+    #expect(groups.count == 2)
+    #expect(groups.flatMap(\.accounts).map(\.address) == [context.first, context.second])
+    #expect(
+      try await context.service.summarize(request: id, profileID: context.profile)?.revision == 0)
+
+    try await context.service.rebindConnect(
+      request: id, account: context.second, reviewedRevision: 0, profileID: context.profile)
+    let rebound = try #require(await context.pending.record(id))
+    #expect(rebound.revision == 1)
+    #expect(rebound.account == context.second)
+    #expect(rebound.requestKey == original.requestKey)
+    #expect(rebound.intentDigest == original.intentDigest)
+    #expect(rebound.params == original.params)
+    #expect(rebound.createdAt == original.createdAt)
+    #expect(rebound.expiresAt == original.expiresAt)
+    #expect(rebound.payloadDigest != original.payloadDigest)
+    #expect(
+      try await context.service.summarize(request: id, profileID: context.profile)?.revision == 1)
+  }
+
+  @Test("Gate F plain connect proposes the persisted connection default, not home")
+  func gateFDefaultProposal() async throws {
+    let context = try GateFContext()
+    defer { context.remove() }
+    _ = try context.connection.mutate { state in
+      state.defaultAccount = context.second
+    }
+
+    let id = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+      profileID: context.profile)
+    #expect(try await context.pending.record(id)?.account == context.second)
+    #expect(try context.registry.loadReady()?.homeSelectedAddress == context.first)
+  }
+
+  @Test("Gate F rebind is restricted to the active plain-connect revision and available account")
+  func gateFRebindRestrictions() async throws {
+    let context = try GateFContext(includeUnavailableAccount: true)
+    defer { context.remove() }
+    let message = try await context.service.prepare(
+      method: "personal_sign",
+      params: .array([.string("0x6869"), .string(context.first)]),
+      origin: "https://connected.example", profileID: context.profile)
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await context.service.rebindConnect(
+        request: message, account: context.second, reviewedRevision: 0,
+        profileID: context.profile)
+    }
+    try await context.service.reject(request: message, profileID: context.profile)
+
+    let first = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+      profileID: context.profile)
+    let queued = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: "https://queued.example",
+      profileID: context.profile)
+    await #expect(throws: WalletError.queued) {
+      try await context.service.rebindConnect(
+        request: queued, account: context.second, reviewedRevision: 0,
+        profileID: context.profile)
+    }
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await context.service.rebindConnect(
+        request: first, account: context.unavailable, reviewedRevision: 0,
+        profileID: context.profile)
+    }
+    try await context.service.rebindConnect(
+      request: first, account: context.second, reviewedRevision: 0, profileID: context.profile)
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await context.service.rebindConnect(
+        request: first, account: context.first, reviewedRevision: 0,
+        profileID: context.profile)
+    }
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await context.service.rebindConnect(
+        request: first, account: context.first, reviewedRevision: 1,
+        profileID: "other-profile")
+    }
+  }
+
+  @Test("Gate F approval atomically commits the selected connection and leaves no marker")
+  func gateFConnectCommit() async throws {
+    let context = try GateFContext()
+    defer { context.remove() }
+    let id = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+      profileID: context.profile)
+    try await context.service.rebindConnect(
+      request: id, account: context.second, reviewedRevision: 0, profileID: context.profile)
+
+    let result = try await context.service.approve(
+      request: id, profileID: context.profile, reviewedRevision: 1)
+    let state = try #require(try context.connection.load())
+    #expect(result == .array([.string(context.second)]))
+    #expect(state.defaultAccount == context.second)
+    #expect(state.grants.contains { $0.account == context.second && $0.origin == context.origin })
+    #expect(
+      state.activeConnections.contains {
+        $0.account == context.second && $0.origin == context.origin
+          && $0.profileID == context.profile
+      })
+    #expect(state.connectCommits.isEmpty)
+    #expect(await context.service.status(for: id, profileID: context.profile)?.status == "consumed")
+    #expect(try context.registry.loadReady()?.homeSelectedAddress == context.first)
+  }
+
+  @Test("Gate F stale approve and reject leave the previous default unchanged")
+  func gateFStaleDecisions() async throws {
+    let context = try GateFContext()
+    defer { context.remove() }
+    let id = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+      profileID: context.profile)
+    try await context.service.rebindConnect(
+      request: id, account: context.second, reviewedRevision: 0, profileID: context.profile)
+
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await context.service.approve(
+        request: id, profileID: context.profile, reviewedRevision: 0)
+    }
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await context.service.reject(
+        request: id, profileID: context.profile, reviewedRevision: 0)
+    }
+    #expect(try context.connection.load()?.defaultAccount == context.first)
+    try await context.service.reject(
+      request: id, profileID: context.profile, reviewedRevision: 1)
+    #expect(try context.connection.load()?.defaultAccount == context.first)
+  }
+
+  @Test("Gate F rebind racing approve or reject permits exactly one reviewed transition")
+  func gateFDecisionRaces() async throws {
+    for approve in [true, false] {
+      let context = try GateFContext()
+      defer { context.remove() }
+      let secondService = try context.makeService()
+      let id = try await context.service.prepare(
+        method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+        profileID: context.profile)
+
+      async let rebind: GateFRaceOutcome = {
+        do {
+          try await context.service.rebindConnect(
+            request: id, account: context.second, reviewedRevision: 0,
+            profileID: context.profile)
+          return .succeeded
+        } catch {
+          return .lost
+        }
+      }()
+      async let decision: GateFRaceOutcome = {
+        do {
+          if approve {
+            _ = try await secondService.approve(
+              request: id, profileID: context.profile, reviewedRevision: 0)
+          } else {
+            try await secondService.reject(
+              request: id, profileID: context.profile, reviewedRevision: 0)
+          }
+          return .succeeded
+        } catch {
+          return .lost
+        }
+      }()
+      let outcomes = await [rebind, decision]
+      #expect(outcomes.filter { $0 == .succeeded }.count == 1)
+      if try await context.pending.record(id)?.status == .pending {
+        if approve {
+          _ = try await secondService.approve(
+            request: id, profileID: context.profile, reviewedRevision: 1)
+        } else {
+          try await secondService.reject(
+            request: id, profileID: context.profile, reviewedRevision: 1)
+        }
+      }
+    }
+  }
+
+  @Test("Gate F status recovers an interrupted connect commit before expiry or rejection")
+  func gateFMarkerRecoveryAndConflict() async throws {
+    let context = try GateFContext()
+    defer { context.remove() }
+    let id = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+      profileID: context.profile)
+    let record = try #require(await context.pending.record(id))
+    try context.installMarker(for: record)
+
+    let status = await context.service.status(for: id, profileID: context.profile)
+    #expect(status?.status == "consumed")
+    #expect(status?.result == .array([.string(context.first)]))
+    #expect(try context.connection.load()?.connectCommits.isEmpty == true)
+
+    let conflictID = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: "https://conflict.example",
+      profileID: context.profile)
+    let conflict = try #require(await context.pending.record(conflictID))
+    try context.installMarker(for: conflict)
+    var rejected = conflict
+    rejected.status = .rejected
+    try await context.pending.insert(rejected)
+    let conflictStatus = await context.service.status(for: conflictID, profileID: context.profile)
+    #expect(conflictStatus?.status == "failed")
+    #expect(conflictStatus?.error?.nestedString(at: ["message"])?.contains("Conflicting") == true)
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await context.service.approve(
+        request: conflictID, profileID: context.profile, reviewedRevision: 0)
+    }
+    #expect(
+      try context.connection.load()?.connectCommits.contains { $0.requestID == conflictID } == true)
+  }
+
+  @Test("Gate F terminal connect status survives later account removal")
+  func gateFTerminalStatusAfterAccountRemoval() async throws {
+    let context = try GateFContext()
+    defer { context.remove() }
+    let id = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+      profileID: context.profile)
+    try await context.service.rebindConnect(
+      request: id, account: context.second, reviewedRevision: 0, profileID: context.profile)
+    _ = try await context.service.approve(
+      request: id, profileID: context.profile, reviewedRevision: 1)
+
+    _ = try context.connection.mutate { state in
+      state.grants.removeAll { $0.account == context.second }
+      state.activeConnections.removeAll { $0.account == context.second }
+      state.defaultAccount = context.first
+    }
+    let registry = try #require(try context.registry.loadReady())
+    let deleting = try context.registry.update(expectedRevision: registry.revision) { current in
+      var groups = current.groups
+      let index = try #require(
+        groups.firstIndex { group in
+          group.accounts.contains { $0.address == context.second }
+        })
+      groups[index].lifecycle = .deleting
+      return WalletRegistry(
+        revision: current.revision + 1, adoptionState: current.adoptionState, groups: groups,
+        homeSelectedAddress: current.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: current.legacyWalletAddressFallbackRemoved)
+    }
+    _ = try context.registry.update(expectedRevision: deleting.revision) { current in
+      WalletRegistry(
+        revision: current.revision + 1, adoptionState: current.adoptionState,
+        groups: current.groups.filter { group in
+          !group.accounts.contains { $0.address == context.second }
+        }, homeSelectedAddress: current.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: current.legacyWalletAddressFallbackRemoved)
+    }
+
+    let status = await context.service.status(for: id, profileID: context.profile)
+    #expect(status?.status == "consumed")
+    #expect(status?.result == .array([.string(context.second)]))
+  }
+
   private func accountPolicyService() async throws -> (
     service: WalletService, connectedSites: ConnectedSitesStore, first: String, second: String
   ) {
@@ -608,4 +907,129 @@ struct ApprovalTests {
       accountResolver: resolver)
     return (service, connectedSites, first, second)
   }
+}
+
+private final class GateFContext: @unchecked Sendable {
+  let directory: URL
+  let profile = "profile-a"
+  let origin = "https://gate-f.example"
+  let first: String
+  let second: String
+  let unavailable: String
+  let registry: WalletRegistryStore
+  let connection: ConnectionStateStore
+  let pending: PendingRequestStore
+  let suite: String
+  let connectedSites: ConnectedSitesStore
+  let resolver: DeterministicAccountResolver
+  let service: WalletService
+
+  init(includeUnavailableAccount: Bool = false) throws {
+    directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "GateFApprovalTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    first = try EthereumKeypair.from(secret: deterministicSecret(1)).address
+    second = try EthereumKeypair.from(secret: deterministicSecret(2)).address
+    unavailable = try EthereumKeypair.from(secret: deterministicSecret(3)).address
+    registry = WalletRegistryStore(directory: directory)
+    let createdAt = Date(timeIntervalSince1970: 1)
+    var groups = [
+      WalletGroup(
+        id: UUID(), kind: .privateKey, createdAt: createdAt, nextDerivationIndex: nil,
+        accounts: [WalletAccount(address: first, derivationIndex: nil, createdAt: createdAt)],
+        lifecycle: .active),
+      WalletGroup(
+        id: UUID(), kind: .privateKey, createdAt: createdAt, nextDerivationIndex: nil,
+        accounts: [WalletAccount(address: second, derivationIndex: nil, createdAt: createdAt)],
+        lifecycle: .active),
+    ]
+    if includeUnavailableAccount {
+      groups.append(
+        WalletGroup(
+          id: UUID(), kind: .privateKey, createdAt: createdAt, nextDerivationIndex: nil,
+          accounts: [
+            WalletAccount(address: unavailable, derivationIndex: nil, createdAt: createdAt)
+          ],
+          lifecycle: .active))
+    }
+    try registry.create(
+      WalletRegistry(
+        revision: 0, adoptionState: .migrating, groups: groups,
+        homeSelectedAddress: first, legacyWalletAddressFallbackRemoved: true))
+    _ = try registry.update(expectedRevision: 0) { current in
+      WalletRegistry(
+        revision: 1, adoptionState: .complete, groups: current.groups,
+        homeSelectedAddress: current.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: true)
+    }
+    suite = "GateFApprovalTests-\(UUID().uuidString)"
+    connection = ConnectionStateStore(directory: directory, suiteName: suite)
+    let connectedGrant = ConnectionGrant(
+      account: first, origin: "https://connected.example", legacyDomain: "connected.example",
+      profileID: profile, connectedAt: .now, precision: .exact)
+    _ = try connection.getOrCreate(
+      ConnectionState(
+        revision: 0, defaultAccount: first, grants: [connectedGrant],
+        activeConnections: [
+          ActiveConnection(
+            origin: "https://connected.example", profileID: profile, account: first)
+        ]))
+    pending = PendingRequestStore(
+      directory: directory.appendingPathComponent("PendingRequests", isDirectory: true))
+    connectedSites = ConnectedSitesStore(suiteName: suite, directory: directory)
+    resolver = try DeterministicAccountResolver(secrets: [
+      deterministicSecret(1), deterministicSecret(2),
+    ])
+    service = WalletService(
+      store: pending, signing: try resolver.signer(address: first),
+      connectedSites: connectedSites, chainStore: ChainStore(directory: directory),
+      networkStore: NetworkStore(directory: directory, legacySuiteName: suite),
+      activityStore: ActivityStore(
+        databaseURL: directory.appendingPathComponent("Activity.sqlite")),
+      registryStore: registry, accountResolver: resolver)
+  }
+
+  func makeService() throws -> WalletService {
+    WalletService(
+      store: pending, signing: try resolver.signer(address: first),
+      connectedSites: connectedSites, chainStore: ChainStore(directory: directory),
+      networkStore: NetworkStore(directory: directory, legacySuiteName: suite),
+      activityStore: ActivityStore(
+        databaseURL: directory.appendingPathComponent("Activity.sqlite")),
+      registryStore: registry, accountResolver: resolver)
+  }
+
+  func installMarker(for record: WalletPendingRequest) throws {
+    _ = try connection.mutate { state in
+      let grant = ConnectionGrant(
+        account: record.account, origin: record.origin,
+        legacyDomain: Origin.downHost(of: record.origin), profileID: record.profileID,
+        connectedAt: .now, precision: .exact)
+      state.grants.removeAll { $0.id == grant.id }
+      state.grants.append(grant)
+      state.activeConnections.removeAll {
+        $0.origin == record.origin && $0.profileID == record.profileID
+      }
+      state.activeConnections.append(
+        ActiveConnection(
+          origin: record.origin, profileID: record.profileID, account: record.account))
+      state.defaultAccount = record.account
+      state.connectCommits.append(
+        ConnectCommit(
+          requestID: record.id, requestRevision: record.revision,
+          connectionRevision: state.revision + 1, origin: record.origin,
+          profileID: record.profileID, account: record.account,
+          bindingDigest: record.payloadDigest, result: .array([.string(record.account)]),
+          committedAt: .now))
+    }
+  }
+
+  func remove() {
+    try? FileManager.default.removeItem(at: directory)
+  }
+}
+
+private enum GateFRaceOutcome: Sendable {
+  case succeeded
+  case lost
 }

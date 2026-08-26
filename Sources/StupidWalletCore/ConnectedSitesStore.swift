@@ -36,20 +36,20 @@ public struct ConnectedSite: Sendable, Codable, Equatable, Identifiable {
 /// `connectedSites` dictionary is written only by `ConnectionStateStore` as a downgrade mirror.
 public actor ConnectedSitesStore {
   public static let defaultAppGroup = PendingRequestStore.defaultAppGroup
-  private let store: ConnectionStateStore
+  nonisolated let connectionStore: ConnectionStateStore
   private let registryStore: WalletRegistryStore?
 
   public init(
     appGroupID: String = ConnectedSitesStore.defaultAppGroup,
     directory: URL? = nil
   ) {
-    store = ConnectionStateStore(directory: directory, suiteName: appGroupID)
+    connectionStore = ConnectionStateStore(directory: directory, suiteName: appGroupID)
     registryStore = WalletRegistryStore(directory: directory, appGroup: appGroupID)
   }
 
   /// Hermetic-test initializer. The caller owns cleanup of the suite and directory.
   public init(suiteName: String, directory: URL) {
-    store = ConnectionStateStore(directory: directory, suiteName: suiteName)
+    connectionStore = ConnectionStateStore(directory: directory, suiteName: suiteName)
     registryStore = nil
   }
 
@@ -60,7 +60,7 @@ public actor ConnectedSitesStore {
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let stateStore = ConnectionStateStore(directory: directory, suiteName: suiteName)
     _ = try? stateStore.getOrCreate(ConnectionState(revision: 0))
-    store = stateStore
+    connectionStore = stateStore
     registryStore = nil
   }
 
@@ -226,25 +226,25 @@ public actor ConnectedSitesStore {
   private func loadValidatedState() throws -> ConnectionState {
     if let registryStore {
       return try registryStore.withLockedReady { registry in
-        guard let state = try store.load() else { throw ConnectionStateError.missing }
+        guard let state = try connectionStore.load() else { throw ConnectionStateError.missing }
         try state.validate(against: registry)
         return state
       }
     }
-    guard let state = try store.load() else { throw ConnectionStateError.missing }
+    guard let state = try connectionStore.load() else { throw ConnectionStateError.missing }
     return state
   }
 
   private func mutate(_ transform: (inout ConnectionState) throws -> Void) throws {
     if let registryStore {
       try registryStore.withLockedReady { registry in
-        _ = try store.mutate { state in
+        _ = try connectionStore.mutate { state in
           try transform(&state)
           try state.validate(against: registry)
         }
       }
     } else {
-      _ = try store.mutate(transform)
+      _ = try connectionStore.mutate(transform)
     }
   }
 

@@ -18,7 +18,7 @@ confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
 
-Multiple wallet groups and accounts are approved next-scope, and Gates A, C, D, and E are complete. The shared
+Multiple wallet groups and accounts are approved next-scope, and Gates A, C, D, E, and F are complete. The shared
 plan now supports migration only from the old Dawn v1 application. Migration from the current
 single-account rebuild (v2) is explicitly out of scope: its address registration, normalized grants,
 singleton cache, and pending-request records receive no upgrade-preservation guarantee. Fail-closed
@@ -76,7 +76,11 @@ non-connect wallet-owned operations from the origin/profile active account, vali
 parameters before persistence, revalidates that account before approval, and resolves the protected
 signer from the persisted account. Requests for different accounts retain one deterministic global
 queue, while active-account replacement fails immutable signing and SIWE records rather than rebinding
-them. Popup connect selection and provider events remain behind Gates F and G.
+them. Gate F is hermetically and simulator complete: a plain connect proposes the persisted connection
+default; the active popup card lists grouped available accounts and performs a claimed,
+revision-checked rebind; stale approve/reject decisions fail closed; and approval recoverably commits
+the exact grant, active account, future default, and result before consuming the pending record.
+Provider account events remain behind Gate G.
 
 Gate B is now hermetically implemented and remains open for physical-device acceptance.
 `EthereumSeedPhrase` generates canonical entropy, round-trips every supported English BIP-39 size, and
@@ -94,9 +98,9 @@ pending requests, removes the protected source, grants/active mappings, account 
 material, and the registry group, and adoption resumes interrupted deletion before exposing state.
 `WalletAccountResolver` resolves active registry accounts under the same group claim, derives seed
 children transiently for signing or export, verifies the derived address, and never persists a child
-key. The Safari home-account signer and Settings private-key export now use this resolver. Future Gate F
-connect-commit markers are preserved and make deletion fail loudly until Gate F adds the approved
-marker reconciliation protocol. Gate D is complete: the address menu opens a grouped account picker;
+key. The Safari home-account signer and Settings private-key export now use this resolver. Group
+deletion reconciles a valid Gate F connect-commit marker to the already-committed consumed result before
+connection cleanup and fails loudly on a marker/record conflict. Gate D is complete: the address menu opens a grouped account picker;
 generated seed creation requires explicit backup confirmation; seed/private-key imports and sibling
 derivation add groups/accounts without replacement; home selection persists through the journaled
 registry transition; and balance, Activity, Connected Apps, Settings, authorizations, and private-key
@@ -403,7 +407,7 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.42`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.45`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet.
 - One hand-drawn upward-arrow identity is used for the containing-app icon, Safari extension
@@ -639,8 +643,8 @@ The first usable milestone includes:
 
 ### Multiple Wallet Groups And Accounts
 
-Approved next-scope. Gates A, C, D, and E are complete; Gate B is hermetically complete but still
-requires physical-device acceptance, and Gates F through H remain pending:
+Approved next-scope. Gates A, C, D, E, and F are complete; Gate B is hermetically complete but still
+requires physical-device acceptance, and Gates G and H remain pending:
 
 - Only Dawn v1 is a supported migration source. The current rebuild v2 is unsupported, and its
   `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, singleton balance cache, and
@@ -667,8 +671,8 @@ requires physical-device acceptance, and Gates F through H remain pending:
   also proved exclusion without either process being terminated: iOS granted the app a File
   Coordination suspension assertion for a 45-second diagnostic claim, the extension did not enter the
   accessor during that claim, and a fresh popup request entered and completed immediately after
-  release. Runtime Safari multi-account connection and signer selection remain
-  deliberately deferred to their later gates. Rebuild source resolution, V2 grant ingestion, singleton
+  release. Runtime Safari multi-account signer selection and popup connection selection are now
+  implemented by Gates E and F; provider account-event lifecycle remains deferred to Gate G. Rebuild source resolution, V2 grant ingestion, singleton
   cache migration, and retained rebuild-request migration have been removed.
 
 - A historical simulator upgrade investigation started from a UI-created pre-multi rebuild wallet with a
@@ -860,10 +864,9 @@ serializes and persists the switch, and returns `null`; the worker then broadcas
    user to open the wallet extension, but it cannot approve or alter the request.
 5. The user opens the toolbar popup. On macOS it requests the canonical, display-safe list directly
    from native code, with the worker route retained as an iOS-compatible transport fallback.
-6. On approval, the current popup sends only the request ID and decision. Native code reloads the
-   canonical record and verifies its origin, chain, payload digest, expiry, and unconsumed state.
-   Multi-account Gate F adds the displayed revision and account-inclusive binding checks, but still
-   never accepts canonical params from the popup.
+6. On approval, the popup sends only the request ID, displayed revision, and decision. Native code
+   reloads the canonical record and verifies its origin, chain, account-inclusive payload digest,
+   revision, expiry, and unconsumed state. It never accepts canonical params from the popup.
 7. For sends, native code resolves missing nonce, gas limit, and fee values through the
    active RPC immediately before signing while retaining the immutable approved intent.
    It then creates a fresh `LAContext`, requests device-owner authentication, and performs
@@ -1251,7 +1254,7 @@ current registration; the stale row selected old web resources. Keep only the cu
 The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
 the background worker cannot delay the review surface, while retaining the background route as a
 transport fallback for Safari environments where direct native messaging is unavailable. Manifest
-`0.1.42` contains the dedicated monochrome toolbar action icons, current request-review layout, and
+`0.1.45` contains the dedicated monochrome toolbar action icons, current request-review layout, and
 the direct-popup synchronization
 introduced in `0.1.23`: after a successful
 decision it notifies the worker before the popup closes,
@@ -1339,11 +1342,10 @@ investigation history in implementation notes.
 1. Complete Gate B physical-device acceptance from `docs/multi-account-implementation-plan.md`: prove
    seed entropy user-presence/ThisDeviceOnly protection, generated/imported derivation, seed-backed
    signing and private-key export, and complete resumable group deletion. The hermetic implementation
-   and simulator build are complete. Keep future connect-marker reconciliation coupled to Gate F before
-   connect commits become writable at runtime.
-2. Proceed to Gate F popup connect account selection now that Gate E account-specific Safari request
-   policy is hermetically complete. Keep Gate G provider account events behind its ordered acceptance
-   boundary.
+   and simulator build are complete. Gate F marker reconciliation is now part of deletion cleanup.
+2. Proceed to Gate G provider account lifecycle now that Gate F popup selection and recoverable connect
+   commit are complete. Keep origin/profile-scoped `accountsChanged` delivery behind its ordered
+   acceptance boundary.
 3. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
    reveal/cancellation/timeout, Forget Account, automatic migration launch, and Safari
    signing with each newly provisioned key. Raw private-key import, including recovery of a

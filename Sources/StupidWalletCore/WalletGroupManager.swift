@@ -421,14 +421,45 @@ public struct WalletGroupManager: Sendable {
   }
 
   private func terminalizePendingRequests(accounts: Set<String>) throws {
-    let records = try pendingStore.retainedRecordsForLifecycleCleanup()
-    let connection = try connectionStore.load()
-    if connection?.connectCommits.contains(where: {
-      accounts.contains($0.account.lowercased())
-    }) == true {
-      // Gate F marker reconciliation must preserve the already-committed result.
-      throw WalletGroupManagerError.corruptState
+    var records = try pendingStore.retainedRecordsForClaimedTransition()
+    let commits =
+      try connectionStore.load()?.connectCommits.filter {
+        accounts.contains($0.account.lowercased())
+      } ?? []
+    for marker in commits {
+      guard let claim = pendingStore.claim(marker.requestID) else {
+        throw WalletGroupManagerError.pendingRequestBusy
+      }
+      do {
+        guard
+          var record = try pendingStore.retainedRecordsForClaimedTransition().first(where: {
+            $0.id == marker.requestID
+          }), marker.matches(record),
+          record.status == .pending
+            || (record.status == .consumed && record.result == marker.result)
+        else { throw WalletGroupManagerError.corruptState }
+        if record.status == .pending {
+          record.status = .consumed
+          record.result = marker.result
+          try pendingStore.persistForLifecycleCleanup(record)
+        }
+        guard
+          try pendingStore.retainedRecordsForClaimedTransition().contains(where: {
+            $0.id == marker.requestID && $0.status == .consumed && $0.result == marker.result
+          })
+        else { throw WalletGroupManagerError.corruptState }
+        _ = try connectionStore.mutate { state in
+          guard state.connectCommits.first(where: { $0.requestID == marker.requestID }) == marker
+          else { throw WalletGroupManagerError.corruptState }
+          state.connectCommits.removeAll { $0.requestID == marker.requestID }
+        }
+        pendingStore.releaseClaim(claim)
+      } catch {
+        pendingStore.releaseClaim(claim)
+        throw error
+      }
     }
+    records = try pendingStore.retainedRecordsForLifecycleCleanup()
     for record in records
     where accounts.contains(record.account.lowercased()) && record.status == .pending {
       guard let claim = pendingStore.claim(record.id) else {

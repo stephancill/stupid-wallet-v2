@@ -110,6 +110,56 @@ test("a popup decision removes its request and clears the zero badge", async () 
   assert.equal(badgeTexts.at(-1), "");
 });
 
+test("popup fallback forwards reviewed revisions and connect rebind payloads", async () => {
+  let messageListener;
+  const nativeMessages = [];
+  const browser = {
+    action: { setBadgeText() {} },
+    runtime: {
+      lastError: null,
+      onMessage: {
+        addListener(listener) {
+          messageListener = listener;
+        },
+      },
+      sendNativeMessage(_applicationID, message, callback) {
+        nativeMessages.push(message);
+        callback({ ok: true, data: {} });
+      },
+    },
+    tabs: {
+      query(_query, callback) {
+        callback([]);
+      },
+      sendMessage() {},
+    },
+  };
+  vm.runInNewContext(backgroundSource, { browser, Map, Promise, Set, URL });
+
+  for (const message of [
+    { type: "popup.approve", requestId: "request-1", revision: 2 },
+    { type: "popup.reject", requestId: "request-1", revision: 2 },
+    { type: "popup.connectAccounts", requestId: "request-1", revision: 2 },
+    {
+      type: "popup.rebindConnect",
+      requestId: "request-1",
+      revision: 2,
+      account: "0x1111111111111111111111111111111111111111",
+    },
+  ]) {
+    await new Promise((resolve) => messageListener(message, {}, resolve));
+  }
+
+  assert.deepEqual(
+    nativeMessages.map((message) => message.action),
+    ["approve", "reject", "connectAccounts", "rebindConnect"],
+  );
+  assert.equal(nativeMessages[0].payload.revision, 2);
+  assert.equal(nativeMessages[1].payload.revision, 2);
+  assert.equal(nativeMessages[2].payload.revision, 2);
+  assert.equal(nativeMessages[3].payload.account, "0x1111111111111111111111111111111111111111");
+});
+
 test("an existing grant does not short-circuit wallet_connect capabilities", async () => {
   let messageListener;
   const actions = [];

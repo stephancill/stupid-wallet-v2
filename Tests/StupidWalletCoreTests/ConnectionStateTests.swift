@@ -174,11 +174,51 @@ struct ConnectionStateTests {
     let origin = "https://dapp.example"
     let requestID = UUID()
     let commit = ConnectCommit(
-      requestID: requestID, requestRevision: 0, connectionRevision: 0,
-      origin: origin, profileID: nil, account: account, bindingDigest: "digest",
+      requestID: requestID, requestRevision: 0, connectionRevision: 1,
+      origin: origin, profileID: nil, account: account,
+      bindingDigest: String(repeating: "a", count: 64),
       result: .array([.string(account)]), committedAt: .now)
     #expect(throws: ConnectionStateError.invalid(.duplicateCommit)) {
-      try ConnectionState(revision: 0, connectCommits: [commit, commit]).validate()
+      try ConnectionState(
+        revision: 1, defaultAccount: account,
+        grants: [exact(account: account, origin: origin, profile: nil)],
+        activeConnections: [ActiveConnection(origin: origin, profileID: nil, account: account)],
+        connectCommits: [commit, commit]
+      ).validate()
+    }
+  }
+
+  @Test("connect commits require a canonical result, digest, revision, and matching commit state")
+  func commitValidation() throws {
+    let account = try address(secret: 1)
+    let origin = "https://dapp.example"
+    let grant = exact(account: account, origin: origin, profile: nil)
+    let active = ActiveConnection(origin: origin, profileID: nil, account: account)
+    let base = ConnectCommit(
+      requestID: UUID(), requestRevision: 0, connectionRevision: 1,
+      origin: origin, profileID: nil, account: account,
+      bindingDigest: String(repeating: "a", count: 64),
+      result: .array([.string(account)]), committedAt: .now)
+
+    try ConnectionState(
+      revision: 1, defaultAccount: account, grants: [grant], activeConnections: [active],
+      connectCommits: [base]
+    ).validate()
+    #expect(throws: ConnectionStateError.invalid(.invalidCommit)) {
+      try ConnectionState(revision: 0, connectCommits: [base]).validate()
+    }
+    let badResult = ConnectCommit(
+      requestID: base.requestID, requestRevision: 0, connectionRevision: 1,
+      origin: origin, profileID: nil, account: account,
+      bindingDigest: base.bindingDigest, result: .array([]), committedAt: .now)
+    #expect(throws: ConnectionStateError.invalid(.invalidCommit)) {
+      try ConnectionState(
+        revision: 1, defaultAccount: account, grants: [grant], activeConnections: [active],
+        connectCommits: [badResult]
+      ).validate()
+    }
+    #expect(throws: ConnectionStateError.invalid(.invalidCommit)) {
+      try ConnectionState(revision: 1, connectCommits: [base]).validate()
     }
   }
 

@@ -273,6 +273,7 @@ public actor WalletService {
   /// registry validates as `.complete` and retained pending legacy-binding records are
   /// terminalized instead of signed. `nil` keeps hermetic single-account behavior.
   nonisolated let registryStore: WalletRegistryStore?
+  nonisolated let groupLifecycle: WalletGroupLifecycleCoordinator
 
   public init(
     store: PendingRequestStore? = nil,
@@ -307,6 +308,8 @@ public actor WalletService {
       submissionLock ?? TransactionSubmissionLock(directory: resolvedStore.directory)
     self.simple7702AccountRuntimeHash = simple7702AccountRuntimeHash
     self.registryStore = registryStore
+    self.groupLifecycle = WalletGroupLifecycleCoordinator(
+      directory: resolvedStore.directory.deletingLastPathComponent())
   }
 
   /// Hermetic-test initializer that also isolates the connection-grant store.
@@ -338,6 +341,7 @@ public actor WalletService {
     self.submissionLock = TransactionSubmissionLock(directory: chainDirectory)
     self.simple7702AccountRuntimeHash = EIP5792.simple7702AccountRuntimeHash
     self.registryStore = nil
+    self.groupLifecycle = WalletGroupLifecycleCoordinator(directory: chainDirectory)
   }
 
   // MARK: Connection grants
@@ -499,6 +503,35 @@ public actor WalletService {
     public let title: String
     public let rows: [(label: String, value: String)]
     public let queued: Bool
+    public let revision: UInt64
+  }
+
+  public struct AvailableAccount: Sendable, Equatable {
+    public let address: String
+    public let derivationIndex: UInt32?
+  }
+
+  public struct AvailableAccountGroup: Sendable, Equatable {
+    public let id: UUID
+    public let kind: WalletGroupKind
+    public let accounts: [AvailableAccount]
+  }
+
+  /// Public registered accounts whose exact protected source is currently available.
+  public func availableAccountGroups() throws -> [AvailableAccountGroup] {
+    guard let registryStore, let registry = try registryStore.loadReady() else {
+      throw WalletError.notReady
+    }
+    return registry.groups.compactMap { group in
+      guard group.lifecycle == .active else { return nil }
+      let accounts = group.accounts.compactMap { account -> AvailableAccount? in
+        guard let signer = try? accountResolver.signer(address: account.address), signer.hasKey()
+        else { return nil }
+        return AvailableAccount(address: account.address, derivationIndex: account.derivationIndex)
+      }
+      guard !accounts.isEmpty else { return nil }
+      return AvailableAccountGroup(id: group.id, kind: group.kind, accounts: accounts)
+    }
   }
 
   public struct RequestStatus: Sendable {
@@ -527,7 +560,9 @@ public actor WalletService {
       throw WalletError.invalidParams
     }
     let requestSigner: any Signing
-    if !enforcesConnectedAccountPolicy || (kind == .connect && !isSIWE) {
+    if enforcesConnectedAccountPolicy, kind == .connect, !isSIWE {
+      requestSigner = try proposedConnectionSigner()
+    } else if !enforcesConnectedAccountPolicy || (kind == .connect && !isSIWE) {
       guard signing.hasKey() else { throw WalletError.notReady }
       requestSigner = signing
     } else {
@@ -630,7 +665,26 @@ public actor WalletService {
         (try await store.insertIfAbsent(record, rejectingCallBundleID: callBundleID)) ?? record.id
     } catch PendingRequestStoreError.duplicateCallBundleID {
       throw Self.walletError(.duplicateID)
+    } catch PendingRequestStoreError.conflictingRequestKey {
+      throw WalletError.invalidParams
     }
+  }
+
+  private func proposedConnectionSigner() throws -> any Signing {
+    guard let registryStore else { throw WalletError.notReady }
+    let account = try registryStore.withLockedReady { registry in
+      try connectedSites.connectionStore.withLockedState { state in
+        try state.validate(against: registry)
+        return state.defaultAccount ?? registry.homeSelectedAddress
+          ?? registry.groups
+          .filter { $0.lifecycle == .active }
+          .flatMap(\.accounts)
+          .first?.address
+      }
+    }
+    guard let account, let signer = try? accountResolver.signer(address: account), signer.hasKey()
+    else { throw WalletError.notReady }
+    return signer
   }
 
   /// Display-safe canonical summary for one pending request.
@@ -687,8 +741,69 @@ public actor WalletService {
       account: record.account,
       title: ApprovalSummary.title(for: record),
       rows: rows,
-      queued: !active
+      queued: !active,
+      revision: record.revision
     )
+  }
+
+  /// Rebinds only the globally active plain-connect request to an existing available account.
+  public func rebindConnect(
+    request: UUID,
+    account: String,
+    reviewedRevision: UInt64,
+    profileID: String? = nil
+  ) throws {
+    try ensureRegistryReady()
+    guard let registryStore, let initialRegistry = try registryStore.loadReady(),
+      let selectedGroup = initialRegistry.groups.first(where: { group in
+        group.lifecycle == .active
+          && group.accounts.contains {
+            $0.address.caseInsensitiveCompare(account) == .orderedSame
+          }
+      }),
+      let selectedAccount = selectedGroup.accounts.first(where: {
+        $0.address.caseInsensitiveCompare(account) == .orderedSame
+      })
+    else { throw WalletError.bindingMismatch }
+
+    try groupLifecycle.withClaim(groupID: selectedGroup.id) {
+      guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
+      defer { store.releaseClaim(claim) }
+      guard var record = try rawRecord(request) else { throw WalletError.notFound }
+      if try reconcileConnectCommit(request: request, record: record) != nil {
+        throw WalletError.alreadyConsumed
+      }
+      guard record.kind == .connect, Self.isPlainConnect(record), record.bindingVersion == 2,
+        record.profileID == profileID, record.status == .pending, !record.isExpired,
+        record.revision == reviewedRevision, record.revision < UInt64.max
+      else { throw WalletError.bindingMismatch }
+      let queue = try rawPendingQueue()
+      guard queue.first?.id == record.id else { throw WalletError.queued }
+      guard
+        try registryStore.withLockedReady({ registry in
+          registry.groups.contains { group in
+            group.id == selectedGroup.id && group.lifecycle == .active
+              && group.accounts.contains { $0.address == selectedAccount.address }
+          }
+        }),
+        let signer = try? accountResolver.signer(address: selectedAccount.address), signer.hasKey()
+      else { throw WalletError.bindingMismatch }
+
+      record = WalletPendingRequest(
+        id: record.id, kind: record.kind, method: record.method, origin: record.origin,
+        profileID: record.profileID, chainId: record.chainId, account: selectedAccount.address,
+        params: record.params,
+        payloadDigest: CanonicalRequest.bindingDigestV2(
+          requestID: record.id, kind: record.kind, method: record.method, origin: record.origin,
+          profileID: record.profileID, chainId: record.chainId, account: selectedAccount.address,
+          params: record.params, createdAt: record.createdAt, expiresAt: record.expiresAt),
+        intentDigest: record.intentDigest, requestKey: record.requestKey,
+        bindingVersion: record.bindingVersion, revision: record.revision + 1,
+        resolvedParams: record.resolvedParams, createdAt: record.createdAt,
+        expiresAt: record.expiresAt, status: record.status, result: record.result,
+        error: record.error)
+      try store.persistForLifecycleCleanup(record)
+    }
   }
 
   private func estimatedNetworkFee(for record: WalletPendingRequest) async -> String {
@@ -854,28 +969,247 @@ public actor WalletService {
     return "Chain \(normalized)"
   }
 
+  private nonisolated func rawRecord(_ id: UUID) throws -> WalletPendingRequest? {
+    try store.retainedRecordsForClaimedTransition().first { $0.id == id }
+  }
+
+  private nonisolated func rawPendingQueue() throws -> [WalletPendingRequest] {
+    try store.retainedRecordsForClaimedTransition()
+      .filter { $0.status == .pending && !$0.isExpired }
+      .sorted(by: Self.requestComesBefore)
+  }
+
+  private nonisolated func transitionAccount(
+    request: UUID, record: WalletPendingRequest?
+  ) throws -> String? {
+    if let account = try connectMarkerAccount(request: request) { return account }
+    return record?.account
+  }
+
+  private nonisolated func connectMarkerAccount(request: UUID) throws -> String? {
+    do {
+      return try connectedSites.connectionStore.withLockedState { state in
+        state.connectCommits.first { $0.requestID == request }?.account
+      }
+    } catch ConnectionStateError.missing {
+      return nil
+    }
+  }
+
+  private nonisolated func withGroupClaim<T>(
+    account: String?, operation: () throws -> T
+  ) throws -> T {
+    guard let registryStore else { return try operation() }
+    guard let account, let registry = try registryStore.loadReady(),
+      let group = registry.groups.first(where: { group in
+        group.accounts.contains { $0.address.caseInsensitiveCompare(account) == .orderedSame }
+      })
+    else { throw WalletError.bindingMismatch }
+    return try groupLifecycle.withClaim(groupID: group.id, operation: operation)
+  }
+
+  private nonisolated func reconcileConnectCommit(
+    request: UUID, record: WalletPendingRequest?
+  ) throws -> (record: WalletPendingRequest, result: JSONValue)? {
+    let connectionStore = connectedSites.connectionStore
+    let marker: ConnectCommit?
+    do {
+      marker = try connectionStore.withLockedState { state in
+        state.connectCommits.first { $0.requestID == request }
+      }
+    } catch ConnectionStateError.missing {
+      return nil
+    }
+    guard let marker else { return nil }
+    guard var record, record.kind == .connect, Self.isPlainConnect(record),
+      record.bindingVersion == 2, record.id == marker.requestID,
+      record.revision == marker.requestRevision, record.origin == marker.origin,
+      record.profileID == marker.profileID, record.account == marker.account,
+      record.payloadDigest == marker.bindingDigest,
+      CanonicalRequest.bindingDigestV2(
+        requestID: record.id, kind: record.kind, method: record.method, origin: record.origin,
+        profileID: record.profileID, chainId: record.chainId, account: record.account,
+        params: record.params, createdAt: record.createdAt, expiresAt: record.expiresAt)
+        == record.payloadDigest,
+      record.status == .pending || (record.status == .consumed && record.result == marker.result)
+    else { throw WalletError.bindingMismatch }
+
+    if record.status == .pending {
+      record.status = .consumed
+      record.result = marker.result
+      try store.persistForLifecycleCleanup(record)
+    }
+    guard let consumed = try rawRecord(request), consumed.status == .consumed,
+      consumed.result == marker.result
+    else { throw WalletError.bindingMismatch }
+    _ = try connectionStore.mutate { state in
+      guard let current = state.connectCommits.first(where: { $0.requestID == request }),
+        current == marker
+      else { throw WalletError.bindingMismatch }
+      state.connectCommits.removeAll { $0.requestID == request }
+    }
+    return (consumed, marker.result)
+  }
+
+  private func approvePlainConnect(
+    request: UUID, profileID: String?, reviewedRevision: UInt64
+  ) throws -> JSONValue {
+    let initial = try rawRecord(request)
+    let account = try transitionAccount(request: request, record: initial)
+    return try withGroupClaim(account: account) {
+      guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
+      defer { store.releaseClaim(claim) }
+      let raw = try rawRecord(request)
+      if let recovered = try reconcileConnectCommit(request: request, record: raw) {
+        guard recovered.record.profileID == profileID else { throw WalletError.bindingMismatch }
+        return recovered.result
+      }
+      guard var record = raw else { throw WalletError.notFound }
+      guard record.kind == .connect, Self.isPlainConnect(record), record.bindingVersion == 2,
+        record.profileID == profileID, record.revision == reviewedRevision
+      else { throw WalletError.bindingMismatch }
+      guard record.status == .pending else { throw WalletError.alreadyConsumed }
+      if record.isExpired {
+        record.status = .expired
+        try store.persistForLifecycleCleanup(record)
+        throw WalletError.expired
+      }
+      guard try rawPendingQueue().first?.id == record.id else { throw WalletError.queued }
+      guard Self.kindMatches(record),
+        CanonicalRequest.bindingDigestV2(
+          requestID: record.id, kind: record.kind, method: record.method, origin: record.origin,
+          profileID: record.profileID, chainId: record.chainId, account: record.account,
+          params: record.params, createdAt: record.createdAt, expiresAt: record.expiresAt)
+          == record.payloadDigest,
+        let signer = try? accountResolver.signer(address: record.account), signer.hasKey()
+      else { throw WalletError.bindingMismatch }
+
+      let result: JSONValue = .array([.string(record.account)])
+      let commitConnection: (WalletRegistry?) throws -> Void = { registry in
+        _ = try self.connectedSites.connectionStore.mutate { state in
+          if let registry { try state.validate(against: registry) }
+          guard !state.connectCommits.contains(where: { $0.requestID == record.id }) else {
+            throw WalletError.bindingMismatch
+          }
+          let grant = ConnectionGrant(
+            account: record.account, origin: record.origin,
+            legacyDomain: Origin.downHost(of: record.origin), profileID: record.profileID,
+            connectedAt: Date(), precision: .exact)
+          state.grants.removeAll { $0.id == grant.id }
+          state.grants.append(grant)
+          state.activeConnections.removeAll {
+            $0.origin == record.origin && $0.profileID == record.profileID
+          }
+          state.activeConnections.append(
+            ActiveConnection(
+              origin: record.origin, profileID: record.profileID, account: record.account))
+          state.defaultAccount = record.account
+          state.connectCommits.append(
+            ConnectCommit(
+              requestID: record.id, requestRevision: record.revision,
+              connectionRevision: state.revision + 1, origin: record.origin,
+              profileID: record.profileID, account: record.account,
+              bindingDigest: record.payloadDigest, result: result, committedAt: Date()))
+        }
+      }
+      if let registryStore {
+        try registryStore.withLockedReady { registry in
+          guard
+            registry.groups.contains(where: { group in
+              group.lifecycle == .active
+                && group.accounts.contains { $0.address == record.account }
+            })
+          else { throw WalletError.bindingMismatch }
+          try commitConnection(registry)
+        }
+      } else {
+        try commitConnection(nil)
+      }
+
+      record.status = .consumed
+      record.result = result
+      try store.persistForLifecycleCleanup(record)
+      guard let recovered = try reconcileConnectCommit(request: request, record: record) else {
+        throw WalletError.bindingMismatch
+      }
+      return recovered.result
+    }
+  }
+
+  private static func isPlainConnect(_ record: WalletPendingRequest) -> Bool {
+    record.kind == .connect
+      && (record.method.lowercased() == "eth_requestaccounts"
+        || record.method.lowercased() == "wallet_connect")
+  }
+
   /// Persisted status so a suspending service worker and a polling page converge.
   public func status(for id: UUID, profileID: String? = nil) async -> RequestStatus? {
     guard (try? ensureRegistryReady()) != nil else { return nil }
-    guard let record = try? await store.record(id), record.profileID == profileID else {
-      return nil
+    do {
+      let initial = try rawRecord(id)
+      let markerAccount = try connectMarkerAccount(request: id)
+      if let initial, initial.status != .pending, markerAccount == nil {
+        guard initial.profileID == profileID, initial.bindingVersion == 2 else { return nil }
+        return RequestStatus(
+          status: initial.status.rawValue, result: initial.result, error: initial.error)
+      }
+      let account = markerAccount ?? initial?.account
+      guard initial != nil || account != nil else { return nil }
+      return try withGroupClaim(account: account) {
+        guard let claim = store.claim(id) else { return nil }
+        defer { store.releaseClaim(claim) }
+        let raw = try rawRecord(id)
+        if let recovered = try reconcileConnectCommit(request: id, record: raw) {
+          guard recovered.record.profileID == profileID else { return nil }
+          return RequestStatus(status: "consumed", result: recovered.result, error: nil)
+        }
+        guard var record = raw, record.profileID == profileID, record.bindingVersion == 2 else {
+          return nil
+        }
+        if record.status == .pending && record.isExpired {
+          record.status = .expired
+          try store.persistForLifecycleCleanup(record)
+        }
+        return RequestStatus(
+          status: record.status.rawValue, result: record.result, error: record.error)
+      }
+    } catch {
+      return RequestStatus(
+        status: "failed", result: nil,
+        error: .object([
+          "code": .number(-32603),
+          "message": .string("Conflicting committed connection state"),
+        ]))
     }
-    guard record.bindingVersion == 2 else { return nil }
-    return RequestStatus(
-      status: record.status.rawValue, result: record.result, error: record.error)
   }
 
   /// Approve the active head: verify binding, queue eligibility, expiry, recomputed
   /// digest, authenticate, then sign with the real account key and consume the record.
-  public func approve(request: UUID, profileID: String? = nil) async throws -> JSONValue {
+  public func approve(
+    request: UUID, profileID: String? = nil, reviewedRevision: UInt64 = 0
+  ) async throws -> JSONValue {
     _ = try ensureRegistryReady()
-    guard try await store.record(request) != nil else { throw WalletError.notFound }
+    let initial = try rawRecord(request)
+    if initial == nil,
+      try transitionAccount(request: request, record: nil) != nil
+    {
+      throw WalletError.bindingMismatch
+    }
+    guard let initial else { throw WalletError.notFound }
+    if initial.kind == .connect, registryStore != nil {
+      return try approvePlainConnect(
+        request: request, profileID: profileID, reviewedRevision: reviewedRevision)
+    }
     guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
     defer { store.releaseClaim(claim) }
 
+    guard try reconcileConnectCommit(request: request, record: initial) == nil else {
+      throw WalletError.bindingMismatch
+    }
     guard var record = try await store.record(request) else { throw WalletError.notFound }
     guard record.profileID == profileID else { throw WalletError.bindingMismatch }
     guard record.bindingVersion == 2 else { throw WalletError.bindingMismatch }
+    guard record.revision == reviewedRevision else { throw WalletError.bindingMismatch }
     // store.record() normalizes an expired pending record to `.expired`.
     if record.status == .expired { throw WalletError.expired }
     guard record.status == .pending else { throw WalletError.alreadyConsumed }
@@ -2112,18 +2446,33 @@ public actor WalletService {
     }
   }
 
-  public func reject(request: UUID, profileID: String? = nil) async throws {
+  public func reject(
+    request: UUID, profileID: String? = nil, reviewedRevision: UInt64 = 0
+  ) async throws {
     _ = try ensureRegistryReady()
-    guard try await store.record(request) != nil else { throw WalletError.notFound }
-    guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
-    defer { store.releaseClaim(claim) }
-    guard let record = try await store.record(request) else { throw WalletError.notFound }
-    guard record.profileID == profileID else { throw WalletError.bindingMismatch }
-    guard record.bindingVersion == 2 else { throw WalletError.bindingMismatch }
-    guard record.status == .pending else { throw WalletError.alreadyConsumed }
-    var rejected = record
-    rejected.status = .rejected
-    try await store.insert(rejected)
+    let initial = try rawRecord(request)
+    let account = try transitionAccount(request: request, record: initial)
+    guard initial != nil || account != nil else { throw WalletError.notFound }
+    try withGroupClaim(account: account) {
+      guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
+      defer { store.releaseClaim(claim) }
+      let raw = try rawRecord(request)
+      if try reconcileConnectCommit(request: request, record: raw) != nil {
+        throw WalletError.alreadyConsumed
+      }
+      guard var record = raw else { throw WalletError.notFound }
+      guard record.profileID == profileID, record.bindingVersion == 2,
+        record.revision == reviewedRevision
+      else { throw WalletError.bindingMismatch }
+      guard record.status == .pending else { throw WalletError.alreadyConsumed }
+      if record.isExpired {
+        record.status = .expired
+        try store.persistForLifecycleCleanup(record)
+        throw WalletError.expired
+      }
+      record.status = .rejected
+      try store.persistForLifecycleCleanup(record)
+    }
   }
 
   /// Node-answered JSON-RPC result or preserved node error, through the one resolver.

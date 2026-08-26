@@ -123,7 +123,7 @@
         case "popup.approve":
           const approved = await native({
             action: "approve",
-            payload: { requestId: message.requestId },
+            payload: { requestId: message.requestId, revision: message.revision },
           });
           if (approved.ok && approved.data) {
             sendResponse({ ok: true, result: approved.data.result });
@@ -138,13 +138,35 @@
         case "popup.reject":
           const rejected = await native({
             action: "reject",
-            payload: { requestId: message.requestId },
+            payload: { requestId: message.requestId, revision: message.revision },
           });
           if (rejected.ok) {
             pending.delete(message.requestId);
             updateBadge();
           }
-          sendResponse({ ok: !!rejected.ok });
+          sendResponse(
+            rejected.ok ? { ok: true } : { ok: false, error: rejected.error || "rejection failed" },
+          );
+          return;
+        case "popup.connectAccounts":
+          sendResponse(
+            await native({
+              action: "connectAccounts",
+              payload: { requestId: message.requestId, revision: message.revision },
+            }),
+          );
+          return;
+        case "popup.rebindConnect":
+          sendResponse(
+            await native({
+              action: "rebindConnect",
+              payload: {
+                requestId: message.requestId,
+                revision: message.revision,
+                account: message.account,
+              },
+            }),
+          );
           return;
         case "popup.didDecide":
           pending.delete(message.requestId);

@@ -3,6 +3,7 @@ import Foundation
 
 public enum PendingRequestStoreError: Error, Equatable, Sendable {
   case duplicateCallBundleID
+  case conflictingRequestKey
   case corrupt
   case unavailable
 }
@@ -155,8 +156,8 @@ public actor PendingRequestStore {
     try data.write(to: fileURL(for: request.id), options: [.atomic])
   }
 
-  /// Atomically inserts a pending request unless the same provider request and intent are
-  /// already pending, returning the existing request's ID in the latter case. The operation is
+  /// Atomically inserts a pending request unless the same provider request and intent already
+  /// exists in retained state, returning the original request's ID in the latter case. The operation is
   /// serialized both across the in-process actor and **across processes** (app ↔ extension)
   /// by an OS advisory lock, so duplicate re-sent requests cannot race into two records.
   public func insertIfAbsent(
@@ -168,12 +169,17 @@ public actor PendingRequestStore {
     }
     let lock = try acquirePrepareLock()
     defer { releasePrepareLock(lock) }
-    if let existing = try pending().first(where: {
-      $0.requestKey == request.requestKey
-        && $0.intentDigest == request.intentDigest
-        && $0.status == .pending
-    }) {
-      return existing.id
+    if let requestKey = request.requestKey {
+      let matches = try retainedRecordsForRetryIdentity().filter {
+        $0.requestKey == requestKey
+      }
+      guard matches.count <= 1 else { throw PendingRequestStoreError.corrupt }
+      if let existing = matches.first {
+        guard existing.intentDigest == request.intentDigest else {
+          throw PendingRequestStoreError.conflictingRequestKey
+        }
+        return existing.id
+      }
     }
     if let callBundleID,
       try pending().contains(where: { pending in
@@ -263,6 +269,17 @@ public actor PendingRequestStore {
   /// Keeping this file operation nonisolated lets registry adoption resume deletion before
   /// exposing the wallet, without bridging async work through a blocking semaphore.
   nonisolated func retainedRecordsForLifecycleCleanup() throws -> [WalletPendingRequest] {
+    var result = try retainedRecordsForClaimedTransition()
+    for index in result.indices where result[index].status == .pending && result[index].isExpired {
+      result[index].status = .expired
+      try persistForLifecycleCleanup(result[index])
+    }
+    return result
+  }
+
+  /// Raw retained records for code that already owns the relevant request claim. This does
+  /// not expire or otherwise mutate records before connect-marker recovery runs.
+  nonisolated func retainedRecordsForClaimedTransition() throws -> [WalletPendingRequest] {
     let files =
       try FileManager.default.contentsOfDirectory(
         at: directory, includingPropertiesForKeys: nil)
@@ -277,12 +294,36 @@ public actor PendingRequestStore {
       } catch {
         throw PendingRequestStoreError.unavailable
       }
-      guard var request = try? JSONDecoder().decode(WalletPendingRequest.self, from: data) else {
+      guard let request = try? JSONDecoder().decode(WalletPendingRequest.self, from: data) else {
         throw PendingRequestStoreError.corrupt
       }
-      if request.status == .pending && request.isExpired {
-        request.status = .expired
-        try persistForLifecycleCleanup(request)
+      result.append(request)
+    }
+    return result
+  }
+
+  /// Retained binding-v2 records participating in provider retry identity. Unsupported
+  /// rebuild bindings are not migration or deduplication inputs and are not fully decoded.
+  private nonisolated func retainedRecordsForRetryIdentity() throws -> [WalletPendingRequest] {
+    let files = try FileManager.default.contentsOfDirectory(
+      at: directory, includingPropertiesForKeys: nil)
+    var result: [WalletPendingRequest] = []
+    for file in files
+    where file.pathExtension == "json"
+      && UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil
+    {
+      let data: Data
+      do {
+        data = try Data(contentsOf: file)
+      } catch {
+        throw PendingRequestStoreError.unavailable
+      }
+      guard let binding = try? JSONDecoder().decode(RetainedBinding.self, from: data) else {
+        throw PendingRequestStoreError.corrupt
+      }
+      guard binding.bindingVersion == 2 else { continue }
+      guard let request = try? JSONDecoder().decode(WalletPendingRequest.self, from: data) else {
+        throw PendingRequestStoreError.corrupt
       }
       result.append(request)
     }
@@ -311,4 +352,8 @@ public actor PendingRequestStore {
   private nonisolated func claimURL(for id: UUID) -> URL {
     directory.appendingPathComponent(id.uuidString + ".claim")
   }
+}
+
+private struct RetainedBinding: Decodable {
+  let bindingVersion: Int?
 }

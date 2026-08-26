@@ -254,6 +254,50 @@ struct WalletGroupManagerTests {
     #expect(try environment.registry.loadReady()?.groups.contains { $0.id == group.id } == false)
     #expect(!seeds.contains(groupID: group.id))
   }
+
+  @Test("group deletion reconciles a committed connect result before account cleanup")
+  func deletionReconcilesConnectMarker() async throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+    let account = group.accounts[0].address
+    let origin = "https://committed.example"
+    let id = UUID()
+    let createdAt = Date()
+    let expiresAt = createdAt.addingTimeInterval(600)
+    let params: JSONValue = .array([])
+    let digest = CanonicalRequest.bindingDigestV2(
+      requestID: id, kind: .connect, method: "eth_requestAccounts", origin: origin,
+      profileID: nil, chainId: "1", account: account, params: params,
+      createdAt: createdAt, expiresAt: expiresAt)
+    let request = WalletPendingRequest(
+      id: id, kind: .connect, method: "eth_requestAccounts", origin: origin, chainId: "1",
+      account: account, params: params, payloadDigest: digest, bindingVersion: 2,
+      createdAt: createdAt, expiresAt: expiresAt)
+    try await environment.pending.insert(request)
+    _ = try environment.connection.mutate { state in
+      let grant = ConnectionGrant(
+        account: account, origin: origin, legacyDomain: "committed.example", profileID: nil,
+        connectedAt: .now, precision: .exact)
+      state.grants.append(grant)
+      state.activeConnections.append(
+        ActiveConnection(origin: origin, profileID: nil, account: account))
+      state.defaultAccount = account
+      state.connectCommits.append(
+        ConnectCommit(
+          requestID: id, requestRevision: 0, connectionRevision: state.revision + 1,
+          origin: origin, profileID: nil, account: account, bindingDigest: digest,
+          result: .array([.string(account)]), committedAt: .now))
+    }
+
+    try environment.manager.deleteGroup(groupID: group.id)
+
+    let terminal = try #require(await environment.pending.record(id))
+    #expect(terminal.status == .consumed)
+    #expect(terminal.result == .array([.string(account)]))
+    #expect(try environment.connection.load()?.connectCommits.isEmpty == true)
+    #expect(try environment.connection.load()?.defaultAccount == environment.existingAddress)
+  }
 }
 
 private struct Environment {

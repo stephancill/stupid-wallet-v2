@@ -105,6 +105,18 @@ public struct ConnectCommit: Codable, Sendable, Equatable, Identifiable {
   }
 
   public var id: UUID { requestID }
+
+  func matches(_ request: WalletPendingRequest) -> Bool {
+    request.id == requestID && request.kind == .connect && request.bindingVersion == 2
+      && request.revision == requestRevision && request.origin == origin
+      && request.profileID == profileID && request.account == account
+      && request.payloadDigest == bindingDigest && result == .array([.string(account)])
+      && CanonicalRequest.bindingDigestV2(
+        requestID: request.id, kind: request.kind, method: request.method, origin: request.origin,
+        profileID: request.profileID, chainId: request.chainId, account: request.account,
+        params: request.params, createdAt: request.createdAt, expiresAt: request.expiresAt)
+        == bindingDigest
+  }
 }
 
 /// One versioned, atomic App Group file describing every connection grant, the active
@@ -194,9 +206,27 @@ public struct ConnectionState: Codable, Sendable, Equatable {
         throw ConnectionStateError.invalid(.duplicateCommit)
       }
       guard Self.isCanonicalAddress(commit.account),
-        Origin.normalize(commit.origin) == commit.origin
+        Origin.normalize(commit.origin) == commit.origin,
+        commit.connectionRevision > 0,
+        commit.connectionRevision <= revision,
+        commit.bindingDigest.count == 64,
+        Hex.data(commit.bindingDigest)?.count == 32,
+        commit.result == .array([.string(commit.account)])
       else {
         throw ConnectionStateError.invalid(.invalidCommit)
+      }
+      if commit.connectionRevision == revision {
+        let hasGrant = grants.contains {
+          $0.precision == .exact && $0.origin == commit.origin
+            && $0.profileID == commit.profileID && $0.account == commit.account
+        }
+        let hasActive = activeConnections.contains {
+          $0.origin == commit.origin && $0.profileID == commit.profileID
+            && $0.account == commit.account
+        }
+        guard hasGrant, hasActive, defaultAccount == commit.account else {
+          throw ConnectionStateError.invalid(.invalidCommit)
+        }
       }
     }
   }
@@ -308,6 +338,13 @@ public struct ConnectionStateStore: @unchecked Sendable {
   public func load() throws -> ConnectionState? {
     try withLock {
       try loadUnlocked()
+    }
+  }
+
+  func withLockedState<T>(_ operation: (ConnectionState) throws -> T) throws -> T {
+    try withLock {
+      guard let state = try loadUnlocked() else { throw ConnectionStateError.missing }
+      return try operation(state)
     }
   }
 

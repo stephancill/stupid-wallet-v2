@@ -235,6 +235,89 @@ test("popup renders addresses, collapses queued requests, and expands raw callda
   assert.equal(calldataToggle.getAttribute("aria-expanded"), "true");
 });
 
+test("active connect account opens an existing-account-only revisioned picker", async () => {
+  const first = "0x1234567890abcdef1234567890abcdef12345678";
+  const second = "0x1111111111111111111111111111111111111111";
+  const nativeMessages = [];
+  let didRender;
+  const tray = new TestElement("div", () => didRender?.());
+  const document = {
+    getElementById() {
+      return tray;
+    },
+    createElement(tagName) {
+      return new TestElement(tagName);
+    },
+  };
+  const summary = {
+    id: "connect-1",
+    kind: "connect",
+    title: "Connect site",
+    account: first,
+    origin: "https://dapp.example",
+    queued: false,
+    revision: 3,
+    rows: [
+      { label: "Account", value: first },
+      { label: "Origin", value: "https://dapp.example" },
+    ],
+  };
+  const browser = {
+    runtime: {
+      lastError: null,
+      sendNativeMessage(_applicationID, message, callback) {
+        nativeMessages.push(message);
+        if (message.action === "list") callback({ ok: true, data: { pending: [summary] } });
+        else if (message.action === "connectAccounts") {
+          callback({
+            ok: true,
+            data: {
+              groups: [
+                { id: "seed", kind: "seed", accounts: [{ address: first }, { address: second }] },
+                { id: "key", kind: "privateKey", accounts: [{ address: first }] },
+              ],
+            },
+          });
+        } else if (message.action === "rebindConnect") {
+          callback({ ok: true, data: { summary: { ...summary, account: second, revision: 4 } } });
+        }
+      },
+      sendMessage() {
+        return Promise.resolve(null);
+      },
+    },
+  };
+
+  const rendered = new Promise((resolve) => {
+    didRender = resolve;
+  });
+  vm.runInNewContext(popupSource, { browser, document, Math, Promise, URL, window: {} });
+  await rendered;
+
+  const connect = tray.querySelector(".request-connect");
+  assert.equal(connect.querySelector(".summary").textContent.includes("Wallet"), false);
+  const accountButton = connect.querySelector(".account-select");
+  assert.ok(accountButton);
+  accountButton.click();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(nativeMessages[1].action, "connectAccounts");
+  assert.equal(nativeMessages[1].payload.requestId, "connect-1");
+  assert.equal(nativeMessages[1].payload.revision, 3);
+  const picker = tray.querySelector(".account-picker");
+  assert.ok(picker);
+  assert.equal(picker.textContent.includes("Create"), false);
+  assert.equal(picker.textContent.includes("Import"), false);
+  assert.equal(picker.querySelectorAll(".account-group").length, 2);
+  picker.querySelectorAll(".account-option")[1].click();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(nativeMessages[2].action, "rebindConnect");
+  assert.equal(nativeMessages[2].payload.requestId, "connect-1");
+  assert.equal(nativeMessages[2].payload.revision, 3);
+  assert.equal(nativeMessages[2].payload.account, second);
+});
+
 class TestElement {
   constructor(tagName, onAppend) {
     this.tagName = tagName;
@@ -285,8 +368,23 @@ class TestElement {
 
   appendChild(child) {
     this.children.push(child);
+    child.parentNode = this;
     this.onAppend?.();
     return child;
+  }
+
+  insertBefore(child, reference) {
+    const index = this.children.indexOf(reference);
+    if (index < 0) return this.appendChild(child);
+    this.children.splice(index, 0, child);
+    child.parentNode = this;
+    return child;
+  }
+
+  remove() {
+    if (!this.parentNode) return;
+    this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+    this.parentNode = null;
   }
 
   setAttribute(name, value) {
@@ -313,9 +411,11 @@ class TestElement {
 
   querySelectorAll(selector) {
     const className = selector.startsWith(".") ? selector.slice(1) : null;
+    const tagName = className ? null : selector.toLowerCase();
     const matches = [];
     for (const child of this.children) {
       if (className && child.classList.contains(className)) matches.push(child);
+      if (tagName && child.tagName.toLowerCase() === tagName) matches.push(child);
       matches.push(...child.querySelectorAll(selector));
     }
     return matches;

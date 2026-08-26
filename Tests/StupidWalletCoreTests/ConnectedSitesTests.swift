@@ -349,12 +349,13 @@ struct ConnectedSitesTests {
     let listed = try await svc.list()
     #expect(listed.count == 1)
 
-    // A consumed record is not reused: the next identical request is a fresh pending one.
+    // A retry of the same provider call remains bound to its retained terminal record.
+    // A deliberate later call must mint a new request key.
     _ = try await svc.approve(request: first)
     let later = try await svc.prepare(
       method: "personal_sign", params: params, origin: "https://dapp.example",
       requestKey: "provider-session:1")
-    #expect(later != first)
+    #expect(later == first)
   }
 
   @Test("separate identical requests remain distinct")

@@ -35,9 +35,9 @@
     },
   };
 
-  function directNative(action, requestId) {
+  function directNative(action, payload) {
     const message = { action };
-    if (requestId !== undefined) message.payload = { requestId };
+    if (payload !== undefined) message.payload = payload;
     return new Promise((resolve) => {
       browser.runtime.sendNativeMessage(NATIVE_APP_ID, message, (response) => {
         if (browser.runtime.lastError) {
@@ -49,14 +49,14 @@
     });
   }
 
-  async function native(action, requestId) {
-    const direct = await directNative(action, requestId);
+  async function native(action, payload) {
+    const direct = await directNative(action, payload);
     if (direct !== null) return direct;
 
     // Direct popup-to-native messaging is reliable on macOS Safari. Retain the worker
     // fallback for Safari environments where only background-to-native is available.
     const message = { type: `popup.${action}` };
-    if (requestId !== undefined) message.requestId = requestId;
+    if (payload !== undefined) Object.assign(message, payload);
     return browser.runtime.sendMessage(message).catch(() => null);
   }
 
@@ -172,7 +172,6 @@
     summary.className = "summary";
     appendSummaryRow(summary, "Site", hostFor(data.origin), true);
     for (const row of summaryRows) appendSummaryRow(summary, row.label, row.value);
-    if (kind === "connect" && account) appendSummaryRow(summary, "Wallet", account);
     body.appendChild(summary);
 
     if (transactionRows.length > 0) appendSection(body, "Details", transactionRows);
@@ -212,7 +211,7 @@
         requestId,
         data,
         primary: presentation.primary,
-        account: kind === "connect" ? null : account,
+        account,
       }),
     );
     section.appendChild(body);
@@ -399,25 +398,125 @@
     const actions = document.createElement("div");
     actions.className = "actions";
     if (account) {
-      const actionAccount = document.createElement("div");
-      actionAccount.className = "account";
+      const selectable = data.kind === "connect" && !data.queued;
+      const actionAccount = document.createElement(selectable ? "button" : "div");
+      actionAccount.className = `account${selectable ? " account-select" : ""}`;
       appendDisplayValue(actionAccount, account);
+      if (selectable) {
+        actionAccount.type = "button";
+        actionAccount.title = "Choose account";
+        actionAccount.setAttribute("aria-label", "Choose account");
+        actionAccount.addEventListener("click", () =>
+          openAccountPicker({ requestId, data, actions }),
+        );
+      }
       actions.appendChild(actionAccount);
     }
     const reject = document.createElement("button");
     reject.className = "reject";
     reject.textContent = "Reject";
-    reject.addEventListener("click", () => decide(requestId, false, actions));
+    reject.addEventListener("click", () => decide(requestId, data.revision, false, actions));
     const approve = document.createElement("button");
     approve.className = "approve";
     approve.textContent = data.queued ? "Queued" : primary;
     approve.disabled = !!data.queued;
-    approve.addEventListener("click", () => decide(requestId, true, actions));
+    approve.addEventListener("click", () => decide(requestId, data.revision, true, actions));
     actions.append(reject, approve);
     return actions;
   }
 
-  async function decide(requestId, approve, actions) {
+  async function openAccountPicker({ requestId, data, actions }) {
+    setActionsDisabled(actions, true);
+    const reply = await native("connectAccounts", { requestId, revision: data.revision });
+    if (!reply || reply.ok === false || reply.error) {
+      showError(reply);
+      setActionsDisabled(actions, false);
+      return;
+    }
+    const groups = reply.data?.groups;
+    if (!Array.isArray(groups)) {
+      showError({ error: "Accounts are unavailable" });
+      setActionsDisabled(actions, false);
+      return;
+    }
+
+    const picker = document.createElement("div");
+    picker.className = "account-picker";
+    const panel = document.createElement("div");
+    panel.className = "account-picker-panel";
+    const heading = document.createElement("div");
+    heading.className = "account-picker-heading";
+    const title = document.createElement("strong");
+    title.textContent = "Choose account";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "picker-close";
+    close.textContent = "Close";
+    close.addEventListener("click", () => {
+      picker.remove();
+      setActionsDisabled(actions, false);
+    });
+    heading.append(title, close);
+    panel.appendChild(heading);
+
+    for (const group of groups) {
+      const section = document.createElement("section");
+      section.className = "account-group";
+      const label = document.createElement("h2");
+      label.textContent = group.kind === "seed" ? "Seed wallet" : "Private key wallet";
+      section.appendChild(label);
+      for (const item of Array.isArray(group.accounts) ? group.accounts : []) {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "account-option";
+        if (String(item.address).toLowerCase() === String(data.account).toLowerCase()) {
+          option.classList.add("selected");
+          option.disabled = true;
+        }
+        const identity = document.createElement("span");
+        appendDisplayValue(identity, item.address);
+        const checkmark = document.createElement("span");
+        checkmark.className = "account-checkmark";
+        checkmark.textContent = option.classList.contains("selected") ? "✓" : "";
+        option.append(identity, checkmark);
+        option.addEventListener("click", async () => {
+          for (const button of picker.querySelectorAll("button")) button.disabled = true;
+          const rebound = await native("rebindConnect", {
+            requestId,
+            revision: data.revision,
+            account: item.address,
+          });
+          if (!rebound || rebound.ok === false || rebound.error) {
+            picker.remove();
+            showError(rebound);
+            await refresh();
+            return;
+          }
+          picker.remove();
+          await refresh();
+        });
+        section.appendChild(option);
+      }
+      panel.appendChild(section);
+    }
+    picker.appendChild(panel);
+    tray.appendChild(picker);
+  }
+
+  function setActionsDisabled(actions, disabled) {
+    for (const button of actions.querySelectorAll("button")) button.disabled = disabled;
+  }
+
+  function showError(reply) {
+    const existing = tray.querySelector(".toast");
+    if (existing) existing.remove();
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.textContent = errorMessage(reply);
+    tray.insertBefore(toast, tray.firstChild);
+  }
+
+  async function decide(requestId, revision, approve, actions) {
     const buttons = [...actions.querySelectorAll("button")];
     const buttonStates = buttons.map((button) => ({
       button,
@@ -427,14 +526,9 @@
     for (const button of buttons) button.disabled = true;
     const primary = actions.querySelector(".approve");
     if (approve && primary) primary.textContent = "Confirming...";
-    const reply = await native(approve ? "approve" : "reject", requestId);
+    const reply = await native(approve ? "approve" : "reject", { requestId, revision });
     if (!reply || reply.ok === false || reply.error) {
-      const existing = tray.querySelector(".toast");
-      if (existing) existing.remove();
-      const toast = document.createElement("div");
-      toast.className = "toast";
-      toast.textContent = errorMessage(reply);
-      tray.insertBefore(toast, tray.firstChild);
+      showError(reply);
       for (const state of buttonStates) {
         state.button.disabled = state.disabled;
         state.button.textContent = state.text;

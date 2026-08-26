@@ -216,6 +216,48 @@ private enum Server {
         return failure("list failed")
       }
 
+    case "connectAccounts":
+      guard let uuid = envelope.requestID(), let revision = envelope.reviewedRevision() else {
+        return errorJSON(-32602, "Invalid account-list request")
+      }
+      do {
+        guard let summary = try await service.summarize(request: uuid, profileID: profileID),
+          summary.kind == RequestKind.connect.rawValue, !summary.queued,
+          summary.revision == revision
+        else {
+          return errorJSON(-32602, "Connect review changed; reload the request")
+        }
+        let groups = try await service.availableAccountGroups()
+        return success([
+          "groups": .array(groups.map(accountGroupJSON))
+        ])
+      } catch {
+        return errorJSON(4900, "Wallet accounts are unavailable")
+      }
+
+    case "rebindConnect":
+      guard let uuid = envelope.requestID(), let revision = envelope.reviewedRevision(),
+        let account = envelope.selectedAccount()
+      else {
+        return errorJSON(-32602, "Invalid account selection")
+      }
+      do {
+        try await service.rebindConnect(
+          request: uuid, account: account, reviewedRevision: revision, profileID: profileID)
+        guard let summary = try await service.summarize(request: uuid, profileID: profileID) else {
+          return errorJSON(4100, "Request no longer exists")
+        }
+        return success(["summary": summaryJSON(summary)])
+      } catch WalletError.queued {
+        return errorJSON(-32000, "An earlier request must be handled first")
+      } catch WalletError.alreadyConsumed {
+        return errorJSON(4001, "Request already handled")
+      } catch WalletError.bindingMismatch {
+        return errorJSON(-32602, "Connect review changed; reload the request")
+      } catch {
+        return errorJSON(4900, "Account selection failed")
+      }
+
     case "prepare":
       let method = envelope.method ?? ""
       guard !method.isEmpty else { return failure("missing method") }
@@ -254,9 +296,12 @@ private enum Server {
       return successObject(summaryJSON(summary))
 
     case "approve":
-      guard let uuid = envelope.requestID() else { return failure("invalid requestId") }
+      guard let uuid = envelope.requestID(), let revision = envelope.reviewedRevision() else {
+        return errorJSON(-32602, "Invalid reviewed request")
+      }
       do {
-        let result = try await service.approve(request: uuid, profileID: profileID)
+        let result = try await service.approve(
+          request: uuid, profileID: profileID, reviewedRevision: revision)
         return success(["result": result])
       } catch WalletError.notFound {
         return errorJSON(4100, "Request no longer exists")
@@ -267,7 +312,7 @@ private enum Server {
       } catch WalletError.queued {
         return errorJSON(-32000, "An earlier request must be handled first")
       } catch WalletError.bindingMismatch {
-        return errorJSON(-32602, "Request payload changed")
+        return errorJSON(-32602, "Request review changed; reload the request")
       } catch WalletError.authCancelled {
         return errorJSON(4001, "User rejected")
       } catch WalletError.rpc(let error) {
@@ -291,10 +336,19 @@ private enum Server {
       return failure("not found")
 
     case "reject":
-      guard let uuid = envelope.requestID() else { return failure("invalid requestId") }
+      guard let uuid = envelope.requestID(), let revision = envelope.reviewedRevision() else {
+        return errorJSON(-32602, "Invalid reviewed request")
+      }
       do {
-        try await service.reject(request: uuid, profileID: profileID)
+        try await service.reject(
+          request: uuid, profileID: profileID, reviewedRevision: revision)
         return success(["ok": .bool(true)])
+      } catch WalletError.bindingMismatch {
+        return errorJSON(-32602, "Request review changed; reload the request")
+      } catch WalletError.alreadyConsumed {
+        return errorJSON(4001, "Request already handled")
+      } catch WalletError.queued {
+        return errorJSON(-32000, "An earlier request must be handled first")
       } catch {
         return failure("reject failed")
       }
@@ -314,9 +368,25 @@ private enum Server {
       "account": .string(summary.account),
       "title": .string(summary.title),
       "queued": .bool(summary.queued),
+      "revision": .number(Double(summary.revision)),
       "rows": .array(
         summary.rows.map {
           .object(["label": .string($0.label), "value": .string($0.value)])
+        }),
+    ])
+  }
+
+  private static func accountGroupJSON(_ group: WalletService.AvailableAccountGroup) -> JSONValue {
+    .object([
+      "id": .string(group.id.uuidString.lowercased()),
+      "kind": .string(group.kind.rawValue),
+      "accounts": .array(
+        group.accounts.map { account in
+          var value: [String: JSONValue] = ["address": .string(account.address)]
+          if let index = account.derivationIndex {
+            value["derivationIndex"] = .number(Double(index))
+          }
+          return .object(value)
         }),
     ])
   }
@@ -378,6 +448,19 @@ private struct Envelope {
   func requestID() -> UUID? {
     guard case .object(let object) = payload else { return nil }
     return object["requestId"]?.stringValue.flatMap(UUID.init(uuidString:))
+  }
+
+  func reviewedRevision() -> UInt64? {
+    guard case .object(let object) = payload, case .number(let value)? = object["revision"],
+      value.isFinite, value >= 0, value.rounded(.towardZero) == value,
+      value <= 9_007_199_254_740_991
+    else { return nil }
+    return UInt64(value)
+  }
+
+  func selectedAccount() -> String? {
+    guard case .object(let object) = payload else { return nil }
+    return object["account"]?.stringValue
   }
 }
 

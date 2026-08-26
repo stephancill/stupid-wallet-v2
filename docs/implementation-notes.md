@@ -50,6 +50,56 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Gate F Revisioned Connect Account Selection
+
+### Summary
+
+- Added grouped public account summaries and a sticky popup account picker for the active plain-connect
+  request. The picker lists only available existing registry accounts and routes both direct-native and
+  background-fallback selection through revisioned native messages.
+- Added claimed connect rebinding that preserves page intent and retry identity while replacing the
+  selected account, account-inclusive binding digest, and request revision. Approve and reject now
+  require the popup's reviewed revision, so stale decisions fail closed.
+- Made connect completion recoverable: one connection-state revision writes the exact grant, active
+  origin/profile account, future connection default, and `ConnectCommit` before pending consumption.
+  Status, later decisions, and group deletion reconcile a valid marker to the committed result and
+  preserve conflicts for fail-closed diagnosis.
+- Changed retained provider retry identity to cover terminal records and separated its scan from
+  explicit request transitions. Unsupported pre-v2 bindings are not decoded as retry inputs, while an
+  explicit decision for a decodable unsupported record still fails as a binding mismatch. WebExtension
+  manifest `0.1.45` carries the popup and worker changes.
+
+### Why
+
+- Popup account choice must not create partial connection authority or let another stale popup approve
+  a different account. A durable marker is required because connection state and pending files cannot
+  be committed atomically together.
+- Retained unsupported rebuild records are outside migration scope and must not block a new Gate F
+  connect, but hiding them from explicit request-ID handling would incorrectly turn a binding conflict
+  into a not-found result.
+
+### Verification
+
+- `swift test` passed all 288 tests in 34 suites, including revision races, stale decisions, marker
+  recovery/conflicts, deletion reconciliation, terminal polling after account removal, and unsupported
+  retry-record isolation.
+- `node --test Tests/JavaScript/*.test.mjs` passed all 14 tests. Oxc formatting/linting, JavaScript
+  syntax checks, manifest JSON validation, and `git diff --check` passed.
+- `swift format lint --recursive Sources Tests` reported only the three pre-existing block-comment
+  warnings in `SecurityWalletBackend.swift`.
+- `stupid-app 0.0.8 doctor` completed with zero failures and warnings, `stupid-app build` succeeded, and
+  `stupid-app run --simulator --udid <preferred-simulator>` installed and launched manifest `0.1.45`.
+- Live simulator Safari acceptance prepared a connect request despite retained unsupported pre-v2
+  records, rendered the sticky account button, listed grouped private-key and seed accounts with no
+  creation controls, rebound to a different seed account, rerendered the selected account, approved,
+  and returned that account to the dapp.
+
+### Follow-Up
+
+- Implement Gate G's origin/profile-scoped provider account state and `accountsChanged` lifecycle.
+- Gate B physical protected-seed acceptance and Gate H physical/Mac multi-account Safari acceptance
+  remain separate.
+
 ## 2026-08-26 - Gate E Account-Specific Safari Policy
 
 ### Summary

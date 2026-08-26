@@ -1066,9 +1066,8 @@ Status: in progress on 2026-08-25. Hermetic implementation is complete: canonica
 arbitrary account derivation, protected seed storage by group UUID, empty-install authority bootstrap,
 suspension-safe group lifecycle coordination, additive seed/private-key registration, serialized
 monotonic derivation, duplicate rejection, rollback before registration, registry-resolved seed
-signing/export, and resumable `.deleting` cleanup. Deletion currently preserves and fails loudly on a
-future Gate F connect-commit marker; Gate F must add its approved marker reconciliation before markers
-become writable at runtime. Physical-device entropy protection, signing/export, and deletion proof
+signing/export, and resumable `.deleting` cleanup. Deletion reconciles valid Gate F connect-commit
+markers before account cleanup and fails loudly on marker/record conflicts. Physical-device entropy protection, signing/export, and deletion proof
 remain before Gate B is complete.
 
 Exit conditions:
@@ -1136,6 +1135,13 @@ Exit conditions:
 - SIWE and all non-connect requests remain immutable.
 
 ### Gate F: Popup connect account picker
+
+Status: complete on 2026-08-26. Native summaries and popup decisions carry the reviewed request
+revision; only the active plain-connect request can rebind to an available registered account under the
+group/request claims; and approval atomically writes the grant, active account, future default, and
+connect marker before pending consumption. Status, decisions, and group deletion reconcile valid
+markers to the committed result. Simulator acceptance listed grouped private-key and seed accounts,
+rebound to a seed account, rerendered that account, and completed the connection.
 
 Exit conditions:
 
