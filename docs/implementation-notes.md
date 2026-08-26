@@ -80,6 +80,9 @@ Use this entry template:
 - A fresh prototype-dapp connect request rendered live in simulator Safari. Its picker preserved the
   capitalization of multiple wallet-group labels and showed each account with a larger blockie,
   regular-sized label, and muted shortened-address subtitle. The test request was rejected normally.
+- `stupid-app doctor` passed every host, toolchain, signing, pairing, project, and CoreDevice check.
+  `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` then signed the app and nested
+  extension, installed them over the saved network pairing, and launched the containing app.
 
 ### Follow-Up
 
