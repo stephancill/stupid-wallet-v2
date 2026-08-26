@@ -50,6 +50,21 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Prototype Result-State Borders
+
+### Summary
+
+- Removed the filled backgrounds from the prototype dapp's result messages. Success and failure are
+  now distinguished by green and red borders while retaining the current page background.
+
+### Verification
+
+- `bun run build` passed for `PrototypeDapp`.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-26 - Mac Safari Multi-Account Acceptance
 
 ### Summary

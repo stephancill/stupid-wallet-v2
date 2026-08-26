@@ -307,7 +307,8 @@ export default function App() {
       {result && (
         <pre
           style={{
-            background: "#dfd",
+            background: "transparent",
+            border: "1px solid #2e7d32",
             overflowWrap: "anywhere",
             padding: 8,
             whiteSpace: "pre-wrap",
@@ -316,7 +317,19 @@ export default function App() {
           {result}
         </pre>
       )}
-      {error && <pre style={{ background: "#fdd", padding: 8 }}>{error}</pre>}
+      {error && (
+        <pre
+          style={{
+            background: "transparent",
+            border: "1px solid #c62828",
+            overflowWrap: "anywhere",
+            padding: 8,
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {error}
+        </pre>
+      )}
       {busy && <p>Waiting for wallet response…</p>}
     </main>
   );
