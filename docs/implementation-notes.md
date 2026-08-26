@@ -50,6 +50,43 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-27 - First Internal TestFlight Upload
+
+### Summary
+
+- Uploaded the merged rebuild to App Store Connect internal TestFlight as version 1.0.0, build 91
+  (bundle ID `co.za.stephancill.stupid-wallet`, with the nested Safari extension
+  `co.za.stephancill.stupid-wallet.extension`).
+- Provisioned App Store distribution profiles through `stupid-app signing setup --kind distribution`
+  (the archive step had failed for lack of a stored distribution profile).
+- Added `ITSAppUsesNonExemptEncryption=false` to the app Info.plist after the first upload landed in
+  `MISSING_EXPORT_COMPLIANCE`; the corrected build 91 reached `IN_BETA_TESTING`.
+
+### Why
+
+- The rebuild needs to reach internal testers through the existing production TestFlight pipeline and
+  bundle ID, closing the "upload the rebuild through the existing iOS TestFlight pipeline" follow-up
+  from the 2026-08-24 TestFlight-on-Mac direction entry.
+
+### Verification
+
+- `stupid-app release new-build` reported 90 as the next build from ASC (previous line ended at 89).
+- `stupid-app release bump --build-number 90` then `--build-number 91` updated the app and extension
+  plists in lockstep.
+- `stupid-app release archive` signed the app and extension, packaged `.release/StupidWallet.ipa`, and
+  passed the post-sign verifier.
+- `stupid-app release upload --wait` reached `processing=VALID`, `internal=IN_BETA_TESTING`, and
+  `external=READY_FOR_BETA_SUBMISSION`; `stupid-app release status --live` confirmed the same live
+  states. The release manifest records build `1.0.0 (91)`.
+- An intermittent network issue made `api.appstoreconnect.apple.com` hit a stale, unreachable
+  endpoint; a temporary `/etc/hosts` pin to the live endpoint restored ASC access and was removed
+  after the upload completed.
+
+### Follow-Up
+
+- Add the "What to Test" note for build 91 in App Store Connect if needed.
+- External TestFlight submission remains a separate decision.
+
 ## 2026-08-26 - Multi-Account Build Network Installation
 
 ### Summary

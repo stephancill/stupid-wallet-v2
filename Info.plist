@@ -9,7 +9,9 @@
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>91</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>MinimumOSVersion</key>
     <string>17.0</string>
     <key>UIApplicationSceneManifest</key>
