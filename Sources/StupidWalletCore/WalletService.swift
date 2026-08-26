@@ -500,6 +500,7 @@ public actor WalletService {
     public let origin: String
     public let chainId: String
     public let account: String
+    public let accountLabel: String?
     public let title: String
     public let rows: [(label: String, value: String)]
     public let queued: Bool
@@ -740,11 +741,22 @@ public actor WalletService {
       origin: record.origin,
       chainId: record.chainId,
       account: record.account,
+      accountLabel: accountLabel(for: record.account),
       title: ApprovalSummary.title(for: record),
       rows: rows,
       queued: !active,
       revision: record.revision
     )
+  }
+
+  /// The current editable display label for an account, or nil when the registry
+  /// does not resolve it. Labels are non-authoritative review metadata and never
+  /// enter canonical request identity.
+  private func accountLabel(for address: String) -> String? {
+    guard let registryStore, let registry = try? registryStore.loadReady() else { return nil }
+    return registry.groups.lazy.flatMap(\.accounts).first {
+      $0.address.caseInsensitiveCompare(address) == .orderedSame
+    }?.label
   }
 
   /// Rebinds only the globally active plain-connect request to an existing available account.

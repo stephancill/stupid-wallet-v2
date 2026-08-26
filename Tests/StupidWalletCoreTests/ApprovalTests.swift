@@ -638,6 +638,19 @@ struct ApprovalTests {
       try await context.service.summarize(request: id, profileID: context.profile)?.revision == 1)
   }
 
+  @Test("request summaries carry the current editable account label")
+  func summaryCarriesAccountLabel() async throws {
+    let context = try GateFContext()
+    defer { context.remove() }
+    let id = try await context.service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: context.origin,
+      profileID: context.profile, requestKey: "label-request")
+    let summary = try #require(
+      await context.service.summarize(request: id, profileID: context.profile))
+    #expect(summary.account == context.first)
+    #expect(summary.accountLabel == "Account 1")
+  }
+
   @Test("Gate F plain connect proposes the persisted connection default, not home")
   func gateFDefaultProposal() async throws {
     let context = try GateFContext()

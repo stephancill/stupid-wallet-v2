@@ -322,7 +322,7 @@
     return /^0x[0-9a-f]{40}$/i.test(value);
   }
 
-  function addressView(address) {
+  function addressView(address, label) {
     const value = document.createElement("span");
     value.className = "address-value";
     value.title = address;
@@ -331,7 +331,8 @@
     blockie.setAttribute("aria-hidden", "true");
     appendBlockiePixels(blockie, address.toLowerCase());
     const text = document.createElement("span");
-    text.textContent = `${address.slice(0, 6)}...${address.slice(-4)}`;
+    if (label) text.className = "account-label";
+    text.textContent = label || `${address.slice(0, 6)}...${address.slice(-4)}`;
     value.append(blockie, text);
     return value;
   }
@@ -401,7 +402,11 @@
       const selectable = data.kind === "connect" && !data.queued;
       const actionAccount = document.createElement(selectable ? "button" : "div");
       actionAccount.className = `account${selectable ? " account-select" : ""}`;
-      appendDisplayValue(actionAccount, account);
+      if (isAddress(String(account))) {
+        actionAccount.appendChild(addressView(account, data.accountLabel));
+      } else {
+        actionAccount.textContent = data.accountLabel || String(account);
+      }
       if (selectable) {
         actionAccount.type = "button";
         actionAccount.title = "Choose account";

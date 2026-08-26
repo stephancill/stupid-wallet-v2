@@ -50,6 +50,103 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Safari Popup Avatar-First Account Label
+
+### Summary
+
+- Changed the sticky popup action bar to render the account blockie followed by the editable label
+  when one is available. The shortened address is now a fallback rather than additional visible text;
+  the full address remains hover metadata and canonical request identity.
+- Bumped the WebExtension manifest to `0.1.51` so Safari reloads the revised popup script.
+
+### Why
+
+- The label should replace the address as the readable account name without appearing before the
+  account avatar or duplicating identity text in the constrained action bar.
+
+### Verification
+
+- `node --test Tests/JavaScript/popup.test.mjs` passed all 6 tests, including a regression proving the
+  blockie precedes the label and the shortened address is absent when a label exists.
+- `swift test` passed all 295 tests in 34 suites. `swift format lint --recursive Sources Tests`
+  reported only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`.
+- `node --check SafariExtension/Resources/popup.js`,
+  `PrototypeDapp/node_modules/.bin/oxfmt --check SafariExtension/Resources/popup.js Tests/JavaScript/popup.test.mjs`,
+  and `git diff --check` passed.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid <clean-simulator>` rebuilt,
+  installed, and launched manifest `0.1.51`.
+- A fresh prototype-dapp connect request rendered live in Safari with the blockie first, the edited
+  label after it, no visible address text, and unchanged Reject/Connect actions. Test requests were
+  rejected normally after inspection.
+
+### Follow-Up
+
+- Confirm the avatar-first label layout on a physical device.
+
+## 2026-08-26 - Safari Popup Account Label Simulator Acceptance
+
+### Summary
+
+- Completed live Safari popup acceptance for the editable account label on a clean iOS simulator.
+  A freshly edited label rendered in the active connect request's sticky action bar immediately
+  before the blockie and shortened canonical address.
+- Confirmed a longer label ellipsizes within the fixed popup width without displacing the Reject and
+  Connect actions. The test request was rejected normally after inspection.
+
+### Why
+
+- The earlier verification covered native summary propagation and hermetic popup rendering but had
+  not visually proved the installed WebExtension assets in Safari.
+
+### Verification
+
+- `stupid-app run --simulator --udid <clean-simulator>` rebuilt, installed, and launched the app with
+  WebExtension manifest `0.1.50`.
+- `npm run dev -- --host 0.0.0.0` served the local prototype dapp. Safari injected the provider, a
+  fresh `eth_requestAccounts` request opened in the extension popup, and live inspection confirmed the
+  edited label, blockie, shortened address, and decision actions rendered together.
+- The preferred retained-state simulator could not be used for this visual check because it contains
+  unsupported pre-binding-v2 request records from earlier rebuild development. Those records were not
+  edited or deleted to force progress; acceptance continued on a clean simulator.
+
+### Follow-Up
+
+- Confirm the same label rendering and truncation behavior in a live Safari popup on a physical
+  device.
+
+## 2026-08-26 - Safari Popup Account Labels
+
+### Summary
+
+- Surfaced the editable account label in the Safari review popup. Native request summaries now resolve
+  the current account label from the registry, the Safari handler serializes it as `accountLabel`, and
+  the popup renders it in the sticky action bar ahead of the blockie and shortened address. An unknown
+  account leaves the label absent and the bar unchanged.
+- Bumped the WebExtension manifest to `0.1.50` for the popup JavaScript change.
+
+### Why
+
+- Account labels are non-authoritative display metadata, so showing them in the review surface helps
+  the user recognize which account a request is bound to while the address remains the canonical
+  identity.
+
+### Verification
+
+- `node --test Tests/JavaScript/*.test.mjs` passed all 21 tests, including a new regression proving the
+  action bar renders the label and the shortened address together. `oxfmt`, `oxlint`, `node --check`,
+  and manifest JSON validation passed.
+- `swift test` passed all 295 tests in 34 suites, including a new summary regression that resolves the
+  account's editable label. `swift format lint --recursive Sources Tests`
+  reported only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`, and
+  `git diff --check` passed.
+- `stupid-app doctor` completed with zero failures and zero warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched manifest
+  `0.1.50`; the app rendered the retained wallet home.
+
+### Follow-Up
+
+- Confirm the label rendering in a live Safari popup on a device.
+
 ## 2026-08-26 - Account Menu Row Blockie And Trailing Switch
 
 ### Summary

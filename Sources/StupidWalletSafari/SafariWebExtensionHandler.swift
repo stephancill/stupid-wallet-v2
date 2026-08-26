@@ -366,6 +366,7 @@ private enum Server {
       "origin": .string(summary.origin),
       "chainId": .string(summary.chainId),
       "account": .string(summary.account),
+      "accountLabel": summary.accountLabel.map(JSONValue.string) ?? .null,
       "title": .string(summary.title),
       "queued": .bool(summary.queued),
       "revision": .number(Double(summary.revision)),

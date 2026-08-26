@@ -1,7 +1,7 @@
 {
   "name": "stupid wallet",
   "description": "EIP-1193 Ethereum provider with canonical request review",
-  "version": "0.1.49",
+  "version": "0.1.51",
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "icons": {

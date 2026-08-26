@@ -654,9 +654,11 @@ save leaves the prior labels authoritative and keeps the picker in editing mode 
 error. Label changes do not alter addresses, group IDs, home/default/active selection, grants,
 pending-request bindings, activity ownership, compatibility projection, or keychain identifiers.
 
-Native Safari account summaries may display the latest labels, but addresses remain the account
-identity and labels are never included in canonical request bindings. A label change while a request
-is pending therefore does not invalidate, rebind, or otherwise mutate that request.
+Native Safari account summaries display the latest labels after the account blockie in the popup
+action bar, replacing the shortened address text when a label is available. The full address remains
+hover metadata and the account identity, and labels are never included in canonical request bindings.
+A label change while a request is pending therefore does not invalidate, rebind, or otherwise mutate
+that request.
 
 ### Remove an account registration
 

@@ -247,6 +247,67 @@ test("popup renders addresses, collapses queued requests, and expands raw callda
   assert.equal(calldataToggle.getAttribute("aria-expanded"), "true");
 });
 
+test("popup replaces the action-bar address with the editable label after the blockie", async () => {
+  const account = "0x1234567890abcdef1234567890abcdef12345678";
+  const accountLabel = "Savings";
+  let didRender;
+  const tray = new TestElement("div", () => didRender?.());
+  const document = {
+    getElementById() {
+      return tray;
+    },
+    createElement(tagName) {
+      return new TestElement(tagName);
+    },
+  };
+  const browser = {
+    runtime: {
+      lastError: null,
+      sendNativeMessage(_applicationID, _message, callback) {
+        callback({
+          ok: true,
+          data: {
+            pending: [
+              {
+                requestId: "labelled",
+                data: {
+                  kind: "message",
+                  title: "Sign message",
+                  account,
+                  accountLabel,
+                  origin: "https://dapp.example",
+                  queued: false,
+                  revision: 0,
+                  rows: [{ label: "Message", value: "hello" }],
+                },
+              },
+            ],
+            revision: 0,
+          },
+        });
+      },
+      sendMessage() {
+        return Promise.resolve(null);
+      },
+    },
+  };
+
+  const rendered = new Promise((resolve) => {
+    didRender = resolve;
+  });
+  vm.runInNewContext(popupSource, { browser, document, Math, Promise, URL, window: {} });
+  await rendered;
+
+  const request = tray.querySelector(".request-message");
+  const accountAction = request.querySelector(".actions").querySelector(".account");
+  const addressValue = accountAction.querySelector(".address-value");
+  assert.equal(addressValue.children[0].className, "blockie");
+  assert.equal(addressValue.children[1].className, "account-label");
+  assert.equal(addressValue.children[1].textContent, accountLabel);
+  assert.equal(addressValue.textContent, accountLabel);
+  assert.ok(!accountAction.textContent.includes("0x1234...5678"));
+});
+
 test("active connect account opens an existing-account-only revisioned picker", async () => {
   const first = "0x1234567890abcdef1234567890abcdef12345678";
   const second = "0x1111111111111111111111111111111111111111";

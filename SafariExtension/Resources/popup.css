@@ -339,6 +339,14 @@ body {
   display: flex;
 }
 
+.account-label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+
 .actions {
   display: flex;
   align-items: center;

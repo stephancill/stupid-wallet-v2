@@ -424,7 +424,7 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.49`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.51`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet. Provider session UUID generation uses
   `crypto.getRandomValues` when secure-context-only `crypto.randomUUID` is unavailable, preserving
@@ -745,7 +745,9 @@ Safari account model are complete:
   headers and account labels edit in place with dotted underlines identifying editable fields, plus
   confirmed destructive removal.
   Selection and derivation leave the sheet open; named additive create/import flows pop back to the
-  list and preserve the prior home account.
+  list and preserve the prior home account. The Safari review popup's sticky action bar renders the
+  account blockie followed by the current label when available, falling back to the shortened address;
+  the full address remains the canonical request identity and hover metadata.
 - Individual seed-account deletion marks the registration `.deleting`, immediately removes it from
   signer/provider/home/default resolution, terminalizes pending authority, removes connection and
   balance state, and then removes only the registration. The seed identity and next derivation index
