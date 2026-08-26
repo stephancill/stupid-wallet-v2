@@ -820,7 +820,10 @@ active request kinds keep their account in the sticky bar but it remains noninte
 Pressing the active plain-connect account:
 
 1. Calls a native account-list action returning public registry summaries only.
-2. Renders an in-popup picker grouped by wallet group.
+2. Renders an in-popup picker grouped by the editable wallet-group label. Each row places its blockie
+   before the editable account label with a smaller muted shortened address below, matching the native
+   picker proportions. Group headings retain their original capitalization; the full address remains
+   canonical rebind data and hover metadata.
 3. Offers no create, import, derive, delete, or key-export action.
 4. Marks the pending request's current account with a checkmark.
 5. Disables decision controls while a selection transition is in flight.

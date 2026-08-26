@@ -381,9 +381,13 @@ private enum Server {
     .object([
       "id": .string(group.id.uuidString.lowercased()),
       "kind": .string(group.kind.rawValue),
+      "label": .string(group.label),
       "accounts": .array(
         group.accounts.map { account in
-          var value: [String: JSONValue] = ["address": .string(account.address)]
+          var value: [String: JSONValue] = [
+            "address": .string(account.address),
+            "label": .string(account.label),
+          ]
           if let index = account.derivationIndex {
             value["derivationIndex"] = .number(Double(index))
           }

@@ -619,7 +619,9 @@ struct ApprovalTests {
     let groups = try await context.service.availableAccountGroups()
 
     #expect(groups.count == 2)
+    #expect(groups.map(\.label) == ["Wallet 1", "Wallet 2"])
     #expect(groups.flatMap(\.accounts).map(\.address) == [context.first, context.second])
+    #expect(groups.flatMap(\.accounts).map(\.label) == ["Account 1", "Account 1"])
     #expect(
       try await context.service.summarize(request: id, profileID: context.profile)?.revision == 0)
 
@@ -965,12 +967,18 @@ private final class GateFContext: @unchecked Sendable {
     var groups = [
       WalletGroup(
         id: UUID(), kind: .privateKey, createdAt: createdAt, nextDerivationIndex: nil,
-        accounts: [WalletAccount(address: first, derivationIndex: nil, createdAt: createdAt)],
-        lifecycle: .active),
+        accounts: [
+          WalletAccount(
+            address: first, derivationIndex: nil, createdAt: createdAt, label: "Account 1")
+        ],
+        lifecycle: .active, label: "Wallet 1"),
       WalletGroup(
         id: UUID(), kind: .privateKey, createdAt: createdAt, nextDerivationIndex: nil,
-        accounts: [WalletAccount(address: second, derivationIndex: nil, createdAt: createdAt)],
-        lifecycle: .active),
+        accounts: [
+          WalletAccount(
+            address: second, derivationIndex: nil, createdAt: createdAt, label: "Account 1")
+        ],
+        lifecycle: .active, label: "Wallet 2"),
     ]
     if includeUnavailableAccount {
       groups.append(

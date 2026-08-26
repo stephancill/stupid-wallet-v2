@@ -20,6 +20,27 @@ test("account picker stays scrollable inside the fixed Safari popup viewport", (
   assert.match(panelRule, /overscroll-behavior:\s*contain/);
 });
 
+test("account picker matches the native account row proportions", () => {
+  const optionRule = popupStyle.match(/\.account-option\s*\{([^}]*)\}/)?.[1] ?? "";
+  const identityRule = popupStyle.match(/\.account-option-identity\s*\{([^}]*)\}/)?.[1] ?? "";
+  const blockieRule =
+    popupStyle.match(/\.account-option-identity\s*>\s*\.blockie\s*\{([^}]*)\}/)?.[1] ?? "";
+  const labelRule = popupStyle.match(/\.account-option-label\s*\{([^}]*)\}/)?.[1] ?? "";
+  const addressRule = popupStyle.match(/\.account-option-address\s*\{([^}]*)\}/)?.[1] ?? "";
+  const groupRule = popupStyle.match(/\.account-group h2\s*\{([^}]*)\}/)?.[1] ?? "";
+
+  assert.match(optionRule, /padding:\s*10px/);
+  assert.match(optionRule, /align-items:\s*center/);
+  assert.match(identityRule, /align-items:\s*center/);
+  assert.match(identityRule, /gap:\s*12px/);
+  assert.match(blockieRule, /width:\s*28px/);
+  assert.match(blockieRule, /height:\s*28px/);
+  assert.match(labelRule, /font-size:\s*16px/);
+  assert.match(addressRule, /color:\s*var\(--muted\)/);
+  assert.match(addressRule, /font-size:\s*13px/);
+  assert.doesNotMatch(groupRule, /text-transform:\s*uppercase/);
+});
+
 test("popup lists pending requests directly through native messaging", async () => {
   const nativeMessages = [];
   let nativeReply;
@@ -346,8 +367,21 @@ test("active connect account opens an existing-account-only revisioned picker", 
             ok: true,
             data: {
               groups: [
-                { id: "seed", kind: "seed", accounts: [{ address: first }, { address: second }] },
-                { id: "key", kind: "privateKey", accounts: [{ address: first }] },
+                {
+                  id: "seed",
+                  kind: "seed",
+                  label: "Savings Wallet",
+                  accounts: [
+                    { address: first, label: "Daily" },
+                    { address: second, label: "Reserve" },
+                  ],
+                },
+                {
+                  id: "key",
+                  kind: "privateKey",
+                  label: "Cold Wallet",
+                  accounts: [{ address: first, label: "Vault" }],
+                },
               ],
             },
           });
@@ -382,7 +416,15 @@ test("active connect account opens an existing-account-only revisioned picker", 
   assert.equal(picker.textContent.includes("Create"), false);
   assert.equal(picker.textContent.includes("Import"), false);
   assert.equal(picker.querySelectorAll(".account-group").length, 2);
-  picker.querySelectorAll(".account-option")[1].click();
+  assert.ok(picker.textContent.includes("Savings Wallet"));
+  assert.ok(picker.textContent.includes("Cold Wallet"));
+  const options = picker.querySelectorAll(".account-option");
+  assert.equal(options[0].querySelector(".account-option-label").textContent, "Daily");
+  assert.equal(options[0].querySelector(".account-option-address").textContent, "0x1234...5678");
+  assert.equal(options[1].querySelector(".account-option-label").textContent, "Reserve");
+  assert.equal(options[1].querySelector(".account-option-address").textContent, "0x1111...1111");
+  assert.equal(options[1].querySelector(".blockie").children.length, 64);
+  options[1].click();
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(nativeMessages[2].action, "rebindConnect");

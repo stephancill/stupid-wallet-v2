@@ -509,12 +509,14 @@ public actor WalletService {
 
   public struct AvailableAccount: Sendable, Equatable {
     public let address: String
+    public let label: String
     public let derivationIndex: UInt32?
   }
 
   public struct AvailableAccountGroup: Sendable, Equatable {
     public let id: UUID
     public let kind: WalletGroupKind
+    public let label: String
     public let accounts: [AvailableAccount]
   }
 
@@ -529,10 +531,13 @@ public actor WalletService {
         guard account.lifecycle == .active else { return nil }
         guard let signer = try? accountResolver.signer(address: account.address), signer.hasKey()
         else { return nil }
-        return AvailableAccount(address: account.address, derivationIndex: account.derivationIndex)
+        return AvailableAccount(
+          address: account.address, label: account.label,
+          derivationIndex: account.derivationIndex)
       }
       guard !accounts.isEmpty else { return nil }
-      return AvailableAccountGroup(id: group.id, kind: group.kind, accounts: accounts)
+      return AvailableAccountGroup(
+        id: group.id, kind: group.kind, label: group.label, accounts: accounts)
     }
   }
 

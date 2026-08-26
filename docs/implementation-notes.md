@@ -50,6 +50,41 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Safari Account Picker Labels And Avatar Spacing
+
+### Summary
+
+- Extended the native available-account summaries with the editable wallet-group and account labels,
+  and rendered those labels in the Safari popup's connect-account picker.
+- Each picker row now mirrors the native selector: a 28-point blockie precedes a regular-sized account
+  label, with the shortened address on a smaller muted line below. The full address remains canonical
+  rebind data and hover metadata.
+- Wallet-group headings preserve their editable capitalization instead of forcing uppercase.
+- Bumped the WebExtension manifest to `0.1.53` so Safari reloads the modal resources.
+
+### Why
+
+- The account picker should use the same editable registry names as the containing app and sticky
+  popup action, without obscuring the canonical address used by the native rebind boundary.
+
+### Verification
+
+- `node --test Tests/JavaScript/*.test.mjs` passed all 22 tests, including native-style account-row
+  proportions, normal-case group headings, muted address text, and rendered blockies.
+- `swift test` passed all 295 tests in 34 suites. `swift format lint --recursive Sources Tests`
+  reported only the three pre-existing block-comment warnings in `SecurityWalletBackend.swift`.
+- `PrototypeDapp/node_modules/.bin/oxlint SafariExtension/Resources/popup.js Tests/JavaScript/popup.test.mjs`
+  and `git diff --check` passed.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid <clean-simulator>` rebuilt,
+  installed, and launched the app with WebExtension manifest `0.1.53`.
+- A fresh prototype-dapp connect request rendered live in simulator Safari. Its picker preserved the
+  capitalization of multiple wallet-group labels and showed each account with a larger blockie,
+  regular-sized label, and muted shortened-address subtitle. The test request was rejected normally.
+
+### Follow-Up
+
+- Confirm the native-style picker layout on a physical device.
+
 ## 2026-08-26 - Safari Popup Avatar-First Account Label
 
 ### Summary

@@ -424,7 +424,7 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.51`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.53`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet. Provider session UUID generation uses
   `crypto.getRandomValues` when secure-context-only `crypto.randomUUID` is unavailable, preserving
@@ -1316,10 +1316,17 @@ contention during popup approval as pending after rechecking profile and binding
 reporting the request missing; a clean current-build connection completed back to the originating
 page after this fix.
 
+The connect-account picker receives the editable wallet-group and account labels from the native
+registry summary. It renders each group label as its heading and each account as blockie followed by
+account label with a smaller muted shortened address below. Group headings preserve their editable
+capitalization rather than forcing uppercase. The popup uses the native selector's 28-point blockie
+proportion and regular account-label sizing, while the full address remains native rebind identity and
+hover metadata.
+
 The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
 the background worker cannot delay the review surface, while retaining the background route as a
 transport fallback for Safari environments where direct native messaging is unavailable. Manifest
-`0.1.49` contains the dedicated monochrome toolbar action icons, current request-review layout,
+`0.1.53` contains the dedicated monochrome toolbar action icons, current request-review layout,
 the viewport-bounded account picker, and the direct-popup synchronization introduced in `0.1.23`:
 after a successful decision it notifies the worker before the popup closes,
 and an empty worker request set clears the badge with an empty string rather than displaying `0`.

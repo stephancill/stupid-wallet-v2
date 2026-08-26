@@ -326,15 +326,24 @@
     const value = document.createElement("span");
     value.className = "address-value";
     value.title = address;
+    const blockie = blockieView(address);
+    const text = document.createElement("span");
+    if (label) text.className = "account-label";
+    text.textContent = label || shortAddress(address);
+    value.append(blockie, text);
+    return value;
+  }
+
+  function blockieView(address) {
     const blockie = document.createElement("span");
     blockie.className = "blockie";
     blockie.setAttribute("aria-hidden", "true");
     appendBlockiePixels(blockie, address.toLowerCase());
-    const text = document.createElement("span");
-    if (label) text.className = "account-label";
-    text.textContent = label || `${address.slice(0, 6)}...${address.slice(-4)}`;
-    value.append(blockie, text);
-    return value;
+    return blockie;
+  }
+
+  function shortAddress(address) {
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
   }
 
   function appendBlockiePixels(container, seed) {
@@ -468,7 +477,8 @@
       const section = document.createElement("section");
       section.className = "account-group";
       const label = document.createElement("h2");
-      label.textContent = group.kind === "seed" ? "Seed wallet" : "Private key wallet";
+      label.textContent =
+        group.label || (group.kind === "seed" ? "Seed wallet" : "Private key wallet");
       section.appendChild(label);
       for (const item of Array.isArray(group.accounts) ? group.accounts : []) {
         const option = document.createElement("button");
@@ -479,7 +489,22 @@
           option.disabled = true;
         }
         const identity = document.createElement("span");
-        appendDisplayValue(identity, item.address);
+        identity.className = "account-option-identity";
+        if (isAddress(String(item.address))) {
+          option.title = item.address;
+          const copy = document.createElement("span");
+          copy.className = "account-option-copy";
+          const accountLabel = document.createElement("span");
+          accountLabel.className = "account-option-label";
+          accountLabel.textContent = item.label || shortAddress(item.address);
+          const accountAddress = document.createElement("span");
+          accountAddress.className = "account-option-address";
+          accountAddress.textContent = shortAddress(item.address);
+          copy.append(accountLabel, accountAddress);
+          identity.append(blockieView(item.address), copy);
+        } else {
+          identity.textContent = item.label || String(item.address);
+        }
         const checkmark = document.createElement("span");
         checkmark.className = "account-checkmark";
         checkmark.textContent = option.classList.contains("selected") ? "✓" : "";

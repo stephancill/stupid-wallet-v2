@@ -290,10 +290,9 @@ body {
 .account-group h2 {
   margin: 0 0 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: normal;
 }
 
 .account-option {
@@ -301,13 +300,49 @@ body {
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  padding: 11px 10px;
+  padding: 10px;
   border: 0;
   border-radius: 9px;
   background: transparent;
   color: var(--foreground);
   font: inherit;
   text-align: left;
+}
+
+.account-option-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.account-option-identity > .blockie {
+  width: 28px;
+  height: 28px;
+}
+
+.account-option-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.account-option-label {
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-option-address {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .account-option + .account-option {
