@@ -50,6 +50,32 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-27 - Stale Build Export Compliance Fix
+
+### Summary
+
+- Patched the stale App Store Connect build 90 (from the first upload attempt) with
+  `usesNonExemptEncryption=false` through the App Store Connect builds API instead of the CLI, since
+  `stupid-app` has no single-build export-compliance command.
+
+### Why
+
+- The first upload lacked `ITSAppUsesNonExemptEncryption` in its Info.plist and landed with the build
+  beta state `MISSING_EXPORT_COMPLIANCE`. The corrected build 91 already distributes internally; this
+  cleared the stale build's compliance gate rather than leaving a permanently non-compliant build
+  on record.
+
+### Verification
+
+- A JWT from the stored App Store Connect key (`cryptography` ES256) patched the build attribute, then
+  re-fetch confirmed `usesNonExemptEncryption=false`.
+- The build's beta detail resource then reported `internalBuildState=IN_BETA_TESTING` and
+  `externalBuildState=READY_FOR_BETA_SUBMISSION`, matching build 91.
+
+### Follow-Up
+
+- None. Both build 90 and 91 are internal beta-eligible; 91 remains the current fixed build.
+
 ## 2026-08-27 - First Internal TestFlight Upload
 
 ### Summary
