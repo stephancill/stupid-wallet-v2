@@ -50,6 +50,28 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Multi-Account Build Network Installation
+
+### Summary
+
+- Installed the committed multi-account UI and initial wallet-state loading changes on the paired
+  physical iPhone over Wi-Fi, including the nested Safari extension.
+
+### Why
+
+- Physical installation confirms the current development-signed app and extension still package and
+  deploy together after the account-selection and startup-state changes.
+
+### Verification
+
+- `stupid-app device list` found the saved network pairing.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` assembled and signed the app,
+  signed the nested extension, packaged the IPA, then installed and launched the containing app.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-26 - Initial Wallet-State Loading Gate
 
 ### Summary
