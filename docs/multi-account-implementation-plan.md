@@ -1062,13 +1062,15 @@ Exit conditions:
 
 ### Gate B: Seed groups and account lifecycle
 
-Status: in progress on 2026-08-25. Hermetic implementation is complete: canonical BIP-39 entropy and
+Status: complete on 2026-08-26. Hermetic implementation includes canonical BIP-39 entropy and
 arbitrary account derivation, protected seed storage by group UUID, empty-install authority bootstrap,
 suspension-safe group lifecycle coordination, additive seed/private-key registration, serialized
 monotonic derivation, duplicate rejection, rollback before registration, registry-resolved seed
 signing/export, and resumable `.deleting` cleanup. Deletion reconciles valid Gate F connect-commit
-markers before account cleanup and fails loudly on marker/record conflicts. Physical-device entropy protection, signing/export, and deletion proof
-remain before Gate B is complete.
+markers before account cleanup and fails loudly on marker/record conflicts. Physical-iPhone acceptance
+proved generated-backup cancellation without partial registration, protected seed import and monotonic
+sibling derivation, seed-derived export and Safari signing behind on-device Face ID, and complete group
+deletion while preserving an independent private-key group.
 
 Exit conditions:
 
@@ -1104,7 +1106,7 @@ Status: complete on 2026-08-26. The containing app now uses the registry-backed 
 generated seed creation, seed/private-key import, derivation, persisted home selection, and group
 deletion. Simulator acceptance covered additive groups, sibling derivation, relaunch persistence,
 account-scoped views, seed-derived export, and the independence of home selection from connection
-authority. Gate B's physical protected-seed acceptance remains separate.
+authority. Gate B's physical protected-seed acceptance completed on 2026-08-26.
 
 Exit conditions:
 
@@ -1123,7 +1125,8 @@ wallet-owned operation from the authoritative origin/profile active account. Pre
 account parameters before persistence; approval revalidates the same account and resolves its protected
 signer from the persisted request. Cross-account requests retain one deterministic global queue, and
 active-account replacement terminalizes immutable signing and SIWE records instead of substituting an
-account. Physical multi-account Safari signing remains part of Gate H acceptance.
+account. Physical seed-account Safari signing and foreground Face ID completed on 2026-08-26; Gate H
+retains cross-profile/device-lock and Mac compatibility acceptance.
 
 Exit conditions:
 
@@ -1136,12 +1139,15 @@ Exit conditions:
 
 ### Gate F: Popup connect account picker
 
-Status: complete on 2026-08-26. Native summaries and popup decisions carry the reviewed request
+Status: complete on 2026-08-26, including physical-iPhone acceptance. Native summaries and popup decisions carry the reviewed request
 revision; only the active plain-connect request can rebind to an available registered account under the
 group/request claims; and approval atomically writes the grant, active account, future default, and
 connect marker before pending consumption. Status, decisions, and group deletion reconcile valid
 markers to the committed result. Simulator acceptance listed grouped private-key and seed accounts,
-rebound to a seed account, rerendered that account, and completed the connection.
+rebound to a seed account, rerendered that account, and completed the connection. Physical Safari later
+listed the private-key group plus three seed accounts, rebound a distinct-origin connect to a seed
+account, committed it, and used that account for an authenticated signing request while Safari remained
+foregrounded.
 
 Exit conditions:
 
@@ -1176,6 +1182,10 @@ Exit conditions:
 - Safari return-to-page lifecycle is proven; polling is added only if required by evidence.
 
 ### Gate H: Upgrade and device acceptance
+
+Status (2026-08-26): the physical-iPhone multi-account lifecycle and Safari foreground-authentication
+portion is complete. Gate A already supplies the real Dawn in-place upgrade proof. Remaining Gate H
+work is cross-profile/device-lock acceptance and the Mac compatibility Safari account model.
 
 Exit conditions:
 

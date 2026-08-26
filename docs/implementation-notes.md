@@ -50,6 +50,55 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Gate B Physical Seed And Account-Lifecycle Acceptance
+
+### Summary
+
+- Completed Gate B physical-iPhone acceptance through iPhone Mirroring plus on-device Face ID. The
+  containing app canceled a generated backup before registration, derived the next monotonic account
+  from an existing protected seed group, exported that derived account's private key, and cleared the
+  reveal on navigation without retaining secret material in project documentation.
+- Connected a separate Safari origin through the popup's grouped account picker, rebound the plain
+  connect request from the private-key proposal to the derived seed account, approved it, and completed
+  a canonical `personal_sign` request with Safari foregrounded. Mirroring alone could not satisfy the
+  protected release; the request completed only after Face ID on the physical phone.
+- Permanently deleted the seed group after explicit owner confirmation. All three derived accounts
+  disappeared, the seed-backed Safari origin became disconnected on return, and the independent
+  private-key group remained registered and became the surviving home account.
+- Imported a public, never-funded BIP-39 test vector through the physical app. On-device authentication
+  completed protected storage and account-zero derivation, and the new seed group appeared alongside
+  the retained private-key group. No phrase, private key, full address, or device identifier is recorded
+  here.
+- Recorded the reusable iPhone Mirroring/physical Face ID boundary in the wallet debugging skill.
+
+### Why
+
+- Hermetic and simulator coverage cannot prove the physical keychain access-control boundary, actual
+  Face ID behavior while Safari remains foregrounded, or complete cleanup across the app/extension
+  shared state. These checks close Gate B without weakening the native approval or one-time pending
+  request protocol.
+
+### Verification
+
+- Physical UI inspection proved generated-backup cancellation left no partial group; derivation added
+  exactly the next account; seed-derived export transitioned only after protected release and cleared
+  on navigation; and deletion removed the complete seed group while retaining the other group.
+- Physical Safari displayed the canonical connect card for a distinct origin, listed the private-key
+  group plus all seed accounts, rebound to the selected seed account, committed the connection, and
+  displayed that account as active. A subsequent canonical message-signing request completed after
+  on-device Face ID while Safari stayed foregrounded.
+- Returning to the seed-connected origin after deletion showed no connected account. A diagnostic
+  reconnect request proposed the surviving private-key account and was rejected without changing the
+  connection default.
+- `stupid-app --version` reported 0.0.8 with Swift 6.2.1 before device acceptance. No source, package,
+  entitlement, or project-configuration change was required.
+- `git diff --check` passed for the resulting documentation and debugging-skill updates.
+
+### Follow-Up
+
+- Gate H still requires cross-profile and device-lock acceptance plus the Mac compatibility Safari
+  account model. Focused backup timeout/screen-capture checks also remain release hardening work.
+
 ## 2026-08-26 - Gate G Provider Account Lifecycle
 
 ### Summary

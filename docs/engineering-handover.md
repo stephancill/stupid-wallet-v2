@@ -91,7 +91,7 @@ then proved LAN provider injection, automatic same-origin two-tab convergence af
 disconnect on Safari return, retained account bootstrap after force-quitting Safari, and no provider
 change after selecting a different containing-app home account.
 
-Gate B is now hermetically implemented and remains open for physical-device acceptance.
+Gate B is complete, including physical-device acceptance.
 `EthereumSeedPhrase` generates canonical entropy, round-trips every supported English BIP-39 size, and
 derives arbitrary accounts under `m/44'/60'/0'/0/{index}` while returning the actual valid index if
 BIP-32 child derivation must skip. `KeychainSeedStore` stores one protected entropy item per lowercase
@@ -109,13 +109,15 @@ material, and the registry group, and adoption resumes interrupted deletion befo
 children transiently for signing or export, verifies the derived address, and never persists a child
 key. The Safari home-account signer and Settings private-key export now use this resolver. Group
 deletion reconciles a valid Gate F connect-commit marker to the already-committed consumed result before
-connection cleanup and fails loudly on a marker/record conflict. Gate D is complete: the address menu opens a grouped account picker;
+connection cleanup and fails loudly on a marker/record conflict. Physical iPhone acceptance proved
+generated-backup cancellation without partial registration, protected seed import, monotonic sibling
+derivation, seed-derived private-key export, Safari popup account selection and signing behind on-device
+Face ID, and complete group deletion while retaining an independent private-key group. Gate D is complete: the address menu opens a grouped account picker;
 generated seed creation requires explicit backup confirmation; seed/private-key imports and sibling
 derivation add groups/accounts without replacement; home selection persists through the journaled
 registry transition; and balance, Activity, Connected Apps, Settings, authorizations, and private-key
 export use stable home-account identity. Home selection never mutates connection default, grants, or
-provider-visible active accounts. Physical-device seed protection, derivation, signing, export, and
-deletion proof remain before Gate B is complete.
+provider-visible active accounts.
 
 The macOS direction is the same iOS build running through Apple Silicon's iPhone/iPad-app
 compatibility environment, not a native macOS or Mac Catalyst target. Distribution uses
@@ -654,8 +656,9 @@ The first usable milestone includes:
 
 ### Multiple Wallet Groups And Accounts
 
-Approved next-scope. Gates A, C, D, E, F, and G are complete; Gate B is hermetically complete but still
-requires physical-device acceptance, and Gate H remains pending:
+Approved next-scope. Gates A through G are complete. Gate H's physical-iPhone multi-account lifecycle
+and foreground-authentication portion is complete; cross-profile/device-lock acceptance and the Mac
+compatibility Safari account model remain pending:
 
 - Only Dawn v1 is a supported migration source. The current rebuild v2 is unsupported, and its
   `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, singleton balance cache, and
@@ -1351,25 +1354,20 @@ investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Complete Gate B physical-device acceptance from `docs/multi-account-implementation-plan.md`: prove
-   seed entropy user-presence/ThisDeviceOnly protection, generated/imported derivation, seed-backed
-   signing and private-key export, and complete resumable group deletion. The hermetic implementation
-   and simulator build are complete. Gate F marker reconciliation is now part of deletion cleanup.
-2. Complete Gate H physical-device and Mac Safari acceptance for the multi-account connection model,
-   including cross-profile account-event isolation and foreground authentication.
-3. Continue Gate 6 with physical-device proof of create, BIP-39 seed import, backup
-   reveal/cancellation/timeout, Forget Account, automatic migration launch, and Safari
-   signing with each newly provisioned key. Raw private-key import, including recovery of a
-   protected item retained across uninstall, is proven on the physical iPhone; the remaining
-   device-bound flows are not yet gate-proven.
-4. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
+1. Complete the remaining Gate H cross-profile/device-lock and Mac Safari acceptance for the
+   multi-account connection model. Physical-iPhone account selection, protected seed signing,
+   import/derivation/export, and group deletion are complete.
+2. Continue Gate 6 with the remaining focused backup timeout/screen-capture and device-lock checks.
+   Raw private-key import, protected seed import, generated-backup cancellation, seed-derived export,
+   group deletion, and Safari signing are proven on the physical iPhone.
+3. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
    supported iOS version. The product owner chose seamless authorization for pre-existing
    hostname grants; consider a later user-visible reconnect campaign before removing that
    compatibility fallback.
-5. Finish parity details that do not weaken the new model: richer activity detail and broader
+4. Finish parity details that do not weaken the new model: richer activity detail and broader
    optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
    inside Gate 6.
-6. Gate 7 and later per the implementation gates.
+5. Gate 7 and later per the implementation gates.
 
 ## Reference Sources
 

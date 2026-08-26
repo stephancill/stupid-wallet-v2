@@ -45,6 +45,12 @@ generic error text and do not bypass the canonical approval protocol.
     it did not enter during the claim and that a fresh popup request enters after release. The popup's
     no-request state alone does not prove native success because its transport fallback can render an
     empty list.
+11. iPhone Mirroring can drive the containing app, Safari page menu, popup review, account selection,
+    and decision buttons, but it does not satisfy the protected Face ID release. Complete Face ID on
+    the physical phone. A mirrored `Confirming…` state, popup dismissal, or pending-record transition
+    alone is not signing evidence; require the originating dapp to receive success (and independently
+    recover the signer when the payload can be checked safely). A failure without on-device Face ID
+    is useful cancellation/authentication-boundary evidence, not a seed-signing failure.
 
 ## Stack Map
 
