@@ -185,59 +185,74 @@ import SwiftUI
     }
   }
 
-  private struct AddressMenuButton: UIViewRepresentable {
+  private struct AddressMenuButton: View {
     let address: String
     let showAccounts: () -> Void
     let showActivity: () -> Void
     let showConnectedApps: () -> Void
     let showSettings: () -> Void
+    @State private var menuPresented = false
 
-    func makeUIView(context: Context) -> UIButton {
-      let button = UIButton(type: .custom)
-      button.showsMenuAsPrimaryAction = true
-      button.imageView?.contentMode = .scaleAspectFit
-      button.layer.cornerRadius = 8
-      button.layer.cornerCurve = .continuous
-      button.layer.masksToBounds = true
-      button.accessibilityLabel = "Wallet address"
-      button.accessibilityHint = "Shows account menu"
-      return button
+    var body: some View {
+      Button {
+        menuPresented = true
+      } label: {
+        BlockieView(seed: address.lowercased())
+          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Wallet address")
+      .accessibilityHint("Shows account menu")
+      .popover(isPresented: $menuPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+        VStack(spacing: 0) {
+          menuButton(
+            displayAddress, trailingSystemImage: "arrow.left.arrow.right", action: showAccounts)
+          menuButton("Activity", systemImage: "clock", action: showActivity)
+          menuButton(
+            "Connected Apps", systemImage: "puzzlepiece.extension", action: showConnectedApps)
+          menuButton("Settings", systemImage: "gear", action: showSettings)
+        }
+        .frame(width: 280)
+        .padding(.vertical, 6)
+        .presentationCompactAdaptation(.popover)
+      }
     }
 
-    func updateUIView(_ button: UIButton, context: Context) {
-      let iconSize = CGSize(width: 28, height: 28)
-      let icon = UIGraphicsImageRenderer(size: iconSize).image { _ in
-        UIBezierPath(roundedRect: CGRect(origin: .zero, size: iconSize), cornerRadius: 8).addClip()
-        BlockieView.image(seed: address.lowercased()).draw(
-          in: CGRect(origin: .zero, size: iconSize))
-      }
-      button.setImage(icon, for: .normal)
+    private var displayAddress: String {
+      address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
+    }
 
-      let displayAddress =
-        address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
-      let accountAction = UIAction(title: displayAddress, image: icon) { _ in
-        showAccounts()
+    private func menuButton(
+      _ title: String,
+      systemImage: String? = nil,
+      trailingSystemImage: String? = nil,
+      action: @escaping () -> Void
+    ) -> some View {
+      Button {
+        menuPresented = false
+        Task { @MainActor in
+          try? await Task.sleep(for: .milliseconds(250))
+          action()
+        }
+      } label: {
+        HStack(spacing: 12) {
+          if let systemImage {
+            Image(systemName: systemImage)
+              .frame(width: 24)
+          }
+          Text(title)
+          Spacer(minLength: 12)
+          if let trailingSystemImage {
+            Image(systemName: trailingSystemImage)
+          }
+        }
+        .font(.body)
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 16)
+        .frame(height: 50)
+        .contentShape(Rectangle())
       }
-      let activityAction = UIAction(
-        title: "Activity",
-        image: UIImage(systemName: "clock")
-      ) { _ in
-        showActivity()
-      }
-      let connectedAppsAction = UIAction(
-        title: "Connected Apps",
-        image: UIImage(systemName: "puzzlepiece.extension")
-      ) { _ in
-        showConnectedApps()
-      }
-      let settingsAction = UIAction(
-        title: "Settings",
-        image: UIImage(systemName: "gear")
-      ) { _ in
-        showSettings()
-      }
-      button.menu = UIMenu(
-        children: [accountAction, activityAction, connectedAppsAction, settingsAction])
+      .buttonStyle(.plain)
     }
   }
 #else

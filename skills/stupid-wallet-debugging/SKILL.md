@@ -92,6 +92,13 @@ https://app.uniswap.org/swap?chain=base&inputCurrency=<token>&outputCurrency=NAT
   hold the touch or open an iOS long-press menu.
 - Treat dapp text such as “Swap failed” or “adjust slippage” as non-authoritative until the
   provider/native error is known.
+- After replacing an installed iOS Safari extension, a page reload can retain the old content-script
+  or background-worker context even though Safari still shows the extension enabled. If a previously
+  working dapp suddenly has no provider and native receives no pending request, verify profile access
+  under Settings > Apps > Safari > Extensions, then force-quit and relaunch Safari before diagnosing
+  the provider bridge. For profile tests, confirm the extension is enabled separately for each profile
+  and inspect the page-menu badge/popup from a tab in that profile; never infer isolation from the
+  containing app alone.
 
 ### 2. Locate The Boundary
 

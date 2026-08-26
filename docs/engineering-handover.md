@@ -306,9 +306,9 @@ independent RPCs agreed on receipt success and 21,000 gas used.
 
 The Gate 6 containing-app shell now follows the shipped app's SwiftUI screen hierarchy and
 presentation: the lowercase welcome and import screens; centered large native balance with
-an anchored details popover; top-trailing Copy Address icon beside the account blockie menu,
-which uses a continuous-corner squircle and begins with a matching squircle blockie plus regular
-shortened-address row followed by Activity,
+an anchored details popover; top-trailing Copy Address icon beside the account blockie menu popover,
+which uses a continuous-corner squircle and begins with a regular shortened-address account-switch
+row with a trailing `arrow.left.arrow.right` icon, followed by Activity,
 Connected Apps, and Settings actions; Settings sheet; Connected Apps list/detail/disconnect
 with origin/profile-filtered activity; reciprocal navigation from an activity detail to its
 currently connected app detail;
@@ -656,9 +656,9 @@ The first usable milestone includes:
 
 ### Multiple Wallet Groups And Accounts
 
-Approved next-scope. Gates A through G are complete. Gate H's physical-iPhone multi-account lifecycle,
-foreground authentication, and Mac compatibility Safari account model are complete;
-cross-profile/device-lock acceptance remains pending:
+Implemented next-scope. Gates A through H are complete. Gate H's physical-iPhone multi-account
+lifecycle, foreground authentication, cross-profile/device-lock acceptance, and Mac compatibility
+Safari account model are complete:
 
 - Only Dawn v1 is a supported migration source. The current rebuild v2 is unsupported, and its
   `wallet-address.conf`, `sw2.walletAddress`, `connectedOriginsV2`, singleton balance cache, and
@@ -1291,6 +1291,17 @@ and an empty worker request set clears the badge with an empty string rather tha
 Live rejection proved the one-item badge disappears immediately. Mac transaction broadcast plus a
 network-verified receipt remains unproven and is not part of the multi-account Gate H exit condition.
 
+Current physical profile/lock status (2026-08-26): the latest development-signed app and nested
+extension were installed over the saved network pairing without replacing persisted wallet state.
+The same exact test origin retained a private-key account in Personal and a seed-derived account in a
+disposable second Safari profile. Switching profiles preserved each account, and a protected signing
+request's badge and popup entry were absent from Personal while remaining available in the requesting
+profile. A fresh protected request then remained pending across a device auto-lock interval, produced
+no result while locked, recovered unchanged when Mirroring resumed, and rejected normally afterward.
+Both test grants and the disposable Safari profile were removed after acceptance. Safari had to be
+force-quit once after replacing the installed extension so its content script and background worker
+were loaded from the new build; a page reload alone retained the pre-install extension context.
+
 ## Test Strategy
 
 ### Hermetic tests
@@ -1344,8 +1355,9 @@ device identifiers, or sensitive signing payloads.
 - **Private-key backup:** Authenticated reveal, local expiring pasteboard copy, inactivity
   clearing, and background clearing are implemented. Physical-device cancellation/timeout
   behavior and screen-capture exposure still require focused verification before release.
-- **Safari profiles:** Verify availability and stability of `SFExtensionProfileKey` on
-  all supported iOS versions before making profile binding mandatory.
+- **Safari profiles:** Current physical-iPhone acceptance proves `SFExtensionProfileKey` isolation on
+  the tested OS. Verify availability and stability on every other supported iOS version before making
+  profile binding mandatory there.
 - **Legacy grant identity precision:** new grants are scheme + effective-port + Safari-
   profile bound and mirror the old `connectedSites` key. Pre-existing hostname-only grants
   intentionally retain authorization until reconnect/disconnect, so those specific entries
@@ -1362,27 +1374,27 @@ device identifiers, or sensitive signing payloads.
 - **Provider account-change delivery:** iOS SafariServices exposes no containing-app equivalent of
   macOS `SFSafariApplication.dispatchMessage`. Simulator evidence proved initial injection plus
   `pageshow`, focus, and visible `visibilitychange` refresh after returning to Safari; no polling is
-  currently justified. Retain physical cross-profile verification under Gate H.
+  currently justified. Physical same-origin and cross-profile acceptance now confirms that model on
+  the tested iPhone.
 
 Resolve open decisions through focused proof work. Record the result here and the
 investigation history in implementation notes.
 
 ## Recommended Next Work
 
-1. Complete the remaining Gate H cross-profile and device-lock acceptance. Physical-iPhone account
-   selection, protected seed signing, import/derivation/export, group deletion, and the Mac Safari
-   multi-account compatibility model are complete.
-2. Continue Gate 6 with the remaining focused backup timeout/screen-capture and device-lock checks.
+1. Continue Gate 6 with the remaining focused backup timeout/screen-capture and broader
+   cancellation/passcode-fallback checks. Multi-account Gate H, including its pending-request
+   device-lock acceptance, is complete.
    Raw private-key import, protected seed import, generated-backup cancellation, seed-derived export,
    group deletion, and Safari signing are proven on the physical iPhone.
-3. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every
+2. Physically verify `SFExtensionProfileKey` stability and cross-profile isolation on every other
    supported iOS version. The product owner chose seamless authorization for pre-existing
    hostname grants; consider a later user-visible reconnect campaign before removing that
    compatibility fallback.
-4. Finish parity details that do not weaken the new model: richer activity detail and broader
+3. Finish parity details that do not weaken the new model: richer activity detail and broader
    optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
    inside Gate 6.
-5. Gate 7 and later per the implementation gates.
+4. Gate 7 and later per the implementation gates.
 
 ## Reference Sources
 

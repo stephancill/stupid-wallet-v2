@@ -1126,8 +1126,8 @@ account parameters before persistence; approval revalidates the same account and
 signer from the persisted request. Cross-account requests retain one deterministic global queue, and
 active-account replacement terminalizes immutable signing and SIWE records instead of substituting an
 account. Physical seed-account Safari signing and foreground Face ID completed on 2026-08-26. Mac
-Safari compatibility acceptance also completed that day; Gate H retains only cross-profile/device-lock
-acceptance.
+Safari compatibility acceptance and the remaining physical cross-profile/device-lock checks also
+completed that day; Gate H is closed.
 
 Exit conditions:
 
@@ -1184,13 +1184,17 @@ Exit conditions:
 
 ### Gate H: Upgrade and device acceptance
 
-Status (2026-08-26): the physical-iPhone multi-account lifecycle, Safari foreground-authentication,
-and Mac compatibility Safari account model are complete. Gate A supplies the real Dawn in-place
-upgrade proof, and a second real Dawn-to-current upgrade was completed through TestFlight on Apple
-Silicon Mac. Mac Safari proved grouped account selection, a derived seed-account connection,
-same-origin bootstrap, rejection, durable request completion, independently recovered signing,
-and generic RPC passthrough without platform-specific web code. Remaining Gate H work is only
-cross-profile and device-lock acceptance.
+Status: complete on 2026-08-26. The physical-iPhone multi-account lifecycle, Safari
+foreground-authentication, cross-profile isolation, device-lock recovery, and Mac compatibility
+Safari account model are complete. Gate A supplies the real Dawn in-place upgrade proof, and a second
+real Dawn-to-current upgrade was completed through TestFlight on Apple Silicon Mac. Mac Safari proved
+grouped account selection, a derived seed-account connection, same-origin bootstrap, rejection,
+durable request completion, independently recovered signing, and generic RPC passthrough without
+platform-specific web code. On the physical iPhone, one exact origin retained different active
+accounts in Personal and a disposable second Safari profile; a signing request and its badge were
+visible only in the requesting profile. A fresh protected signing request remained pending across a
+device auto-lock interval, released no result while locked, recovered unchanged, and could be
+rejected normally after reconnection.
 
 Exit conditions:
 
@@ -1199,6 +1203,10 @@ Exit conditions:
   behave as documented.
 - Physical-device Safari proves connection selection, grant retention, active-account signing, and
   foreground authentication.
+- Physical-device Safari proves exact-origin account, event, badge, and pending-request isolation
+  across profiles.
+- A protected pending request releases no result while the device is locked and recovers for a normal
+  terminal decision after unlock.
 - Mac compatibility Safari proves the same account model without platform-specific web behavior.
 
 ## Verification Matrix

@@ -50,6 +50,76 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-26 - Gate H Cross-Profile And Device-Lock Acceptance
+
+### Summary
+
+- Installed and launched the latest development-signed app and nested Safari extension on the
+  physical iPhone while preserving the existing multi-account wallet state.
+- Completed exact-origin Safari profile isolation with Personal and a disposable second profile.
+  Each profile retained a different active account, and switching profiles did not change the other
+  profile's provider account.
+- Queued a protected signing request in the disposable profile. Its page-menu badge and popup request
+  were absent from Personal and remained available only in the requesting profile.
+- Left a fresh protected signing request pending through a device auto-lock interval. No result was
+  released while locked; the same review recovered after reconnection and rejected normally.
+- Disconnected both test grants and deleted the disposable Safari profile after acceptance. Gate H is
+  complete.
+
+### Investigation
+
+- The first post-install page reload retained a stale Safari extension context: the dapp had no
+  provider and native showed no pending request even though the extension remained enabled for both
+  profiles. Force-quitting and relaunching Safari loaded the newly installed content script and
+  background worker; the same request then queued normally.
+- A direct libimobiledevice sleep attempt could not see the CoreDevice-only network pairing. The
+  accepted lock check instead closed Mirroring for the configured auto-lock interval and reopened it
+  while the fresh canonical request was pending.
+
+### Verification
+
+- `stupid-app doctor` completed with zero failures and zero warnings.
+- The initial sandboxed `stupid-app build` could not write SwiftPM/Clang caches outside the workspace;
+  the unrestricted retry succeeded.
+- `stupid-app run --network --udid <device> --sudo /usr/bin/sudo` rebuilt, signed, packaged, installed,
+  and launched the current app and nested extension on the physical iPhone.
+- Physical Safari proved per-profile account/grant persistence, cross-profile badge and pending-popup
+  isolation, lock-without-completion, post-lock recovery, and normal rejection. No secret, complete
+  address, request identifier, signature, device identifier, or profile identifier is recorded here.
+
+### Follow-Up
+
+- Repeat `SFExtensionProfileKey` acceptance on every other supported iOS version before treating the
+  tested runtime behavior as universal.
+- Broader backup reveal timeout/screen-capture and passcode-fallback checks remain release hardening;
+  they are not multi-account Gate H blockers.
+
+## 2026-08-26 - Account Switch Menu Icon
+
+### Summary
+
+- Replaced the main screen account submenu row's repeated blockie with a trailing
+  `arrow.left.arrow.right` symbol. The toolbar button retains the selected account blockie, and the
+  menu uses an anchored SwiftUI popover so the switch icon can occupy the trailing edge.
+
+### Why
+
+- `UIAction` always rendered its image in the leading slot on the supported iOS runtime. An anchored
+  popover preserves the compact menu interaction while allowing the directional symbol to be aligned
+  at the requested trailing edge.
+
+### Verification
+
+- `swift format` and `swift format lint` passed for `ContentView.swift`; `git diff --check` passed.
+- `swift test` passed all 289 tests in 34 suites.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+  Live inspection confirmed the switch symbol occupies the account row's trailing edge, and selecting
+  that row dismissed the popover and opened the grouped Accounts sheet.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-26 - Prototype Result-State Borders
 
 ### Summary
