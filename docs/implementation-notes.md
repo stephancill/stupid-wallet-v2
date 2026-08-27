@@ -50,6 +50,113 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-27 - External Beta Review SDK-Metadata Fix
+
+### Summary
+
+- Diagnosed why external TestFlight submissions of Stupid Wallet builds 92, 93, and 94 failed even
+  though the binaries were internally valid: the `stupid-app` release archiver omitted the
+  build-system Info.plist keys `DTPlatformBuild` and `DTSDKBuild` (the SDK build number), and build
+  93 also carried a wrong `DTXcode` encoding.
+- Fixed `stupid-app` (source in `~/environments/personal/pus/stupid-ios-dev`) to emit
+  `DTPlatformBuild`/`DTSDKBuild` from the SDK's `SystemVersion.plist` build number and to encode
+  `DTXcode` canonically (`major*100 + minor*10 + patch`, e.g. Xcode 26.6 -> `2660`). The previous
+  naive concatenation produced `266`, which App Store Connect could not map to a supported Xcode.
+- Built, uploaded, and submitted version 1.0.0 build 95 for external beta review. The external
+  submission was accepted and the build is live in external beta testing.
+
+### Why
+
+- Apple's external-beta gate rejects any build whose packaged metadata does not identify a supported
+  SDK. Two stupid-app defects independently triggered it: missing SDK build keys, and a non-canonical
+  `DTXcode` for Xcode 26.6. Genuine Xcode archives carry both, so a probe with an existing real-Xcode
+  build proved the toolchain was not the blocker.
+
+### Verification
+
+- Verified the on-disk build 94 IPA metadata matched Xcode 26.6 GA (`DTXcode` `2660`,
+  `DTXcodeBuild` `17F113`, `DTSDKName` `iphoneos26.5`) yet external submission still returned
+  `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING`.
+- Compared against a genuine Xcode 26.1.1 archive (another project, build 97) and found
+  `DTPlatformBuild`/`DTSDKBuild` (`23B77`) and `BuildMachineOSBuild` present there. Submitting that
+  genuine archive for external review returned HTTP 201 `WAITING_FOR_REVIEW`, while a same-SDK
+  stupid-app-packaged build returned the SDK rejection.
+- Confirmed the SDK build number source: the SDK's
+  `System/Library/CoreServices/SystemVersion.plist` `ProductBuildVersion` (iOS 26.1 -> `23B77`,
+  iOS 26.5 -> `23F81a`).
+- `swift test` in stupid-ios-dev passed all 269 tests in 49 suites after the changes; `stupid-app`
+  release build rebuilt and reinstalled to `~/.local/bin`.
+- Build 95 archive inspection confirmed both the app and nested extension carry
+  `DTXcode` `2660`, `DTXcodeBuild` `17F113`, `DTPlatformBuild`/`DTSDKBuild` `23F81a`.
+- `stupid-app release status --live` for build 95 reports `internal=IN_BETA_TESTING`,
+  `external=IN_BETA_TESTING`.
+
+### Follow-Up
+
+- The probe left another project's build 97 in `WAITING_FOR_REVIEW`; it cannot be cancelled through
+  the public API (DELETE returned 403) and should be cancelled in App Store Connect if that build
+  must not ship externally.
+- Re-export any stale Linux-host iOS SDK bundles so their `sdk-manifest.json` records
+  `iphoneosSDKBuild`; bundles exported before this fix will simply omit the two keys rather than
+  failing.
+- Consider a future GA Xcode to remove the beta-seed toolchain dependency once Apple's acceptance
+  window moves forward again.
+
+## 2026-08-27 - External Beta Review SDK Blocker
+
+### Summary
+
+- Preflighted version 1.0.0, build 92 for external beta review and confirmed its beta app
+  descriptions, review contact information, and localized What to Test text are present.
+- The public App Store Connect beta-review submission endpoint rejected the build with
+  `BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING`.
+- Identified an installed supported toolchain for the replacement build: Xcode 26.6 with the iOS
+  26.5 SDK at `/Applications/Xcode.app`.
+
+### Why
+
+- Build 92 was archived with Xcode 26.1.1 and the iOS 26.1 SDK. Apple accepts it for internal
+  TestFlight but no longer permits that Xcode/SDK combination for external TestFlight review.
+- Uploaded binaries are immutable, so changing the build's group or retrying submission cannot fix
+  the SDK provenance.
+
+### Verification
+
+- The beta-review API returned HTTP 422 with the unsupported-Xcode/SDK error before creating a
+  submission; build 92 remained in external state `READY_FOR_BETA_SUBMISSION`.
+- Apple's current App Store Connect release notes list Xcode 26.6 with the iOS 26.5 SDK as accepted
+  for internal and external TestFlight testing.
+- `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer stupid-app doctor` selected Xcode 26.6,
+  Swift 6.3.3, and the iOS 26.5 SDK successfully.
+
+### Follow-Up
+
+- Create and upload a new build number with Xcode 26.6, assign that build to external group `v2`,
+  and submit the replacement for beta review.
+
+## 2026-08-27 - External TestFlight Group Assignment
+
+### Summary
+
+- Added version 1.0.0, build 92 to the existing external TestFlight group `v2` through the public
+  App Store Connect API.
+
+### Why
+
+- The installed `stupid-app` release commands upload builds and report beta state but do not yet
+  manage TestFlight group relationships.
+
+### Verification
+
+- Resolved the exact app and the exact non-internal group named `v2`, then used Apple's
+  `betaGroups/{id}/relationships/builds` endpoint to add build 92.
+- A fresh relationship read confirmed the group contains build 92.
+- The build remained internally available and reported external state `READY_FOR_BETA_SUBMISSION`.
+
+### Follow-Up
+
+- Submit the build for external beta review before expecting external testers to receive it.
+
 ## 2026-08-27 - Corrected Internal TestFlight Build 92
 
 ### Summary

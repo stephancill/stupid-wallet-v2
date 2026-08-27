@@ -1379,6 +1379,17 @@ Both test grants and the disposable Safari profile were removed after acceptance
 force-quit once after replacing the installed extension so its content script and background worker
 were loaded from the new build; a page reload alone retained the pre-install extension context.
 
+External-TestFlight status (2026-08-27): version 1.0.0 build 95 is the current external candidate.
+Builds 92–94 were rejected or flagged by Apple's external gate because their archives omitted the
+SDK build-number keys `DTPlatformBuild`/`DTSDKBuild` (and, before 94, had a wrong `DTXcode`).
+External review now accepts build 95, whose packaged Info.plist carries the complete build-system
+provenance (`DTXcode` `2660`, `DTXcodeBuild` `17F113`, `DTPlatformBuild`/`DTSDKBuild` `23F81a`),
+and it is live in external beta testing. The `stupid-app` release pipeline was fixed to emit the
+`DTPlatformBuild`/`DTSDKBuild` keys from the SDK's `SystemVersion.plist` build number and to encode
+`DTXcode` canonically (`major*100 + minor*10 + patch`); build via
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer stupid-app release …` for the Xcode 26.6 /
+iOS 26.5 SDK toolchain at `/Applications/Xcode.app`.
+
 ## Test Strategy
 
 ### Hermetic tests

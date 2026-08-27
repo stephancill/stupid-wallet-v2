@@ -59,6 +59,20 @@ generic error text and do not bypass the canonical approval protocol.
     synchronizes `CFBundleVersion`, not marketing versions. App Store Connect warning `ITMS-90473`
     means a nested extension's marketing version differs from its containing app even when upload and
     TestFlight processing otherwise succeed.
+14. Internal TestFlight validity does not prove external-beta eligibility. Submission error
+    `ENTITY_UNPROCESSABLE.BUILD_SDK_NOT_ALLOWED_FOR_EXTERNAL_TESTING` means Apple will not review that
+    already-uploaded binary because of its Xcode/SDK version. Check Apple's current TestFlight release
+    notes, inspect every installed Xcode, and select a supported installation with `DEVELOPER_DIR`
+    before creating a new build number; an existing build cannot be repaired or resubmitted with a
+    different SDK.
+15. Before assuming a TestFlight SDK rejection means the toolchain itself is unsupported, verify the
+    packaged IPA's build-system Info.plist keys exactly. `stupid-app` (before 0.0.9 with the fix)
+    omitted `DTPlatformBuild`/`DTSDKBuild` and mis-encoded `DTXcode` (`266` instead of the canonical
+    `2660` for Xcode 26.6), which makes App Store Connect report "Unsupported SDK or Xcode version"
+    or "beta version of Xcode" for an otherwise valid binary. Check `DTXcode`, `DTXcodeBuild`,
+    `DTSDKBuild`, and `DTSDKName` in `Payload/<app>.app/Info.plist` (`unzip -p <ipa>` then
+    `plutil -p`); genuine Xcode archives always include the SDK build keys. A genuine-Xcode build can
+    be used as a probe to isolate a packaging defect from a policy change.
 
 ## Stack Map
 
