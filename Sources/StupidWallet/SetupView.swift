@@ -8,19 +8,12 @@ import SwiftUI
     var body: some View {
       VStack(spacing: 24) {
         Spacer()
-        VStack(spacing: 16) {
-          Image(systemName: "wallet.pass")
-            .font(.system(size: 60))
-            .foregroundStyle(.tint)
-          Text("welcome")
-            .font(.largeTitle)
-            .fontWeight(.bold)
-          Text("get started by creating a new wallet or importing an existing one")
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 40)
-        }
+        Image(uiImage: UIImage(named: "AppIcon") ?? UIImage())
+          .resizable()
+          .scaledToFit()
+          .frame(width: 168, height: 168)
+          .clipShape(RoundedRectangle(cornerRadius: 38, style: .continuous))
+          .accessibilityLabel("stupid wallet logo")
         Spacer()
         VStack(spacing: 16) {
           NavigationLink(destination: ImportWalletView(vm: vm)) {
@@ -50,7 +43,6 @@ import SwiftUI
           }
         }
         .padding(.horizontal, 32)
-        Spacer()
         if let error = vm.errorMessage, !error.isEmpty {
           Text(error)
             .foregroundStyle(.red)

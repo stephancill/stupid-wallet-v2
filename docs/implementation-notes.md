@@ -50,6 +50,38 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-29 - No-Wallet Setup Screen Layout
+
+### Summary
+
+- Redesigned the `SetupView` "no wallet" initial screen. It now shows the app logo centered in the
+  middle of the screen (the canonical upward-arrow identity, displayed from the bundled
+  `Resources/AppIcon.png` as a rounded, shadowed image) and pins the Import Wallet / Create New Wallet
+  buttons (and the optional Choose Existing Account action) to the bottom of the screen.
+- Added `Resources/AppIcon.png` to the app-level `stupid-app.yml` `resources` so the icon is copied
+  into the app bundle and is loadable at runtime; previously it was only consumed as the `iconPath`
+  app icon and not present as a bundle resource. The app still references the raw resource via
+  `UIImage(named: "AppIcon")`.
+
+### Why
+
+- Replace the previous centered symbol + welcome-text hero with a closer match to the product's visual
+  identity (its own logo) and anchor the primary create/import actions to the bottom of the screen so
+  the logo is the clear focus.
+
+### Verification
+
+- `stupid-app build` succeeded and the packaged `StupidWallet.app` contains `AppIcon.png`.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+- On a freshly erased iPhone 17e simulator, accessibility inspection showed the `stupid wallet logo`
+  image centered horizontally (168-point square) and the Import Wallet / Create New Wallet buttons
+  anchored near the bottom of the screen.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-29 - Internal To External TestFlight Build 97 (Face ID Declaration)
 
 ### Summary
