@@ -16,7 +16,7 @@ public final class KeychainSeedStore: Sendable {
 
   public init(
     service: String = "co.za.stephancill.stupid-wallet.seeds",
-    accessGroup: String? = nil
+    accessGroup: String? = KeychainKeyStore.defaultAccessGroup
   ) {
     self.service = service
     self.accessGroup = accessGroup

@@ -37,6 +37,7 @@ private final class AdoptionFakeBackend: OldWalletBackend, @unchecked Sendable {
   func oldAddress() -> String? { oldAddressValue }
   func hasNewWallet() -> Bool { false }
   func isMigrated() -> Bool { migrated }
+  func pendingMigrationAccount() -> String? { nil }
   func ciphertext(for address: String) -> Data? { ciphertextValue }
   func decryptCiphertext(_ data: Data, for address: String) throws -> [UInt8] {
     switch decryptResult {

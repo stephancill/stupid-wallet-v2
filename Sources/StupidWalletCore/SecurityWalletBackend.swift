@@ -8,8 +8,11 @@ import Security
 ///   `.eciesEncryptionCofactorVariableIVX963SHA256AESGCM` decryption (which presents the
 ///   device-owner prompt automatically).
 public struct SecurityWalletBackend: OldWalletBackend {
+  static let legacyAccessGroup = KeychainKeyStore.productionAccessGroup
+  static let legacyCiphertextService = ""
+
   private let appGroup: String
-  private let keyStore: KeychainKeyStore
+  private let keyStore: any WalletKeyStoring
 
   public init(
     appGroup: String = "group.co.za.stephancill.stupid-wallet",
@@ -17,6 +20,11 @@ public struct SecurityWalletBackend: OldWalletBackend {
   ) {
     self.appGroup = appGroup
     self.keyStore = KeychainKeyStore(service: newKeychainService)
+  }
+
+  init(appGroup: String, keyStore: any WalletKeyStoring) {
+    self.appGroup = appGroup
+    self.keyStore = keyStore
   }
 
   private func defaults() -> UserDefaults {
@@ -33,16 +41,26 @@ public struct SecurityWalletBackend: OldWalletBackend {
     defaults().bool(forKey: constants.migratedKey)
   }
 
+  public func pendingMigrationAccount() -> String? {
+    defaults().string(forKey: constants.pendingKey)
+  }
+
   public func ciphertext(for address: String) -> Data? {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrAccount as String: address,
-      kSecReturnData as String: true,
-      kSecMatchLimit as String: kSecMatchLimitOne,
-    ]
+    let query = Self.legacyCiphertextQuery(address: address)
     var item: CFTypeRef?
     guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
     return item as? Data
+  }
+
+  static func legacyCiphertextQuery(address: String) -> [String: Any] {
+    [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrAccount as String: address,
+      kSecAttrService as String: Self.legacyCiphertextService,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+      kSecAttrAccessGroup as String: Self.legacyAccessGroup,
+    ]
   }
 
   public func decryptCiphertext(_ ciphertext: Data, for address: String) throws -> [UInt8] {
@@ -62,13 +80,28 @@ public struct SecurityWalletBackend: OldWalletBackend {
   }
 
   public func saveKey(_ key: [UInt8], account: String) throws {
-    do { try keyStore.save(key: key, account: account) } catch {
+    do {
+      try keyStore.save(key: key, account: account)
+    } catch KeychainKeyStore.StorageError.saveFailed(let status)
+      where status == errSecDuplicateItem
+    {
+      // A crash can occur after SecItemAdd but before the pending marker is persisted.
+      // The authenticated reload below proves this retained item controls `account`.
+      return
+    } catch {
       throw WalletMigrationFailure.saveFailed
     }
   }
 
   public func loadKey(account: String) throws -> [UInt8] {
-    do { return try keyStore.load(account: account) } catch {
+    do {
+      return try keyStore.load(
+        account: account, reason: "Unlock your wallet to complete the secure upgrade")
+    } catch KeychainKeyStore.StorageError.readFailed(let status)
+      where Self.authenticationCancelledOrUnavailable(status)
+    {
+      throw WalletMigrationFailure.cancelled
+    } catch {
       throw WalletMigrationFailure.selfTestFailed
     }
   }
@@ -107,21 +140,28 @@ public struct SecurityWalletBackend: OldWalletBackend {
   // MARK: - Old-format specific reads
 
   private func secureEnclaveKey(for address: String) -> SecKey? {
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassKey,
-      kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
-      kSecAttrApplicationTag as String: address.data(using: .utf8)!,
-      kSecReturnRef as String: true,
-    ]
+    let query = Self.legacySecureEnclaveKeyQuery(address: address)
     var raw: CFTypeRef?
     guard SecItemCopyMatching(query as CFDictionary, &raw) == errSecSuccess else { return nil }
     return raw as! SecKey?
+  }
+
+  static func legacySecureEnclaveKeyQuery(address: String) -> [String: Any] {
+    [
+      kSecClass as String: kSecClassKey,
+      kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+      kSecAttrApplicationTag as String: Data(address.utf8),
+      kSecReturnRef as String: true,
+      kSecAttrAccessGroup as String: Self.legacyAccessGroup,
+    ]
   }
 
   private func deleteGenericPassword(_ address: String) {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrAccount as String: address,
+      kSecAttrService as String: Self.legacyCiphertextService,
+      kSecAttrAccessGroup as String: Self.legacyAccessGroup,
     ]
     SecItemDelete(query as CFDictionary)
   }
@@ -129,20 +169,23 @@ public struct SecurityWalletBackend: OldWalletBackend {
   private func deleteSecureEnclaveKey(_ address: String) {
     let query: [String: Any] = [
       kSecClass as String: kSecClassKey,
-      kSecAttrApplicationTag as String: address.data(using: .utf8)!,
+      kSecAttrApplicationTag as String: Data(address.utf8),
+      kSecAttrAccessGroup as String: Self.legacyAccessGroup,
     ]
     SecItemDelete(query as CFDictionary)
   }
 
   private static func mapDecryptError(_ failure: CFError?) -> WalletMigrationFailure {
     guard let failure else { return .malformedCiphertext }
-    let code = CFErrorGetCode(failure)
-    if code == -128 /* userCanceled */ || code == -25293 /* authFailed */
-      || code == -12808 /* interactionNotAllowed */
-    {
+    if authenticationCancelledOrUnavailable(OSStatus(CFErrorGetCode(failure))) {
       return .cancelled
     }
     return .malformedCiphertext
+  }
+
+  static func authenticationCancelledOrUnavailable(_ status: OSStatus) -> Bool {
+    status == errSecUserCanceled || status == errSecAuthFailed
+      || status == errSecInteractionNotAllowed
   }
 
   private let constants = BackendConstants()

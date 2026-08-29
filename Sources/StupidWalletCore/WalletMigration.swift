@@ -28,6 +28,8 @@ public protocol OldWalletBackend: Sendable {
   func hasNewWallet() -> Bool
   /// Whether this store already completed a migration (idempotency guard).
   func isMigrated() -> Bool
+  /// The account whose new-format key was saved but not yet authenticated and proven.
+  func pendingMigrationAccount() -> String?
   /// The old ECIES ciphertext keyed by the old address.
   func ciphertext(for address: String) -> Data?
   /// Decrypts ciphertext to the raw 32-byte private key. Throws `.cancelled` when the
@@ -54,6 +56,18 @@ public enum WalletMigration {
     if backend.isMigrated() { return .success(.alreadyMigrated) }
     if backend.hasNewWallet() { return .success(.skippedNewWalletExists) }
     guard let oldAddress = backend.oldAddress() else { return .success(.noOldWallet) }
+
+    // A previous attempt may have saved the protected item and then been interrupted or
+    // cancelled at its authenticated self-test. Resume from that durable boundary rather
+    // than attempting another SecItemAdd, which would fail before showing authentication.
+    if let pending = backend.pendingMigrationAccount(), sameAddress(pending, oldAddress) {
+      if let failure = savedKeyVerificationFailure(backend: backend, account: pending) {
+        return .failure(failure)
+      }
+      backend.markMigrated(address: pending)
+      return .success(.migrated(address: pending))
+    }
+
     guard let ciphertext = backend.ciphertext(for: oldAddress) else {
       return .failure(.noCiphertext)
     }
@@ -87,11 +101,8 @@ public enum WalletMigration {
 
     // Authenticated self-test: reload from the new store (a second device-owner prompt)
     // and recover the same signer.
-    guard let loaded = try? backend.loadKey(account: account) else {
-      return .failure(.selfTestFailed)
-    }
-    guard selfTestRecovers(key: loaded, address: account) else {
-      return .failure(.selfTestFailed)
+    if let failure = savedKeyVerificationFailure(backend: backend, account: account) {
+      return .failure(failure)
     }
 
     backend.markMigrated(address: account)
@@ -104,6 +115,20 @@ public enum WalletMigration {
 
   private static func sameAddress(_ a: String, _ b: String) -> Bool {
     a.lowercased() == b.lowercased()
+  }
+
+  private static func savedKeyVerificationFailure(
+    backend: OldWalletBackend, account: String
+  ) -> WalletMigrationFailure? {
+    do {
+      var loaded = try backend.loadKey(account: account)
+      defer { loaded.resetBytes(in: loaded.indices) }
+      return selfTestRecovers(key: loaded, address: account) ? nil : .selfTestFailed
+    } catch let failure as WalletMigrationFailure {
+      return failure
+    } catch {
+      return .selfTestFailed
+    }
   }
 
   private static func selfTestRecovers(key: [UInt8], address: String) -> Bool {

@@ -50,6 +50,94 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-29 - Internal TestFlight Build 96 (Wallet Migration Reliability)
+
+### Summary
+
+- Archived and uploaded 1.0.0 (96) to App Store Connect / internal TestFlight, containing the
+  resumable wallet-migration and legacy keychain access-group work described in today's Dawn
+  upgrade entry.
+
+### Why
+
+- Publish the migration-retry and keychain lookup fixes to testers ahead of further Gate B work.
+
+### Verification
+
+- `stupid-app doctor`: 0 failures, 0 warnings (Xcode 26.6 in place, iOS SDK 26.5).
+- `stupid-app release preflight`: READY (app and extension locked at 1.0.0/96).
+- `stupid-app release archive`: signed single-pass Distribution IPY, IPA SHA-256
+  `3729c0323812d9b2d3c4f8429ac1eb6fb11cb59543e0c20a5d8e9bdd769ec405`, post-sign verifier passed.
+- `stupid-app release upload --wait` reported a client timeout, but a re-run resolved the build as
+  already uploaded (build number 96 exists), confirming the first upload reached App Store Connect.
+  Because the already-uploaded path does not rewrite the release manifest, the manifest was refreshed
+  to point at build 96 and `stupid-app release status --live` confirmed live state.
+- Live App Store Connect state for 1.0.0 (96): processing VALID, internal beta READY_FOR_BETA_TESTING,
+  external beta READY_FOR_BETA_SUBMISSION. No external beta submission was made.
+
+### Follow-Up
+
+- The release-upload "already-uploaded" recovery path leaves the `release-manifest.json` pointing at
+  the previous build; a stale manifest then makes `release status --live` and external-beta operate on
+  the wrong build until it is refreshed. Consider teaching `release upload` to adopt the existing
+  build and refresh the manifest instead of only erroring.
+- Build 96 is internal-only; submit for external review when the migration work is ready for external
+  distribution.
+
+## 2026-08-29 - Dawn Upgrade Retry And Keychain Lookup Fix
+
+### Summary
+
+- Fixed a production upgrade failure that could stop before any Face ID/passcode prompt and leave the
+  containing app without a ready wallet registry.
+- Dawn ciphertext and Secure Enclave lookups now explicitly use the preserved production keychain
+  access group. The ciphertext query also binds Dawn's empty generic-password service so a partially
+  written new-format item for the same account cannot be selected as legacy ciphertext. Lookup and
+  cleanup never remove the access-group constraint or wildcard across other entitled groups.
+- New-format key and seed stores explicitly select the shared production access group on entitled
+  device builds. Simulator and macOS package-test builds retain their ungrouped test behavior.
+- Migration now resumes an already-persisted pending key directly at authenticated sign-and-recover
+  verification. A duplicate item caused by interruption between the key write and pending-marker write
+  follows the same proof path instead of failing before authentication. Existing items are never
+  replaced or deleted by recovery.
+- Setup now reports registry unavailability as an existing-wallet load failure rather than incorrectly
+  claiming that a new wallet could not be saved.
+- Device-owner cancellation, authentication failure, and interaction-unavailable keychain statuses now
+  remain a retryable migration cancellation. The setup message explains that recovery authentication
+  was cancelled or unavailable and that a device passcode must be enabled; wallet creation remains
+  blocked so denying recovery cannot replace or obscure the old wallet.
+
+### Why
+
+- Both reported messages came from one startup failure: creation requires a ready registry, so its
+  generic save message did not establish that key generation or keychain storage had run. Missing
+  authentication localized the primary failure before legacy decryption or new-format verification.
+- The migration's pending marker existed but was not previously read, and `errSecDuplicateItem` was
+  treated as terminal. An interrupted protected-key write could therefore make every later launch fail
+  before the recovery authentication prompt.
+
+### Verification
+
+- Inspected the old Dawn source and confirmed its shared access group, address-tagged Secure Enclave
+  item, and empty-service generic-password ciphertext contract.
+- Inspected the packaged release IPA entitlements and confirmed the containing app and Safari extension
+  both carry the preserved shared keychain group.
+- `swift test --filter MigrationTests` passed 17 tests, including pending-marker resume without another
+  decrypt/save, pre-marker duplicate-item continuation through proof, ordinary save failure, and the
+  exact legacy keychain query and authentication-status contracts.
+- `swift test` passed all 303 tests in 34 suites.
+- `swift format lint --recursive Sources Tests` and `git diff --check` passed.
+- `stupid-app doctor` completed with zero failures and zero warnings.
+- `stupid-app build` completed successfully. `stupid-app run --simulator --udid <preferred-simulator>`
+  rebuilt, installed, and launched the app; accessibility inspection showed the retained wallet home.
+
+### Follow-Up
+
+- Reinstall over the affected physical installation and confirm the app presents authentication,
+  preserves the existing address, completes registry adoption, and signs with the recovered account.
+- Repeat a clean old-Dawn in-place upgrade before releasing; simulator keychain behavior is not
+  acceptance evidence for production access-group continuity.
+
 ## 2026-08-27 - External Beta Review SDK-Metadata Fix
 
 ### Summary

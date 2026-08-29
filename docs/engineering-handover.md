@@ -185,8 +185,16 @@ it. The migration state machine plus `SecurityWalletBackend` read the old persis
 format (address in defaults, ECIES ciphertext in a generic-password item, Secure Enclave
 P-256 decrypt with `.eciesEncryptionCofactorVariableIVX963SHA256AESGCM`), required an
 authenticated sign-and-recover proof before completion, and retained old material until
-explicit cleanup. A duplicate decrypt was removed so a successful run shows exactly two
-Face ID/passcode prompts.
+explicit cleanup. Legacy keychain reads now bind the exact production access group and Dawn's empty
+generic-password service rather than issuing a wildcard query across entitled groups. A duplicate
+decrypt was removed so a successful run shows exactly two Face ID/passcode
+prompts. If an attempt is interrupted after saving the new protected key, the pending marker resumes at
+authenticated new-format verification; a crash before that marker may encounter `errSecDuplicateItem`,
+which is accepted only so the same authenticated sign-and-recover proof can decide whether to continue.
+Cancelling that prompt or attempting recovery without an enabled device passcode leaves migration
+incomplete and old material untouched. The containing app identifies authentication as cancelled or
+unavailable and instructs the user to enable a passcode and retry; it does not offer replacement-wallet
+creation around the blocked registry.
 
 Gate 5 (canonical approval protocol) exit conditions are met, including the grant +
 standard-params work:
@@ -434,6 +442,10 @@ the existing item untouched and fails the import.
 
 This retained-item recovery path is proven on a physical iPhone: the previously failing
 private-key import authenticated and completed after an in-place install of the fix.
+
+All production device key and seed stores explicitly select the preserved shared keychain access group.
+Simulator and macOS package-test builds omit that explicit group because their ad-hoc/test processes do
+not carry the production entitlement; iOS device and iOS-on-Mac builds use the production group.
 
 New connected-site approvals now persist a V2 grant keyed by normalized scheme, hostname,
 effective port, and Safari profile identifier when `SFExtensionProfileKey` is present.
@@ -1134,6 +1146,10 @@ The migration sequence is:
 8. Mark migration complete only after the self-test succeeds.
 9. Retain old ciphertext and Secure Enclave material until migration is proven. Deletion,
    if desired, is a separate idempotent cleanup step after successful use.
+
+An interrupted attempt resumes from the pending new-format item and repeats step 7 rather than writing
+the key again. If the key write committed before the pending marker, `errSecDuplicateItem` also advances
+only to step 7. Neither path registers the wallet or removes old material without authenticated proof.
 
 Do not retain Dawn Key Management as a runtime package solely for migration. Reimplement
 the small Security-framework read/decrypt path against the documented persisted format.

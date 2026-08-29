@@ -14,9 +14,19 @@ import Security
 /// extension resolve the same team-prefixed group; physical-device access-group
 /// continuity is proven in the device gates.
 public final class KeychainKeyStore: Sendable {
+  public static let productionAccessGroup = "6JKMV57Y77.co.za.stephancill.stupid-wallet"
+
+  public static var defaultAccessGroup: String? {
+    #if os(macOS) || targetEnvironment(simulator)
+      nil
+    #else
+      productionAccessGroup
+    #endif
+  }
+
   public enum StorageError: Error, Equatable {
     case saveFailed(OSStatus = 0)
-    case readFailed
+    case readFailed(OSStatus = 0)
     case notFound
     case deleteFailed
   }
@@ -24,8 +34,10 @@ public final class KeychainKeyStore: Sendable {
   public let service: String
   public let accessGroup: String?
 
-  public init(service: String = "co.za.stephancill.stupid-wallet.keys", accessGroup: String? = nil)
-  {
+  public init(
+    service: String = "co.za.stephancill.stupid-wallet.keys",
+    accessGroup: String? = KeychainKeyStore.defaultAccessGroup
+  ) {
     self.service = service
     self.accessGroup = accessGroup
   }
@@ -142,7 +154,7 @@ public final class KeychainKeyStore: Sendable {
   }
 
   private func storageError(_ status: OSStatus) -> StorageError {
-    status == errSecItemNotFound ? .notFound : .readFailed
+    status == errSecItemNotFound ? .notFound : .readFailed(status)
   }
 }
 

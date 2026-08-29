@@ -6,6 +6,7 @@ final class WalletViewModel: ObservableObject {
   private let balanceCache = BalanceCache()
   private let groupManager = WalletGroupManager()
   private var stateGeneration = 0
+  private var registryUnavailableMessage: String?
   @Published var addressHex = ""
   @Published var walletGroups: [WalletGroup] = []
   @Published var balance: String?
@@ -57,12 +58,15 @@ final class WalletViewModel: ObservableObject {
       }
       addressHex = address
       balance = try balanceCache.balance(account: address)
+      registryUnavailableMessage = nil
       errorMessage = nil
     } catch {
       addressHex = ""
       walletGroups = []
       balance = nil
-      errorMessage = "Your existing wallet could not be loaded. Please try again."
+      let message = adoptionMessage(for: error)
+      registryUnavailableMessage = message
+      errorMessage = message
       return
     }
   }
@@ -343,10 +347,14 @@ final class WalletViewModel: ObservableObject {
       return "The seed phrase could not be derived."
     case WalletGroupManagerError.duplicateAccount:
       return "That wallet already exists on this device."
+    case WalletGroupManagerError.registryNotReady:
+      return registryUnavailableMessage
+        ?? "Your existing wallet could not be loaded. Please close and reopen the app to try again."
     case WalletGroupManagerError.verificationFailed:
       return "Wallet verification was cancelled or failed. No wallet was added."
     case WalletGroupManagerError.secureStorage:
-      return "The wallet could not be unlocked or saved securely."
+      return
+        "The wallet could not be unlocked or saved securely. Make sure a device passcode is enabled."
     case WalletGroupManagerError.wrongGroupKind:
       return "Only seed wallets can add another account."
     case WalletGroupManagerError.registryChanged:
@@ -362,6 +370,14 @@ final class WalletViewModel: ObservableObject {
     default:
       return "The wallet could not be saved. Please try again."
     }
+  }
+
+  private func adoptionMessage(for error: Error) -> String {
+    if case WalletRegistryAdoptionError.migrationFailed(.cancelled) = error {
+      return
+        "Wallet recovery authentication was cancelled or unavailable. Make sure a device passcode is enabled, then close and reopen the app to try again."
+    }
+    return "Your existing wallet could not be loaded. Please try again."
   }
 }
 

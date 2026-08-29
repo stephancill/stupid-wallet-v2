@@ -336,6 +336,19 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   not. Never delete or overwrite it to recover: authenticate the existing item, require it
   to match the imported secret, repeat sign-and-recover verification, then restore only the
   non-secret registration.
+- If an upgraded Dawn user sees the existing-wallet load error and then a generic save error with no
+  authentication prompt, treat the save error as potentially secondary: wallet-group creation first
+  requires a ready registry and may not have reached key generation. Inspect Dawn ciphertext lookup and
+  the migration pending marker. Legacy reads must bind the production access group and empty Dawn
+  generic-password service without falling back to an access-group wildcard; an already-saved pending
+  key resumes at authenticated new-format proof, and must never be deleted or replaced to make migration
+  retry.
+- Denying the Dawn decrypt or new-format verification prompt is intentionally fail-closed: migration
+  remains incomplete, old material stays intact, and wallet creation still requires the unavailable
+  registry. `errSecUserCanceled`, `errSecAuthFailed`, and `errSecInteractionNotAllowed` should surface as
+  cancelled-or-unavailable recovery with passcode guidance, not as a generic wallet save failure. With no
+  device passcode, `.userPresence` storage and release are unavailable; enable a passcode and retry the
+  in-place migration rather than creating or deleting key material.
 - Never preflight authentication, cache an unlocked key, or sign arbitrary popup params.
 
 ### 6. Verify RPC Behavior
