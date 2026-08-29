@@ -50,6 +50,76 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-29 - Internal To External TestFlight Build 97 (Face ID Declaration)
+
+### Summary
+
+- Published version 1.0.0 build 97 to external TestFlight after the internal 96 upload. Build 97
+  carries the restored `NSFaceIDUsageDescription` in both the containing app and Safari extension.
+
+### Why
+
+- The current "What to Test" note for build 96 was retained verbatim on build 97. Releasing build 97
+  externally distributes the Face ID usage declaration to fresh testers.
+
+### Verification
+
+- `stupid-app release preflight`: READY (app and extension locked at 1.0.0/97).
+- `stupid-app release bump`: 96 -> 97 in app and extension plists, same as build 96.
+- Direct IPA inspection of build 97 confirmed both the containing app and Safari extension carry the
+  `NSFaceIDUsageDescription` value and build number 97.
+- `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer stupid-app release archive` produced IPA
+  SHA-256 `c61992865f5af293761ca3c36a3d7d0b040a9d056573a11968b4a21f31ee563a`; the post-sign verifier passed.
+- `stupid-app release upload --wait` completed with `processing=VALID`, `internal=READY_FOR_BETA_TESTING`.
+- `stupid-app release external-beta --whats-new "New approval flow, multi account, v1 import fixes"`
+  created/added the build to external group `External Testers`, set the what's-to-test note, and created the
+  external review submission. The CLI then timed out polling review approval even though the submission was
+  created; live App Store Connect state confirmed the outcome directly.
+- Live App Store Connect state for build 97: processing VALID, internal beta READY_FOR_BETA_TESTING,
+  external beta BETA_APPROVED, and the beta build localization retains the preserved what's-to-test note.
+- `stupid-app release status --live` confirms `external beta: BETA_APPROVED`.
+
+### Follow-Up
+
+- Retry/observe the external beta approval polling boundary so a future `release external-beta` exits on
+  approval rather than timing out.
+
+## 2026-08-29 - Face ID Usage Declaration Restored
+
+### Summary
+
+- Restored `NSFaceIDUsageDescription` to the containing app and Safari extension plists, including
+  the tracked Apple Silicon Mac compatibility plists that package the same iOS code.
+- The purpose string explains that Face ID authorizes signing and access to protected wallet keys.
+  The existing `.userPresence` policy remains unchanged and continues to permit device-passcode
+  fallback.
+- Documented the fresh-install versus upgraded-install diagnostic: an upgraded production bundle can
+  retain an older Face ID authorization entry, while a fresh installation needs the current usage
+  declaration and a legitimate first protected operation before its per-app Settings control appears.
+
+### Why
+
+- The prior Dawn project declared Face ID usage for both executable bundles, but the rebuild's source
+  and build-96 IPA omitted it. That could leave upgraded users with a retained Settings control while
+  fresh users had no declared permission through which iOS could authorize Face ID.
+
+### Verification
+
+- `plutil -lint Info.plist SafariExtension/Info.plist Mac/Info-App.plist Mac/Info-Ext.plist` passed.
+- `stupid-app doctor` completed with zero failures and zero warnings.
+- `stupid-app build` succeeded. Direct inspection of the assembled app and nested extension confirmed
+  both contain the expected `NSFaceIDUsageDescription` value.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app.
+  Direct inspection of both installed bundles confirmed the purpose string, and accessibility
+  inspection showed the retained wallet home.
+- `git diff --check` passed before this implementation-note entry.
+
+### Follow-Up
+
+- On a fresh physical installation, trigger one legitimate protected operation and confirm the Face ID
+  consent and per-app Settings control. An upgraded device with retained authorization is not
+  sufficient first-use evidence.
+
 ## 2026-08-29 - Account Navigation And Copy Feedback
 
 ### Summary

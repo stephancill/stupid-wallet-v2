@@ -326,6 +326,11 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   256-bit values and must enforce the declared width.
 - Authentication cancellation and invalid signing parameters are different failures. A
   fresh `.userPresence` keychain read should happen exactly once for each signature.
+- If one installation exposes a per-app Face ID control in Settings and another does not, inspect
+  `NSFaceIDUsageDescription` in both the source and packaged app/extension plists, then compare upgrade
+  history. iOS can retain authorization state for an upgraded bundle ID, while a fresh install cannot
+  request Face ID without the usage description. Trigger one legitimate protected operation before
+  concluding that a fresh installation will never expose the control.
 - LocalAuthentication temporarily moves the containing app to SwiftUI scene phase `.inactive` while
   the system prompt is visible. Privacy-sensitive reveal state must clear on `.background`, navigation
   away, and its timeout, but not on every non-active phase; otherwise a successful reveal flashes and

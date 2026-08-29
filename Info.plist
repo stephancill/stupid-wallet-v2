@@ -9,9 +9,11 @@
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
     <key>CFBundleVersion</key>
-    <string>96</string>
+    <string>97</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Face ID is used to authorize signing and access protected wallet keys.</string>
     <key>MinimumOSVersion</key>
     <string>17.0</string>
     <key>UIApplicationSceneManifest</key>

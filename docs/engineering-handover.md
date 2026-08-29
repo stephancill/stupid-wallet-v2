@@ -447,6 +447,10 @@ private-key import authenticated and completed after an in-place install of the 
 All production device key and seed stores explicitly select the preserved shared keychain access group.
 Simulator and macOS package-test builds omit that explicit group because their ad-hoc/test processes do
 not carry the production entitlement; iOS device and iOS-on-Mac builds use the production group.
+The containing app and Safari extension both declare `NSFaceIDUsageDescription` because either process
+can request access to `.userPresence`-protected wallet material. The authorization policy remains device
+owner authentication, so the system may use Face ID or the device passcode rather than requiring
+biometrics exclusively.
 
 New connected-site approvals now persist a V2 grant keyed by normalized scheme, hostname,
 effective port, and Safari profile identifier when `SFExtensionProfileKey` is present.
@@ -1396,7 +1400,10 @@ Both test grants and the disposable Safari profile were removed after acceptance
 force-quit once after replacing the installed extension so its content script and background worker
 were loaded from the new build; a page reload alone retained the pre-install extension context.
 
-External-TestFlight status (2026-08-27): version 1.0.0 build 95 is the current external candidate.
+External-TestFlight status (2026-08-29): version 1.0.0 build 97 is the current external candidate,
+approved for external testing with its what's-to-test note preserved from build 96. It carries the
+restored `NSFaceIDUsageDescription` in both the containing app and the Safari extension. Build 95 had
+earlier been the first external candidate after the SDK-build-metadata fix.
 Builds 92–94 were rejected or flagged by Apple's external gate because their archives omitted the
 SDK build-number keys `DTPlatformBuild`/`DTSDKBuild` (and, before 94, had a wrong `DTXcode`).
 External review now accepts build 95, whose packaged Info.plist carries the complete build-system
