@@ -13,6 +13,8 @@ import SwiftUI
     @State private var groupLabels: [UUID: String] = [:]
     @State private var accountLabels: [String: String] = [:]
     @State private var pendingRemoval: PendingRemoval?
+    @State private var showsSeedBackup = false
+    @State private var showsImportWallet = false
     @FocusState private var focusedLabel: LabelField?
 
     var body: some View {
@@ -90,14 +92,14 @@ import SwiftUI
 
           if !isEditing {
             Section("Add Wallet") {
-              NavigationLink {
-                SeedBackupView(vm: vm)
+              Button {
+                showsSeedBackup = true
               } label: {
                 Text("Create New Wallet")
                   .foregroundStyle(.tint)
               }
-              NavigationLink {
-                ImportWalletView(vm: vm)
+              Button {
+                showsImportWallet = true
               } label: {
                 Text("Import Wallet")
                   .foregroundStyle(.tint)
@@ -113,11 +115,22 @@ import SwiftUI
         }
         .navigationTitle("Accounts")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $showsSeedBackup) {
+          SeedBackupView(vm: vm)
+        }
+        .navigationDestination(isPresented: $showsImportWallet) {
+          ImportWalletView(vm: vm)
+        }
         .toolbar {
           if !isEditing {
             ToolbarItem(placement: .cancellationAction) {
-              Button("Close") { dismiss() }
-                .disabled(vm.isSaving)
+              if #available(iOS 26.0, *) {
+                Button(role: .close) { dismiss() }
+                  .disabled(vm.isSaving)
+              } else {
+                Button("Close") { dismiss() }
+                  .disabled(vm.isSaving)
+              }
             }
           }
           ToolbarItem(placement: .confirmationAction) {
@@ -250,9 +263,6 @@ import SwiftUI
         Label("Add Account", systemImage: "plus")
           .foregroundStyle(vm.isSaving ? Color.secondary : Color.accentColor)
         Spacer()
-        Image(systemName: "chevron.right")
-          .font(.footnote.weight(.semibold))
-          .foregroundStyle(.tertiary)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .contentShape(Rectangle())

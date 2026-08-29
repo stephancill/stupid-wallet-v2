@@ -50,6 +50,38 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-08-29 - Account Navigation And Copy Feedback
+
+### Summary
+
+- Removed disclosure chevrons from Add Account, Create New Wallet, and Import Wallet on the
+  Accounts screen while preserving each navigation flow.
+- Replaced the Accounts sheet's text Close button with the native close-role button on iOS 26 and
+  retained the text control on older supported iOS versions where that role is unavailable.
+- Changed the home Copy Address toolbar symbol directly, without a content-transition animation, to
+  a checkmark for 1.5 seconds after copying, then restored the copy symbol.
+
+### Why
+
+- Keep the account switcher visually quieter and provide immediate confirmation that the address
+  reached the pasteboard.
+
+### Verification
+
+- `swift test` passed all 303 tests in 34 suites.
+- `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the
+  app and extension.
+- Simulator verification showed the checkmark immediately after copying and the copy symbol restored
+  after 1.5 seconds. Accessibility inspection retained the `Copy Address` button label.
+- Simulator inspection confirmed Add Account, Create New Wallet, and Import Wallet have no
+  chevrons. Selecting each replacement Add Wallet button opened its correct destination.
+- On the iOS 26 simulator, the close-role button rendered as the native X and dismissed Accounts.
+
+### Follow-Up
+
+- None.
+
 ## 2026-08-29 - Internal TestFlight Build 96 (Wallet Migration Reliability)
 
 ### Summary

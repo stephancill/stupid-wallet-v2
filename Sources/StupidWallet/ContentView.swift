@@ -14,6 +14,7 @@ import SwiftUI
     @State private var showConnectedApps = false
     @State private var showSettingsSheet = false
     @State private var showAccountPicker = false
+    @State private var showCopyCheckmark = false
 
     var body: some View {
       NavigationView {
@@ -49,8 +50,14 @@ import SwiftUI
             ToolbarItemGroup(placement: .navigationBarTrailing) {
               Button {
                 UIPasteboard.general.string = vm.addressHex
+                showCopyCheckmark = true
+                Task { @MainActor in
+                  try? await Task.sleep(for: .seconds(1.5))
+                  showCopyCheckmark = false
+                }
               } label: {
-                Image(systemName: "square.on.square")
+                Image(systemName: showCopyCheckmark ? "checkmark" : "square.on.square")
+                  .contentTransition(.identity)
               }
               .accessibilityLabel("Copy Address")
 

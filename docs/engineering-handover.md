@@ -389,9 +389,10 @@ never reused. Long-pressing Add Account is the shortcut for deriving only the cu
 index. Stale or lower selections fail closed.
 
 The home account-menu switcher row uses the same squircle blockie as native account rows and places
-the muted shortened address beneath the account label. Accounts uses a trailing disclosure chevron on
-Add Account to communicate navigation, and its Create New Wallet and Import Wallet navigation labels
-use the same blue tint as additive account actions. The discovery screen presents Load More as a
+the muted shortened address beneath the account label. Accounts omits disclosure chevrons from its
+Add Account, Create New Wallet, and Import Wallet rows; additive navigation labels retain the same
+blue tint as other account actions. Its sheet toolbar uses the native close-role control on iOS 26
+and the text Close control on older supported systems. The discovery screen presents Load More as a
 standalone tinted action without an inset-grouped pill background.
 
 The aggregate native balance uses an account-bound, atomically written App Group cache.
