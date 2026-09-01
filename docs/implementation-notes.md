@@ -50,6 +50,45 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-01 - Empty-Popup-While-Pending Diagnostic And State Cleanup
+
+### Summary
+
+- Debugged a stalled wallet connect on `basepaint.xyz/mint` in the iOS simulator where the dapp saw
+  the extension and created a native pending `eth_requestAccounts`, but the Safari wallet popup
+  rendered "No pending requests" so nothing could be approved.
+- Root cause: one retained legacy-format `PendingRequests` record (an older schema that predates the
+  current required `revision` field) makes `PendingRequestStore.pending()` throw
+  `PendingRequestStoreError.corrupt`, which failed closed the entire native `list`; the popup's
+  `refresh()` collapses any failed `list` into the empty standby, so "No pending" was a false state.
+- Proved it with temporary `os.Logger` instrumentation in `SafariWebExtensionHandler`'s `list` case
+  (`ADOPT ok ... action=list`, then `LIST threw ... error=corrupt`) rather than guessing.
+- Cleared the stale state on the development simulator: moved the incompatible legacy records plus
+  leftover stale pending connects to a backup directory (not deleted), leaving an empty, decodable
+  queue, then reconnected and verified the full flow end to end.
+
+### Why
+
+- One unreadable legacy record aborts the entire approval queue because every retained record must
+  decode before any pending request can be listed, so a single stale file bricks the whole popup.
+- `jq` parses the legacy JSON fine, which masked the problem: only the real `WalletPendingRequest`
+  `Codable` rejects it (missing non-optional `revision`). `jq` is not a valid decode check.
+
+### Verification
+
+- Confirmed native `list` threw `error=corrupt` while registry adoption passed (`ADOPT ok`).
+- After cleanup, reconnected to basepaint: the `eth_requestAccounts` connect was consumed, the site
+  grant persisted, the Privy sign-in message was consumed, and the signature was independently
+  verified with `cast wallet verify` recovering the wallet account; the dapp reported success.
+- All simulated-device records cleaned; instrumentation reverted before finishing.
+
+### Follow-Up
+
+- Recommend a product change (needs review): `list`/`summarize` should skip un-reviewable
+  legacy records rather than fail the whole queue and let the individual record still fail closed
+  on approve/sign; add a deterministic regression test using a legacy-format fixture.
+- Consider pruning terminal records so the pending directory stays small.
+
 ## 2026-08-29 - No-Wallet Setup Screen Layout
 
 ### Summary

@@ -311,6 +311,17 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   and fees again immediately before signing, so never treat the displayed estimate as the
   signed gas fields.
 - Only the oldest pending request is approvable. Never reorder or mutate persisted files.
+- **Empty popup with a valid fresh pending record:** native `list` may be failing the whole
+  store, not returning zero. A retained `PendingRequests/*.json` written by an older build
+  (the pre-`revision`/pre-`bindingVersion` schema: a UUID record with only
+  `id,method,chainId,origin,result,payloadDigest,params,expiresAt,status,account,kind,createdAt`
+  and no `revision`) fails the current `WalletPendingRequest` decode, `store.pending()` aborts
+  with `PendingRequestStoreError.corrupt`, and popup `refresh()` renders the empty standby.
+  Prove it without guessing: add a temporary `os.Logger` in `SafariWebExtensionHandler`'s
+  `list` case, rebuild/reinstall, reinstall through `stupid-app run --simulator`, then capture
+  `/usr/bin/log stream --predicate 'subsystem == "SOMESUBSYSTEM"'` and look for
+  `LIST ok profile=- count=N` vs `LIST threw error=corrupt`. `jq . <record>` parses fine while
+  Swift `Codable` still rejects it, so validate with the real decoder, not `jq`.
 
 ### 5. Inspect Native Preparation And Signing
 
