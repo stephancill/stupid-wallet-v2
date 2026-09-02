@@ -413,6 +413,21 @@ curl -sS -X POST -H 'content-type: application/json' \
 
 - Pin deterministic vectors in Swift tests and cross-check with viem or Foundry.
 - For EIP-712, compare `EIP712.prefixedHash` with viem `hashTypedData`.
+- Do not hand-transcribe typed JSON payloads into test vectors. A single hex nibble error in any
+  64-byte-address-encoded field changes the digest and can look like a wallet hashing bug. Build
+  vectors by decoding the exact captured JSON, and cross-check the digest with `viem`/`ethers`/`cast`.
+- For `eth_signTypedData_v4`, recover the signer with `viem` `recoverAddress({ hash, signature })`
+  against the canonical EIP-712 digest. A recovered account that differs from the recorded account
+  (for every `from` variant and recovery id) means the signer sealed a different digest/identity
+  than the request corresponds — reproduce live and capture the digest the signer actually seals
+  before changing hashing code.
+- The wallet signs the digest it computes, so a "wrong" signature is usually self-consistent: it
+  recovers to the account under the wallet's own digest but not under a standard tool's digest. When
+  that split appears, diff the wallet's domain hash against viem `hashDomain`. A frequent root cause
+  is EIP-712's *implied* `EIP712Domain`: a compliant dapp omits it from its `types` map, and a hasher
+  that reads domain fields from `types["EIP712Domain"]` hashes an empty domain struct instead. Confirm
+  by re-hashing with `EIP712Domain` injected into `types` — if the digest then matches viem, the hasher
+  must synthesize the implied domain fields (name/version/chainId/verifyingContract/salt) itself.
 - After an authorized broadcast, verify independently:
 
 ```bash

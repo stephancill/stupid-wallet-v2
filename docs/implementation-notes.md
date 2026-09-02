@@ -77,17 +77,68 @@ Use this entry template:
 ### Verification
 
 - Confirmed native `list` threw `error=corrupt` while registry adoption passed (`ADOPT ok`).
-- After cleanup, reconnected to basepaint: the `eth_requestAccounts` connect was consumed, the site
-  grant persisted, the Privy sign-in message was consumed, and the signature was independently
-  verified with `cast wallet verify` recovering the wallet account; the dapp reported success.
+- After cleanup, reconnected to basepaint: `eth_requestAccounts` consumed, grant persisted, Privy
+  SIWE `personal_sign` consumed, and the signature independently verified with
+  `cast wallet verify` recovering the wallet account; the dapp reported success.
 - All simulated-device records cleaned; instrumentation reverted before finishing.
 
 ### Follow-Up
 
 - Recommend a product change (needs review): `list`/`summarize` should skip un-reviewable
-  legacy records rather than fail the whole queue and let the individual record still fail closed
-  on approve/sign; add a deterministic regression test using a legacy-format fixture.
-- Consider pruning terminal records so the pending directory stays small.
+  legacy records (not fail the whole queue) and let the individual record still fail closed on
+  approve/sign; add a deterministic regression test using a legacy-format fixture.
+- Consider pruning expired/terminal records so the pending directory stays small.
+
+## 2026-08-31 - Wallet Backend And Push Notification Draft Plan
+
+### Summary
+
+- Added `docs/wallet-backend-push-notifications-plan.md`, a draft implementation plan for a separate
+  first-party wallet backend that consumes signed Stupid Wallet Webhooks activity and fans out
+  best-effort APNs notifications.
+- Proposed a two-layer authentication model: one explicit EIP-712 wallet-ownership proof behind fresh
+  device-owner authentication per enrolled account, followed by routine request authentication through
+  a separate device-bound P-256 installation key that cannot sign Ethereum payloads.
+- Kept App Attest as an additional integrity signal rather than the sole identity mechanism because
+  Apple reports it unsupported for iOS/iPadOS apps running on Apple Silicon Mac.
+- Specified backend APIs, D1 records, upstream subscription reference counting, cursor-based missed-push
+  recovery, APNs environment separation, local account-deletion outbox behavior, observed-activity
+  persistence, implementation gates, test coverage, operational metrics, and open product decisions.
+- Marked the plan as a draft. It does not change the maintained architecture or claim that push
+  notifications are approved or implemented.
+
+### Why
+
+- The wallet-webhooks customer API key and one-time webhook signing secret cannot be embedded in the
+  app. A separate backend is required to hold those credentials, verify upstream deliveries, maintain
+  device/address bindings, and communicate with APNs.
+- APNs is best-effort and cannot be activity authority, so correctness requires a durable authenticated
+  event feed and explicit reorg handling.
+- Existing activity persistence is sender-centric and globally unique by transaction hash, which cannot
+  safely represent one remote transaction observed for multiple tracked accounts or across chains.
+
+### Verification
+
+- Read the maintained engineering handover and complete implementation log, then inspected current
+  wallet registry, account lifecycle, activity, app startup, entitlements, network, and signing-tool
+  capability boundaries.
+- Confirmed `stupid-app --version` reports `0.0.12` and that its current signing setup does not
+  automatically enable Push Notifications or App Attest from source entitlements.
+- Inspected Stupid Wallet Webhooks `main` at commit
+  `781843eb18093a391870dbe67a94d228ff834891`, its public API, persistence, scanner, fanout, delivery,
+  reorg, quota, and webhook-signature behavior.
+- Confirmed current upstream source wires `activity.reverted` fanout, while older upstream
+  implementation notes still call it deferred. Also identified that observed and reverted deliveries
+  reuse the observation ID/header even though public documentation tells consumers to deduplicate only
+  by that header; the draft makes resolving this contract a pre-production gate.
+- Documentation-only planning work; no app, backend, entitlement, signing, or deployed behavior changed.
+
+### Follow-Up
+
+- Review and approve or revise the draft's eight open decisions before updating
+  `docs/engineering-handover.md` or beginning implementation.
+- If approved, begin with the upstream event-identity contract and `stupid-app` capability/profile work
+  before adding wallet entitlements or production credentials.
 
 ## 2026-08-29 - No-Wallet Setup Screen Layout
 
@@ -6016,3 +6067,69 @@ Use this entry template:
 - `stupid-app run --usb` signed and installed the diagnostic-free app and extension over the physical
   migrated installation. Its known CoreDevice TUN launch step failed after installation; a direct
   `devicectl` launch of the installed bundle then succeeded.
+
+## 2026-09-02 — eth_signTypedData signature cross-check against a txlink request
+
+Investigated a report that the wallet produced an incorrect `eth_signTypedData` signature for a
+USD Coin `TransferWithAuthorization` payload (Base, chain 8453) submitted through a txlink
+`wallet_sign` request.
+
+Verification work (no production code changed):
+- Fetched the request/result JSON and reconstructed the EIP-712 digest for the stored message
+  exactly; the correct digest (`0x9c898140e7ba…311c0`) agrees between this repo's `EIP712`
+  hasher, `ethers`, and `viem` (domain separator `0x02fa7265…` also agrees across implementations).
+- `ethers.verifyTypedData` and `viem` `recoverAddress` against that digest recover to
+  `0x0D6ED4E…`, NOT the recorded account `0x8d2560…`, for both the account-`from` and the
+  raw-request proxy-`from` message variants (all `v` recovery ids). The stored signature therefore
+  does not correspond to the account under any reconstruction of this request's EIP-712 data.
+- Added a deterministic regression vector (`USDC TransferWithAuthorization cross-checks viem`)
+  asserting the canonical digest for this exact payload. The initial version of that test failed
+  only because a hand-transcribed `to` address introduced a nibble typo; with the exact address it
+  passes and proves the wallet `EIP712` hasher is correct.
+
+Conclusion: the wallet's EIP-712 hashing is not the source of the bad signature. The divergence is
+in the runtime signed payload/identity (what the signer actually hashed, or which account key it
+used) and must be reproduced on-device — capture the exact digest the live signer seals and compare
+against `hashTypedData` before changing any signing code. Follow-up: instrument the live approval
+path to log (for public-safe analysis) the digest it seals for a matching request and diff against
+the canonical EIP-712 digest.
+
+## 2026-09-02 — Root cause: eth_signTypedData produced a non-standard digest (implicit EIP712Domain)
+
+Reproduced and fixed the reported "wallet produces incorrect eth_signTypedData signature".
+
+Live reproduction (txlink `wallet_sign` -> native `eth_signTypedData_v4`, USDC
+`TransferWithAuthorization`, Base/8453):
+- Created a txlink stored request scoped to the simulator wallet account
+  `0xE8F6A3ebeBb34315750466797f8D00C1Ad59e15F`, opened it, connected the site, and
+  signed in the wallet popup. The txlink request completed with a signature; the wallet's
+  pending record status was `consumed` with no error.
+- The signature recovers to the account under the wallet's own digest, but a standard
+  verifier (viem/ethers) computes a different digest from the same message, so the
+  signature does not recover to the account under a standard EIP-712 implementation.
+
+Root cause (in `Sources/StupidWalletCore/EIP712.swift`):
+- EIP-712 treats the domain type as implied: a compliant dapp normally omits
+  `EIP712Domain` from the request's `types` map. The wallet's domain hash reads its field
+  list from `types["EIP712Domain"]`, so when omitted it hashed the domain as an EMPTY
+  struct, producing a self-consistent but non-standard digest. External verifiers recover
+  a different signer -> "incorrect signature".
+
+Fix: in `EIP712.prefixedHash`, when `types` has no `EIP712Domain`, synthesize its field
+list from the domain keys actually present, in the canonical order
+`name, version, chainId, verifyingContract, salt`, before hashing. If the dapp supplies
+`EIP712Domain` explicitly, it is used as given (unchanged behaviour).
+
+Verification: added a regression test asserting the digest for a real
+`TransferWithAuthorization` payload whose `types` omit `EIP712Domain` equals the
+viem cross-checked value `0xebd605c0...7a`. Previously the wallet produced `0xdd9ffd… `
+for this exact payload; after the fix it matches viem. All host tests pass
+(`swift test`, 305 tests). A full `stupid-app build` for the iOS SDK is still pending;
+the change is pure host-testable Swift logic.
+
+On-device verification (2026-09-02): rebuilt with `stupid-app run --simulator --udid
+6552DF1D-95CE-48E3-801F-8F80F0AA8D29` and re-signed the same `wallet_sign` typed-data request
+from the fixed build. The txlink request completed and `viem recoverAddress` returns the wallet
+account for the signature; the wallet now computes the canonical EIP-712 digest it produced and
+which matches viem/ethers byte-for-byte. Before the fix the identical request produced a
+signature that only recovered under the wallet's non-standard digest. Fix confirmed on-device.

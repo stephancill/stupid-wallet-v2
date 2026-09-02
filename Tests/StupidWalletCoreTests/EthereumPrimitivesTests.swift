@@ -105,6 +105,27 @@ struct EIP712Tests {
       Hex.encode(try EIP712.prefixedHash(of: typedData))
         == "bd66d964dead637a052ac706937c5e3f27b286c5a36a01d55db65c14f4a09fde")
   }
+
+  @Test("USDC TransferWithAuthorization cross-checks viem")
+  func transferWithAuthorizationMatchesViem() throws {
+    let json = """
+      {"types":{"EIP712Domain":[{"name":"name","type":"string"},{"name":"version","type":"string"},{"name":"chainId","type":"uint256"},{"name":"verifyingContract","type":"address"}],"TransferWithAuthorization":[{"name":"from","type":"address"},{"name":"to","type":"address"},{"name":"value","type":"uint256"},{"name":"validAfter","type":"uint256"},{"name":"validBefore","type":"uint256"},{"name":"nonce","type":"bytes32"}]},"primaryType":"TransferWithAuthorization","domain":{"name":"USD Coin","version":"2","chainId":8453,"verifyingContract":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"},"message":{"from":"0x8d25687829D6b85d9e0020B8c89e3Ca24dE20a89","to":"0x94F7a1573dF1DCBFF0eE78DD3e2CbfF161997Ad9","value":"10000","validAfter":"0","validBefore":"1788357322","nonce":"0xe8469ff8278268290deff8a7df0f534664b681430cec5cdd5c52ff3f1c955ba1"}}
+      """
+    let typedData = try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+    #expect(
+      Hex.encode(try EIP712.prefixedHash(of: typedData))
+        == "9c898140e7baf031c189fd386ae1426223b07526489a04756e10b7368dda91c0")
+  }
+
+  @Test("EIP712Domain omitted from types still hashes to the canonical domain (viem)")
+  func domainImplyingMatchesViem() throws {
+    let json = """
+      {"domain":{"name":"USD Coin","version":"2","chainId":8453,"verifyingContract":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"},"types":{"TransferWithAuthorization":[{"name":"from","type":"address"},{"name":"to","type":"address"},{"name":"value","type":"uint256"},{"name":"validAfter","type":"uint256"},{"name":"validBefore","type":"uint256"},{"name":"nonce","type":"bytes32"}]},"primaryType":"TransferWithAuthorization","message":{"from":"0xE8F6A3eBeBb34315750466797f8D00C1Ad59e15F","to":"0x94F7a1573dF1DCBFF0eE78DD3e2CbfF161997Ad9","value":"10000","validAfter":"0","validBefore":"1788357322","nonce":"0xe8469ff8278268290deff8a7df0f534664b681430cec5cdd5c52ff3f1c955ba1"}}
+      """
+    let typedData = try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+    #expect(Hex.encode(try EIP712.prefixedHash(of: typedData))
+      == "ebd605c071decbb783b05871383d330b6a1fba310a336a41522fdd83788d6ee1")
+  }
 }
 
 struct RLPTests {

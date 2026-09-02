@@ -12,9 +12,32 @@ public enum EIP712 {
       let message = root["message"]
     else { throw ApprovalError.badParams }
 
-    let domainHash = try structHash(type: "EIP712Domain", value: domain, types: types)
+    let domainHash = try structHash(type: "EIP712Domain", value: domain, types: domainTypes(types, for: domain))
     let messageHash = try structHash(type: primaryType, value: message, types: types)
     return Keccak.keccak256([0x19, 0x01] + domainHash + messageHash)
+  }
+
+  /// The `types` map to use when hashing the EIP-712 domain. A compliant dapp does not
+  /// have to list `EIP712Domain` in `types`; the domain type is implied by the EIP-712
+  /// domain fields actually present in the `domain` value (in canonical field order).
+  /// Without falling back, an unlisted `EIP712Domain` would hash as an empty struct and
+  /// produce a digest that no standard verifier can reproduce.
+  private static func domainTypes(
+    _ supplied: [String: JSONValue], for domain: JSONValue
+  ) -> [String: JSONValue] {
+    if supplied["EIP712Domain"] != nil { return supplied }
+    guard case .object(let object) = domain else { return supplied }
+    let ordered: [(String, String)] = [
+      ("name", "string"), ("version", "string"), ("chainId", "uint256"),
+      ("verifyingContract", "address"), ("salt", "bytes32"),
+    ]
+    let present = ordered.filter { object[$0.0] != nil }.map {
+      JSONValue.object(["name": .string($0.0), "type": .string($0.1)])
+    }
+    guard !present.isEmpty else { return supplied }
+    var merged = supplied
+    merged["EIP712Domain"] = .array(present)
+    return merged
   }
 
   // MARK: struct hashing
