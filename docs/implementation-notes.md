@@ -50,6 +50,34 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-04 - App-Enrollment Reconciliation Policy
+
+### Summary
+
+- Added `NotificationPolicy.swift` to `StupidWalletCore`: `NotificationDesiredState` composes the
+  desired enrollment (active wallet accounts x configured chains whose globally webhook-active chains
+  produce effective address-chain pairs), and `NotificationReconciliationPolicy` encodes notification
+  eligibility (authorization + alert + APNs token), liveness-renewal cadence (≤14 days), settings-
+  refresh cadence (≤30 days), popup liveness coalescing (≤24 hours), and full-reconciliation triggers.
+- Added deterministic `NotificationCoreTests` covering desired state, eligibility, and all cadences.
+
+### Why
+
+- These are the pure, testable decision rules the containing app will call from the APNs coordinator
+  and reconciliation scheduler, and they are free of credentials or device state so they can be
+  unit-tested now.
+
+### Verification
+
+- `swift test` passes: 305 tests / 34 suites, 0 failures (17 new notification tests total).
+- `xcrun swift-format` applied and clean on the new files.
+
+### Follow-Up
+
+- Build the SwiftUI `NotificationsView` + app coordinator (APNs registration, settings read, triggers)
+  and wire account/group/networkStore change hooks, then verify on the simulator/device once the
+  development profile and physical device are provisioned.
+
 ## 2026-09-04 - Notification Service Extension Scaffolded
 
 ### Summary

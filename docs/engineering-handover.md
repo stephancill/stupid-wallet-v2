@@ -36,6 +36,9 @@ with the shared blockie renderer, a `UNNotificationServiceExtension` that resolv
 `<account label> • <chain>` from an App Group display map, App-Group-only entitlements, and
 `aps-environment: development` added to the containing app. The extension is not yet packaged/signed:
 that needs provisioning the notification-service profile and installing the updated `stupid-app` tool.
+`NotificationPolicy` in `StupidWalletCore` now holds the pure desired-enrollment and
+eligibility/cadence rules (authorization, APNs token, liveness ≤14d, settings ≤30d, popup coalescing
+≤24h) the app coordinator will call, covered by deterministic tests.
 
 Multiple wallet groups and accounts are approved next-scope, and Gates A through H are complete. Gate
 I is implemented hermetically and on the simulator: wallet-group/account labels are editable (with

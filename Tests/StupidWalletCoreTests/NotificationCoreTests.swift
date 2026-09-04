@@ -109,4 +109,51 @@ final class NotificationCoreTests: XCTestCase {
       NotificationBlockie.renderPNG(seed: "0x2222222222222222222222222222222222222222"))
     XCTAssertNotEqual(first, different, "different seeds must produce different renders")
   }
+
+  func testDesiredStateOnlyPairsActiveChains() {
+    let desired = NotificationDesiredState.desired(
+      activeWalletAddresses: ["0xAaAa", "0xBbBb"],
+      configuredChains: ["1", "8453", "137"],
+      activeGlobalChains: ["1", "8453"]
+    )
+    XCTAssertEqual(desired.addresses, ["0xaaaa", "0xbbbb"])
+    XCTAssertEqual(desired.configuredChains, ["1", "8453", "137"])
+    XCTAssertEqual(desired.addressChainPairs.count, 4)
+    XCTAssertTrue(desired.addressChainPairs.contains("1:0xaaaa"))
+    XCTAssertTrue(desired.addressChainPairs.contains("8453:0xbbbb"))
+  }
+
+  func testEligibilityRequiresAuthorizationAlertAndToken() {
+    XCTAssertTrue(
+      NotificationReconciliationPolicy.isEligible(
+        authorization: .authorized, alertSetting: .enabled, apnsTokenHash: "token"))
+    XCTAssertFalse(
+      NotificationReconciliationPolicy.isEligible(
+        authorization: .denied, alertSetting: .enabled, apnsTokenHash: "token"))
+    XCTAssertFalse(
+      NotificationReconciliationPolicy.isEligible(
+        authorization: .authorized, alertSetting: .enabled, apnsTokenHash: nil))
+  }
+
+  func testLivenessSettingsAndPopupCadence() {
+    let semester = 90 * 24 * 60 * 60 * 1000
+    let now = Int64(semester)
+    XCTAssertTrue(
+      NotificationReconciliationPolicy.isLivenessRenewalDue(
+        livenessExpiresAtMs: now + 10 * 24 * 60 * 60 * 1000, nowMs: now))
+    XCTAssertFalse(
+      NotificationReconciliationPolicy.isLivenessRenewalDue(
+        livenessExpiresAtMs: now + 20 * 24 * 60 * 60 * 1000, nowMs: now))
+    XCTAssertTrue(
+      NotificationReconciliationPolicy.isSettingsRefreshDue(
+        settingsValidUntilMs: now + 20 * 24 * 60 * 60 * 1000, nowMs: now))
+    XCTAssertTrue(
+      NotificationReconciliationPolicy.isPopupRenewalDue(lastPopupRenewalMs: nil, nowMs: now))
+    XCTAssertFalse(
+      NotificationReconciliationPolicy.isPopupRenewalDue(
+        lastPopupRenewalMs: now - 1 * 60 * 60 * 1000, nowMs: now))
+    XCTAssertTrue(
+      NotificationReconciliationPolicy.isPopupRenewalDue(
+        lastPopupRenewalMs: now - 25 * 60 * 60 * 1000, nowMs: now))
+  }
 }
