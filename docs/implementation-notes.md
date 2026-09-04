@@ -50,6 +50,58 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-04 - Wallet Backend MVP Foundation (Gates 0-3) Implemented
+
+### Summary
+
+- Scafolded the MVP backend under `server/` (renamed from the plan's `WalletBackend/` path by developer
+  decision; the approved plan's `WalletBackend/` label remains conceptually authoritative and this entry
+  records the concrete directory).
+- Implemented TypeScript + Hono + Zod + D1 + Cloudflare Queues + Bun with strict TypeScript, oxlint, and
+  Prettier. Deployed as a separate Worker intended for `wallet-api.stupidtech.net`.
+- Implemented the core MVP scope that is verifiable without credentials or a physical device:
+  installation challenge/create, canonical `v1` P-256 request signatures and replay defense, popup
+  liveness capability, full chain-inventory snapshots, per-installation enrollment quotas, staging at
+  the five-installation threshold, effective address-chain registrations, reference-counted upstream
+  subscriptions and an outbox, signed webhook ingestion with `(webhookId, eventType)` composite
+  deduplication, installation event fan-out, and an authenticated cursor feed. Added a bounded APNs
+  client (token-based ES256 provider JWT, development/production separation) and an injectable upstream
+  Stupid Wallet Webhooks client, plus scheduled reconciliation (liveness expiry, event retention,
+  scratch-prune, outbox re-drive).
+- Provided an independent P-256 ECDSA-SHA256 fixture and HMAC helpers usable by Swift and TypeScript
+  tests, plus canonical-request hashing coverage.
+- Persisted the control plane in D1 with dedicated tables for installations, challenges, replay ids,
+  popup replay ids, configured chains and global chain stages, enrollments, effective registrations,
+  upstream subscriptions/outbox, verified activity events, per-installation cursor events, APNs
+  deliveries, counters, and rate limits.
+
+### Why
+
+- The backend ownership/auth/identity and event/feed contracts were the Frozen Contracts (Gate 0) that
+  every other gate depends on, and they are fully testable hermetically without upstream API keys, APNs
+  credentials, or a physical device.
+- Using a `Database` abstraction over D1 lets the hermetic test suite run the same schema and SQL on
+  in-memory SQLite while the Worker uses the real D1 binding.
+
+### Verification
+
+- `cd server && bun run format:check` passes; `bun run lint` reports 0 warnings/0 errors;
+  `bun run typecheck` passes; `bun run test` passes (13 tests, 3 suites: P-256/activity; chain-staging
+  + effective registrations + upstream refs + sticky deactivation; webhook HMAC route + dedup + fanout
+  delivery).
+- Added a Git-ignored `server/.gitignore` so `node_modules/`, `.wrangler/`, `.dev.vars`, and env files
+  are not committed.
+
+### Follow-Up
+
+- Wire the `stupid-app` per-bundle Push Notifications capability derivation and profile provisioning
+  (Gate 1 prerequisite from the plan).
+- Scaffold the Swift `NotificationRegistrationStore`, installation client, activity cursor store, and
+  Notification Service Extension with a shared blockie renderer, then prove land deliverability and
+  production APNs on a physical device.
+- Deploy dev and production Workers with separate D1/queues/secrets and exercise the kill switches when
+  credentials are available.
+
 ## 2026-09-04 - Wallet Notification MVP Scope Approved
 
 ### Summary
@@ -238,6 +290,108 @@ Use this entry template:
 
 - Review the initial account-notification scope and open backend quota/retention decisions before
   approving the draft or updating `docs/engineering-handover.md`.
+
+## 2026-09-04 - Password-Encrypted iCloud Keychain Backup Selected
+
+### Summary
+
+- Selected one current password-encrypted whole-wallet snapshot in iCloud Keychain as the version-1
+  recovery direction, superseding the earlier recommendation to use a private iCloud Documents file.
+- Kept operational seed and private-key items unchanged, non-synchronizable, `.userPresence` protected,
+  and `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. Only the separately authenticated backup envelope
+  will use `kSecAttrSynchronizable`.
+- Specified that Stupid Wallet will not save or synchronize the backup password, add a
+  password-independent recovery key, retain backup history, or silently fall back to another cloud
+  transport.
+- Revised the plan's storage model, lifecycle, UI states, provisioning, failure handling, tests, and
+  implementation gates for one exact synchronizable generic-password item.
+- Removed iCloud Documents container provisioning from the selected path. The preferred design instead
+  adds a containing-app-only backup keychain access group, subject to profile and physical-device proof.
+
+### Why
+
+- A password-encrypted Keychain item combines iCloud Keychain's end-to-end encryption with an
+  independent app-level password while preserving the device-bound signing boundary.
+- A single current snapshot avoids the file catalog, retention, and conflict-version requirements that
+  motivated iCloud Documents, and the expected wallet payload is small enough to justify a bounded
+  physical spike.
+- Direct seed/private-key synchronization was rejected because Apple Account/iCloud Keychain recovery
+  would then be sufficient to recover wallet authority.
+
+### Verification
+
+- Compared direct synchronizable wallet sources, password-encrypted iCloud Documents, and a
+  password-encrypted synchronizable Keychain item against recovery authority, encryption layers,
+  sizing, conflict behavior, transfer observability, provisioning, and deletion semantics.
+- Re-checked the current app and Safari extension keychain access groups and recorded that a dedicated
+  containing-app-only backup group must be proven rather than exposing the envelope to the extension.
+- Reconciled `docs/icloud-wallet-backup-plan.md` and `docs/engineering-handover.md` with the selected
+  direction. Documentation-only work; no keychain item, entitlement, profile, cloud data, or app
+  behavior changed.
+- `git diff --check` and a separate whitespace check of the new untracked plan passed.
+
+### Follow-Up
+
+- Complete the two-device synchronizable-Keychain spike before relying on this transport. It must cover
+  maximum item size, delayed synchronization, no-account behavior, reinstall recovery, concurrent
+  updates, deletion propagation, and the absence of a source-device upload receipt.
+- Resolve password strength, local-wallet deletion copy, optional device-bound update key, recovery
+  metadata, and maximum supported wallet-count decisions before implementation.
+
+## 2026-09-04 - Encrypted iCloud Wallet Backup Scoped
+
+### Summary
+
+- Added `docs/icloud-wallet-backup-plan.md`, a draft threat model, architecture, lifecycle,
+  provisioning, and acceptance plan for recovering all active wallet groups from an app-encrypted
+  iCloud snapshot.
+- Kept the existing seed and private-key signing items explicitly non-synchronizable,
+  `.userPresence` protected, and `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. The proposed backup is
+  a separate authenticated export and restore creates newly protected local items without silently
+  replacing existing sources.
+- Recommended a password-only private iCloud Documents backup for the first release, while preserving
+  password-independent iCloud Keychain recovery as a separate product option with a different trust
+  model.
+- Specified a versioned envelope using authenticated encryption and a strong bounded password KDF,
+  strict typed payload validation, immutable cloud generations, authenticated sign-and-recover before
+  registry activation, and journaled crash recovery.
+- Documented Rainbow's audited backup flow and the parts that must not be copied: low-cost PBKDF2,
+  unauthenticated AES-CBC, file-existence-only upload verification, and deprecated Shared Web Credential
+  password synchronization.
+- Updated the engineering handover with the draft recovery direction, tooling prerequisite, risks, and
+  recommended review work. No feature was marked approved or implemented.
+
+### Why
+
+- Directly synchronizing operational keychain items would remove their device-only property and make
+  cloud synchronization part of the signing boundary.
+- iCloud Drive is not end-to-end encrypted under standard data protection, so wallet secrets require
+  application-level authenticated encryption regardless of the user's iCloud settings.
+- Password-only and iCloud Keychain recovery answer different loss and account-compromise threats and
+  must be chosen explicitly rather than hidden behind a convenience setting.
+
+### Verification
+
+- Re-read the current wallet stores, registry, group lifecycle, settings/export flows, project
+  entitlements, Info.plist, and `stupid-app.yml`; also confirmed the existing app has no iCloud backup
+  capability or behavior.
+- Audited Rainbow source at commit `c838187d2d993c0ecff1281923fb8da705cf589d`, including its backup,
+  encryption, keychain/password, cloud-filesystem, entitlements, and restore paths, plus the pinned
+  native cloud and AES dependencies.
+- Checked current Apple keychain synchronization and iCloud data-protection documentation and the iOS
+  26.5 SDK behavior relevant to synchronizable accessibility classes and ubiquitous files.
+- Inspected `stupid-app 0.0.13` source and tests. Authorized iCloud entitlements can pass through and
+  ubiquity KVS tokens are derived, but signing setup auto-enables only App Groups and AutoFill Credential
+  Provider; iCloud container creation/association and profile regeneration remain prerequisites.
+- Documentation-only work; no app, entitlement, profile, cloud container, protected item, or deployed
+  behavior changed.
+
+### Follow-Up
+
+- Resolve the recovery-authority, password policy, snapshot selection, retention, deletion, local
+  update-key, and iCloud Documents versus CloudKit decisions in the draft plan.
+- If approved, complete the tooling/container and cryptographic-format gates before backup UI or
+  protected-source extraction work.
 
 ## 2026-09-04 - Push Notifications Changed To Arbitrary Address Watches
 

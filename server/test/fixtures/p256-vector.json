@@ -1,0 +1,8 @@
+{
+  "description": "Independent P-256 ECDSA SHA-256 vector usable by Swift (CryptoKit) and TypeScript (Web Crypto) tests. Verify `signature` over `message` with the SPKI-encoded public key. The message is a sample canonical v1 request sequence (not real traffic).",
+  "curve": "P-256",
+  "hash": "SHA-256",
+  "spkiBase64Url": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECGPppgXyeBOk1jeD0EdhOBW5xVeEBp9oGDIJ9BseRsOI2n3WziUX1CmCt-r5cdV8LKJcmLkKH9QfZ1Sd2dafrg",
+  "signatureBase64Url": "TRvrEnF9Qz2-F7TcnYSZy7arDthynEcQLVsFenCV11Q-YXv07RgJrYqMIMVbDlTISkXvFDgj1ZIKGH8Yjs9nmA",
+  "message": "v1\nPOST\n/v1/installations/inst_123/events\n1720000000000\nreq-456\n<digest>"
+}
