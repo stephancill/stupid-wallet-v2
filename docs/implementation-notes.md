@@ -50,6 +50,46 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-04 - Swift Notification Core Scaffolding (Gate 4 Foundation)
+
+### Summary
+
+- Added additive, compile-verified `StupidWalletCore` scaffolding matching existing value-type and
+  store patterns:
+  - `NotificationModels.swift`: bounded event kinds + categorical English titles, notification
+    settings observation, chain stage enum, cursor-feed event, versioned `NotificationRegistrationState`,
+    and a separate `ObservedActivity` model for remote observations.
+  - `NotificationSigning.swift`: base64url helpers, canonical `v1` request construction, `SHA-256`
+    body digest, and CryptoKit P-256 import/verify/sign helpers (keychain key material intentionally
+    kept out of scope here).
+  - `NotificationRegistrationStore.swift`: an actor-held, versioned, atomic App Group JSON store for
+    the non-secret desired notification state.
+- Added `NotificationCoreTests.swift` proving the independent P-256 vector in
+  `server/test/fixtures/p256-vector.json` verifies in CryptoKit exactly as it verifies in the backend
+  Web Crypto suite — Gate 0's Swift/TypeScript shared-vector fixture evidence.
+
+### Why
+
+- Foundation value types and the shared request-signing contract belong in `StupidWalletCore` so the
+  containing app, the later Notification Service Extension, and (for compatible reads) other targets
+  share them instead of duplicating.
+- Proving the same cryptographic vector on both sides closes the "both decode the same valid fixtures"
+  Gate 0 exit condition with no credentials or hardware required.
+
+### Verification
+
+- `swift test --filter NotificationCoreTests` passed (6 tests, including the cross-language P-256
+  verify + tamper rejection, canonical request shape, keypair sign/verify, registration-store atomics).
+- Full `swift test` passed: 305 tests / 34 suites, 0 failures (no regression).
+- `xcrun swift-format format -i` applied to the four new files; `xcrun swift-format lint` on the new
+  files is clean. Pre-existing lint warnings in unrelated files were left untouched.
+
+### Follow-Up
+
+- Wire the app entry (notification coordinator, APNs token registration, reconciliation triggers) and
+  the notification settings UI as the credential/tooling gates, and prove deliverability on a physical
+  device.
+
 ## 2026-09-04 - Wallet Backend MVP Foundation (Gates 0-3) Implemented
 
 ### Summary
