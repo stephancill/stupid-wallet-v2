@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stupid-wallet-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "stupid-wallet-backend",
+      "database_id": "<dev-d1-database-id>",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "queues": {
+    "producers": [
+      { "binding": "UPSTREAM_QUEUE", "queue": "wallet-upstream-ops" },
+      { "binding": "APNS_QUEUE", "queue": "wallet-apns-delivery" },
+    ],
+  },
+  "triggers": {
+    "crons": [{ "cron": "*/15 * * * *", "request": "reconcile-scheduled" }],
+  },
+  "vars": {
+    "ENVIRONMENT": "development",
+  },
+}

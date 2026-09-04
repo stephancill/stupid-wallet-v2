@@ -18,6 +18,18 @@ confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
 
+## Wallet Backend MVP (Gates 0-3)
+
+The approved notification MVP (`docs/wallet-backend-push-notifications-mvp-plan.md`) now has a
+verifiable backend foundation under `server/` (developer rename of the plan's `WalletBackend/` label).
+It is a TypeScript + Hono + Zod + D1 + Queues + Bun Cloudflare Worker intended to deploy at
+`wallet-api.stupidtech.net`, with strict migration SQL, installation-key authentication and replay
+defense, chain staging at the five-installation gate, reference-counted upstream subscriptions and an
+outbox, signed webhook ingestion with `(webhookId, eventType)` composite deduplication, a durable
+authenticated cursor event feed, and bounded APNs/upstream clients. Hermetic vitest suites run the
+same schema on in-memory SQLite. Remaining MVP gates (entitlement/profile tooling, the Swift app and
+Notification Service Extension, production APNs and physical-device proof) are still pending.
+
 Multiple wallet groups and accounts are approved next-scope, and Gates A through H are complete. Gate
 I is implemented hermetically and on the simulator: wallet-group/account labels are editable (with
 focused fields resigned before Done publishes registry changes),
@@ -1326,6 +1338,26 @@ reuse the legacy App Group `UserDefaults` key `connectedSites`
 this is a locked compatibility exception, and grants are treated as sensitive user data
 even though they are not key material.
 
+### Encrypted iCloud Recovery Direction
+
+Cloud wallet backup is designed but not implemented. The selected version-1 direction is
+recorded in `docs/icloud-wallet-backup-plan.md`: one current, password-protected snapshot of
+the active wallet state stored as a separate `kSecAttrSynchronizable` generic-password item
+in iCloud Keychain. The password is not saved or synchronized by Stupid Wallet. There is no
+password-independent recovery key, backup history, or silent iCloud Documents fallback.
+
+The live seed and private-key stores remain unchanged, device-bound, `.userPresence`
+protected, and non-synchronizable. Only authenticated ciphertext is synchronized. Restore
+creates and verifies new device-bound items through a journaled additive transaction; it
+never replaces an existing protected source automatically.
+
+The selected transport requires no iCloud Documents/CloudKit container or ubiquity
+entitlements. A dedicated containing-app-only keychain access group is preferred so the
+Safari extension cannot query the backup envelope; profile authorization and two-device
+synchronization behavior require a focused physical spike. Security.framework does not
+provide a server-upload receipt, so UI must distinguish local Keychain success from proven
+cross-device availability.
+
 ### Wallet Activity Notification Direction
 
 Wallet-activity push notifications are designed but not implemented. The broader design is
@@ -1710,6 +1742,15 @@ and Linux are excluded from the scope.
 - **Private-key backup:** Authenticated reveal, local expiring pasteboard copy, inactivity
   clearing, and background clearing are implemented. Physical-device cancellation/timeout
   behavior and screen-capture exposure still require focused verification before release.
+- **Cloud recovery authority:** Version 1 synchronizes only a password-encrypted envelope;
+  operational keys remain device-bound, and Stupid Wallet does not synchronize the password
+  or an independent recovery key. Password policy and forgotten-password UX remain open,
+  and the app must not imply that Apple Account recovery alone is sufficient.
+- **Cloud availability and rollback:** App-level authenticated encryption protects backup
+  confidentiality and integrity, not availability or freshness. Synchronizable Keychain
+  supplies no server-upload receipt, conflict catalog, or guaranteed ordering. Item-size,
+  delayed sync, concurrent update, account-change, deletion-propagation, reinstall, and
+  independent-device restore behavior require physical acceptance.
 - **Notification lifecycle:** APNs exposes no reliable disabled-setting or uninstall signal. Active
   server state therefore depends on app-reported settings, permanent errors for the current token, and a
   bounded liveness window. User-opened toolbar popup activity may renew unchanged liveness through a
@@ -1774,6 +1815,10 @@ investigation history in implementation notes.
    transaction/batch acceptance with explicit authorization, physical profile isolation, interruption
    and mixed-process checks, then Developer ID/notarized packaging. Local connection and authenticated
    message/typed-data signing are installed and proven. Do not modify `stupid-app` without a new request.
+6. Resolve the remaining password-policy, snapshot-scope, deletion-copy, update-key, and
+   maximum-item-size decisions in `docs/icloud-wallet-backup-plan.md`. Then complete its
+   synchronizable-Keychain and cryptographic-format gates before adding backup UI or reading
+   protected wallet sources.
 7. Begin Gate 0 of `docs/wallet-backend-push-notifications-mvp-plan.md`: freeze shared Swift/TypeScript
    contracts and sanitized observed/reverted fixtures. Then fix per-bundle Push Notifications derivation
    in `stupid-app` and prove Notification Service Extension packaging before changing wallet entitlements
@@ -1784,6 +1829,7 @@ investigation history in implementation notes.
 - Existing app and migration source: `../ios-wallet`.
 - Approved multiple-account design: `docs/multi-account-implementation-plan.md`.
 - Approved Chrome-on-macOS design and proof gates: `docs/chrome-extension-feasibility.md`.
+- Draft encrypted iCloud recovery design: `docs/icloud-wallet-backup-plan.md`.
 - Draft wallet backend and push-notification design:
   `docs/wallet-backend-push-notifications-plan.md`.
 - Approved wallet backend and push-notification MVP scope:
@@ -1796,6 +1842,10 @@ investigation history in implementation notes.
   <https://developer.apple.com/documentation/safariservices/messaging-between-the-app-and-javascript-in-a-safari-web-extension>.
 - LocalAuthentication:
   <https://developer.apple.com/documentation/localauthentication/lacontext>.
+- Keychain synchronization:
+  <https://developer.apple.com/documentation/security/ksecattrsynchronizable>.
+- iCloud data protection:
+  <https://support.apple.com/en-us/102651>.
 - EIP-1193: <https://eips.ethereum.org/EIPS/eip-1193>.
 - EIP-6963: <https://eips.ethereum.org/EIPS/eip-6963>.
 - EIP-712: <https://eips.ethereum.org/EIPS/eip-712>.
