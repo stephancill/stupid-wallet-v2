@@ -8,12 +8,14 @@ let package = Package(
     .macOS(.v14),
   ],
   products: [
+    .library(name: "StupidWalletNotificationService", targets: ["StupidWalletNotificationService"]),
     .executable(name: "StupidWalletChromeProofHost", targets: ["StupidWalletChromeProofHost"]),
     .executable(name: "StupidWalletChromeHost", targets: ["StupidWalletChromeHost"]),
     // A stupid-app project contains one library product per app/extension bundle.
     .library(
       name: "StupidWallet",
-      targets: ["StupidWallet"],
+      targets: [
+    .target(name: "StupidWalletNotificationService", dependencies: ["StupidWalletCore"]),"StupidWallet"],
     ),
     .library(
       name: "StupidWalletSafari",

@@ -97,4 +97,16 @@ final class NotificationCoreTests: XCTestCase {
     XCTAssertEqual(NotificationEventKind.activityReverted.title, "Activity reverted")
     XCTAssertEqual(NotificationEventKind.allCases.count, 10)
   }
+
+  func testBlockieRendersDeterministicPNG() throws {
+    let seed = "0x1111111111111111111111111111111111111111"
+    let first = try XCTUnwrap(NotificationBlockie.renderPNG(seed: seed, pixelsPerCell: 12))
+    let second = try XCTUnwrap(NotificationBlockie.renderPNG(seed: seed, pixelsPerCell: 12))
+    XCTAssertEqual(first, second, "the blockie render must be deterministic for a given seed")
+    XCTAssertGreaterThan(first.count, 100, "a rendered PNG must carry image bytes")
+    XCTAssertEqual(NotificationBlockie.pixels(for: seed).count, 64)
+    let different = try XCTUnwrap(
+      NotificationBlockie.renderPNG(seed: "0x2222222222222222222222222222222222222222"))
+    XCTAssertNotEqual(first, different, "different seeds must produce different renders")
+  }
 }

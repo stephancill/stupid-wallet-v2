@@ -27,12 +27,15 @@ It is a TypeScript + Hono + Zod + D1 + Queues + Bun Cloudflare Worker intended t
 defense, chain staging at the five-installation gate, reference-counted upstream subscriptions and an
 outbox, signed webhook ingestion with `(webhookId, eventType)` composite deduplication, a durable
 authenticated cursor event feed, and bounded APNs/upstream clients. Hermetic vitest suites run the
-same schema on in-memory SQLite. Remaining MVP gates (entitlement/profile tooling, wiring the Swift app
-and Notification Service Extension, production APNs and physical-device proof) are still pending.
 Additive `StupidWalletCore` foundation files now exist (`NotificationModels`, `NotificationSigning`,
-`NotificationRegistrationStore`) with a CryptoKit test proving the same P-256 vector verifies in
-CryptoKit and in the backend Web Crypto suite, so the shared event kinds and canonical `v1` signing
-contract are frozen across targets before the app/extension wiring.
+`NotificationRegistrationStore`, `NotificationBlockie`) with a CryptoKit test proving the same P-256
+vector verifies in CryptoKit and in the backend Web Crypto suite, so the shared event kinds and
+canonical `v1` signing contract are frozen across targets. A `StupidWalletNotificationService` appex
+product/extension is scaffolded (bundle id `co.za.stephancill.stupid-wallet.notification-service`)
+with the shared blockie renderer, a `UNNotificationServiceExtension` that resolves
+`<account label> • <chain>` from an App Group display map, App-Group-only entitlements, and
+`aps-environment: development` added to the containing app. The extension is not yet packaged/signed:
+that needs provisioning the notification-service profile and installing the updated `stupid-app` tool.
 
 Multiple wallet groups and accounts are approved next-scope, and Gates A through H are complete. Gate
 I is implemented hermetically and on the simulator: wallet-group/account labels are editable (with
