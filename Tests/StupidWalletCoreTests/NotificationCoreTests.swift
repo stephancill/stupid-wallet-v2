@@ -176,6 +176,9 @@ final class NotificationCoreTests: XCTestCase {
         "Sources/StupidWalletNotificationService/NotificationService.swift"),
       encoding: .utf8)
     XCTAssertTrue(serviceSource.contains("mutable.body = context"))
+    XCTAssertTrue(serviceSource.contains("mutable.title = subject"))
+    XCTAssertTrue(serviceSource.contains("displayName: subject"))
+    XCTAssertFalse(serviceSource.contains("accountLabel: display.label"))
     XCTAssertFalse(serviceSource.contains("mutable.body = \"\""))
   }
 

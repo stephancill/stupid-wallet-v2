@@ -24,6 +24,15 @@ const makeDeps = (db: Database, deliveries: Array<Record<string, unknown>>): Bac
     deleteSubscription: async () => undefined,
   },
   now: NOW,
+  fetch: async (input) => {
+    const key = input.split('/').at(-1);
+    if (key === 'ethereum:0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee') {
+      return Response.json({
+        coins: { [key]: { symbol: 'ETH', decimals: 18, price: 2_500 } },
+      });
+    }
+    return new Response('', { status: 404 });
+  },
   onWebhookFanout: async (d) => {
     deliveries.push(...d);
   },
@@ -214,6 +223,7 @@ describe('webhook HTTP route', () => {
     expect(json.duplicate).toBe(false);
     expect(deliveries.length).toBe(1);
     expect(deliveries[0]?.eventKind).toBe('nativeReceived');
+    expect(deliveries[0]?.subject).toBe('Received $2,500 of ETH');
   });
 
   it('accepts and classifies a real-shape zero-native-value ERC-20 swap', async () => {

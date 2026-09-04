@@ -11,7 +11,7 @@ export const createTestDb = (): Db => {
   const raw = new Database(':memory:');
   raw.pragma('foreign_keys = ON');
   const migrationsDir = join(here, '..', 'migrations');
-  const files = ['0001_initial.sql'];
+  const files = ['0001_initial.sql', '0002_token_cache.sql'];
   for (const file of files) {
     const sql = readFileSync(join(migrationsDir, file), 'utf8');
     raw.exec(sql);

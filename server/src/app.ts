@@ -31,6 +31,9 @@ import { HttpError } from './errors';
 import { constantTimeEqual, hmacSha256Hex } from './crypto';
 import { verifyP256 } from './p256';
 import { CONFIG } from './config';
+import { classifyEvent, eventTitle } from './services/eventKinds';
+import { notificationSubject } from './services/notificationSubject';
+import type { PriceFetcher } from './services/tokenInfo';
 
 export interface BackendDeps {
   db: Database;
@@ -39,6 +42,7 @@ export interface BackendDeps {
   webhookSecret: string;
   upstream: UpstreamClient;
   now: () => number;
+  fetch?: PriceFetcher;
   /** Called with deliveries to enqueue onto the APNs queue. */
   onWebhookFanout?: (deliveries: Array<Record<string, unknown>>) => Promise<void>;
 }
@@ -459,15 +463,34 @@ export const createBackend = (deps: BackendDeps): Hono => {
       return c.json({ ok: true, test: true }, 202);
     }
     const payload = normalizeWebhookEvent(envelope);
+    const existing = await db.first(
+      'SELECT event_id FROM activity_events WHERE webhook_id = ? AND event_type = ?',
+      [deliveryId, payload.eventType],
+    );
+    if (existing) {
+      return c.json({ ok: true, duplicate: true }, 202);
+    }
+    const eventKind = classifyEvent(payload);
+    const subject = await notificationSubject({
+      db,
+      event: payload,
+      eventKind,
+      now: at(),
+      fetchImpl: deps.fetch ?? fetch,
+    }).catch(() => eventTitle(eventKind));
     const result = await ingestWebhook(db, payload, deliveryId, at());
+    if (result.duplicate) {
+      return c.json({ ok: true, duplicate: true }, 202);
+    }
 
-    if (!result.duplicate && deps.onWebhookFanout && result.fanout.length > 0) {
+    if (deps.onWebhookFanout && result.fanout.length > 0) {
       const deliveries = result.fanout.map((target) => ({
         installationId: target.installationId,
         eventId: result.eventId,
         addressRegistrationId: target.opaqueRegistrationId,
         chainId: payload.chainId,
         eventKind: result.eventKind,
+        subject,
         createdAt: at(),
       }));
       await deps.onWebhookFanout(deliveries);

@@ -51,7 +51,7 @@ import SwiftUI
 
         Section {
           Text(
-            "Notifications use a separate device identity and never unlock or sign with your wallet key. The alert contains a general activity category; your account label and blockie are added locally on this device."
+            "Notifications use a separate device identity and never unlock or sign with your wallet key. An alert may include a rounded USD amount and asset symbol; your account label and blockie are added locally on this device."
           )
           .font(.footnote)
           .foregroundStyle(.secondary)

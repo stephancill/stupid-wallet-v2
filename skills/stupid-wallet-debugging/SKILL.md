@@ -169,6 +169,14 @@ generic error text and do not bypass the canonical approval protocol.
     the containing app's map from the extension. For this small Codable map, use the shared App Group
     `UserDefaults` suite, which is cross-process and avoids file-container URL availability. Refresh the alias
     explicitly when opening the notification screen, where the active address and account label are definitive.
+32. Separate CoreDevice network pairing from large-IPA staging before replacing trust again. A successful
+    `stupid-app device pair --usb --replace-lockdown-record` followed by a bounded
+    `stupid-app device crash --network --udid <udid> --sudo /usr/bin/sudo --filter <impossible-filter>`
+    that reaches the crash-report service and fails only with “No crash-log report matched” proves remote
+    Pair-Verify, the TCP tunnel, RSD, and a small AFC operation. If `run --network` then stalls after
+    “Connected to native AFC staging over the tunnel,” treat it as a large-transfer tunnel/data-path issue,
+    not stale pairing. An interrupted macOS network run can leave a root-owned `coredevice-helper` alive;
+    identify the exact process before asking for administrator approval to terminate only that helper.
 
 ## Stack Map
 

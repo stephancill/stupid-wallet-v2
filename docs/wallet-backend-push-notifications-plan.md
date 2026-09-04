@@ -55,8 +55,8 @@ provide historical backfill, token metadata, prices, internal transfers, or guar
   LocalAuthentication output.
 - Treating a push notification as proof that an event is canonical or finalized.
 - Historical activity backfill before a subscription's activation block.
-- Token names, symbols, decimals, prices, images, portfolio values, internal traces, or ERC-1155 in the
-  first implementation.
+- Token images, portfolio values, internal traces, or ERC-1155 in the first implementation. Bounded
+  fungible symbols, decimals, and public USD prices are used only to construct notification subjects.
 - User-entered watch-only addresses in the first implementation. The architecture must permit this later
   without treating an address registration as an ownership, authorization, or identity claim.
 - Proving address ownership to the notification backend.
@@ -99,9 +99,10 @@ provide historical backfill, token metadata, prices, internal transfers, or guar
   extend the backend's freshness limit for the containing app's last notification-settings check.
 - The backend enforces per-installation and global unique address-chain budgets and rejects new work
   before exhausting upstream capacity; existing registrations are not silently evicted to admit new ones.
-- Final notification presentation uses the account blockie as an attachment thumbnail, an event title
-  describing what happened, and the subtitle `<account label> • <chain>`. Exact event-title vocabulary,
-  amount disclosure, and fallback copy require a separate content review.
+- Final notification presentation uses the account blockie as a Communication Notification avatar, an
+  enriched event subject describing what happened, and the message line `<account label> • <chain>`.
+  The subject may disclose a rounded USD amount and bounded fungible asset symbol; categorical fallback
+  copy remains available when public metadata resolution fails.
 - The containing app fetches the authenticated event feed after launch, foregrounding, notification
   selection, and successful enrollment reconciliation.
 - Remotely observed activity uses a separate local persistence model rather than forcing it into the
@@ -726,7 +727,8 @@ The server payload is deliberately small and requests Notification Service Exten
   "aps": {
     "mutable-content": 1,
     "alert": {
-      "title": "Wallet activity"
+      "title": "Received $5 of USDC",
+      "body": "Open stupid wallet to view activity."
     },
     "thread-id": "<opaque address thread>"
   },
@@ -734,6 +736,7 @@ The server payload is deliberately small and requests Notification Service Exten
   "addressRegistrationId": "<opaque installation-scoped id>",
   "chainId": "<decimal chain id>",
   "eventKind": "<bounded event classification>",
+  "subject": "<bounded enriched subject or categorical fallback>",
   "schemaVersion": 1
 }
 ```
@@ -741,30 +744,34 @@ The server payload is deliberately small and requests Notification Service Exten
 The final presentation is:
 
 ```text
-thumbnail: account blockie attachment
-title:     <what happened>
-subtitle:  <account label> • <chain>
+avatar:       account blockie
+title:        <enriched action subject>, or categorical fallback
+message line: <account label> • <chain>
 ```
 
-The standard app icon remains present because iOS does not permit replacing it per notification. The
-blockie is an image attachment/thumbnail, not the app icon.
+The standard app icon remains present. The blockie is supplied locally as the Communication
+Notification sender image, not sent by APNs.
 
 Add a containing-app Notification Service Extension. It receives the bounded payload, resolves the
 opaque registration ID against shared local notification state, obtains the local account address and
 label, resolves the chain name from local network metadata, generates the existing deterministic
-blockie locally, and sets the attachment and subtitle. Refactor the existing blockie generator into a
-small shared UIKit-compatible component rather than duplicating its algorithm. The extension receives no
+blockie locally, and creates an incoming `INSendMessageIntent`. It keeps the subject action-only and puts
+account/chain context in both intent content and notification body. The
+extension receives no
 installation private key, wallet key, seed, backend credential, full address from APNs, or signing
 authority.
 
-The backend provides a validated event classification from which the extension selects the title.
-Exact title vocabulary, whether amounts/assets appear, reorg wording, localization, and generic fallback
-copy require a separate notification-content specification. If the service extension times out or local
-mapping is unavailable, iOS displays the generic fallback title from the original payload.
+The backend validates the event classification, resolves fungible symbol/decimals/USD price from
+DeFiLlama through a 10-minute D1 cache, and constructs a subject. Priced bidirectional effects become a
+swap summary; otherwise the highest-value priced leg becomes `Received/Sent <$value> of <symbol>`.
+Failed resolution, reorgs, and transaction failures retain the categorical title. If the service
+extension times out or local mapping is unavailable, iOS displays the same action-only backend subject
+from the original payload.
 
-Do not put a full address, raw calldata, signature, token amount, token contract, counterparty, account
-label, or backend credential into the base APNs payload. Any later detailed preview mode requires an
-explicit privacy review.
+Do not put a full address, raw calldata, signature, token contract, counterparty, account label, or
+backend credential into the base APNs payload. The approved enriched subject is the narrow exception for
+a rounded USD amount and bounded asset symbol. Any later detailed preview mode requires an explicit
+privacy review.
 
 Use an opaque thread identifier rather than the registered address. Do not collapse separate activity
 events into one APNs collapse identifier in the first implementation.
