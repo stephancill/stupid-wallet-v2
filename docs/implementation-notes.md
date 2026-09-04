@@ -50,6 +50,234 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-04 - Wallet Notification MVP Scope Approved
+
+### Summary
+
+- Added `docs/wallet-backend-push-notifications-mvp-plan.md` as the approved, ordered first-release scope
+  beneath the broader notification architecture.
+- Selected an in-repository `WalletBackend/` TypeScript Cloudflare Worker deployed independently at
+  `wallet-api.stupidtech.net`, with Hono, Zod, D1, Queues, scheduled reconciliation, Web Crypto, and Bun.
+- Deferred App Attest collection/enforcement and Apple Silicon Mac notification enrollment. The MVP uses
+  P-256 installation authentication, ships notifications on iPhone/iPad, and reserves nullable backend
+  trust state for a later App Attest decision.
+- Locked 30-day installation liveness, 90-day notification-settings freshness, 24-hour popup renewal
+  coalescing, foreground renewal at 14 days remaining, and 30-day backend event retention.
+- Locked per-installation limits of 25 addresses, 25 configured chains, and 250 effective address-chain
+  pairs, with atomic rejection above a limit.
+- Locked categorical notification titles without amounts, assets, or counterparties, plus the local
+  blockie and `<account label> • <chain>` subtitle.
+- Selected `(webhookId, eventType)` as the explicit MVP delivery-deduplication identity so observed and
+  reverted events that share the current upstream webhook ID both apply exactly once.
+- Added concrete repository boundaries, backend/mobile APIs, persistence responsibilities, lifecycle
+  triggers, eight implementation gates, exit conditions, verification commands, and deferred scope.
+- Updated the broader plan and engineering handover to distinguish approved MVP decisions from later
+  notification scope. Moved the durable event cursor into the SQLite activity transaction boundary.
+
+### Why
+
+- The broader design contained production-hardening and future-platform choices that were too wide to
+  execute as one milestone. The MVP retains end-to-end correctness and cleanup while deferring features
+  that do not prove notification value.
+- Keeping the backend in this repository allows shared fixtures and contract vectors while retaining an
+  independent Worker deployment and secret boundary.
+- Composite delivery deduplication handles the current external upstream contract without blocking MVP
+  on an upstream identifier change.
+
+### Verification
+
+- Confirmed the current app and Safari extension are both version `1.0.0` build `98`.
+- Confirmed the installed build authority remains `stupid-app 0.0.13`.
+- Re-read the broader notification gates, current SwiftPM products, repository layout, entitlement
+  boundaries, and concurrent documentation changes before defining the MVP file layout and gate order.
+- `git diff --check` and separate whitespace checks of both untracked notification plans passed.
+- Documentation-only planning work; no backend package, dependency, entitlement, profile, keychain item,
+  notification target, or runtime behavior changed.
+
+### Follow-Up
+
+- Begin MVP Gate 0 by freezing shared request/event schemas and sanitized Swift/TypeScript fixtures.
+- Before scaffolding `WalletBackend/`, decide whether it needs a narrower nested `AGENTS.md` in addition
+  to the repository rules.
+
+## 2026-09-04 - Safari Popup Liveness Renewal Added
+
+### Summary
+
+- Added user-opened Safari toolbar popup activity as an installation-liveness renewal trigger in
+  `docs/wallet-backend-push-notifications-plan.md` and the maintained engineering handover.
+- Kept the app-only installation P-256 key out of the Safari extension. The containing app instead
+  creates a second non-synchronizable P-256 key in the existing shared app/Safari keychain group and
+  registers its public key as a capability for the liveness route only.
+- Limited popup renewal to extending unchanged state for an already-active installation. It cannot
+  create or revive an installation, refresh notification authorization, update APNs state, mutate
+  accounts/addresses/chains, delete state, or read the event feed.
+- Added a containing-app notification-settings freshness ceiling, popup-session coalescing, backend rate
+  limits, exact signed-request/replay validation, deletion-time key-association removal, implementation
+  gates, tests, and metrics.
+
+### Why
+
+- Opening the wallet's Safari-owned popup proves recent first-party extension use even when the
+  containing app has not foregrounded, so it is a useful positive liveness signal.
+- Popup use does not prove that system notification authorization remains enabled. Capping renewal at
+  the last containing-app settings check preserves eventual cleanup after a dormant Settings change.
+- A separate route-scoped signing key prevents popup liveness from expanding the Safari extension into
+  broad backend authentication or exposing the installation identity key.
+
+### Verification
+
+- Re-read the plan's trust boundaries, authentication routes, local-state boundary, reconciliation
+  triggers, gates, and tests, plus the corresponding notification section in the engineering handover.
+- Confirmed the design treats only a user-opened toolbar popup as the trigger; page JavaScript, provider
+  traffic, background-worker startup, and popup status polling do not renew liveness.
+- `git diff --check` and a separate whitespace check of the untracked notification plan passed.
+- Documentation-only planning work; no keychain key, backend route, Safari message, entitlement, or
+  deployed behavior changed.
+
+### Follow-Up
+
+- Select the liveness duration, notification-settings freshness ceiling, popup coalescing interval, and
+  containing-app renewal cadence before implementation.
+
+## 2026-09-04 - Notification Lifecycle, Content, Identity, And Chain Staging Decisions
+
+### Summary
+
+- Revised `docs/wallet-backend-push-notifications-plan.md` from product-owner review.
+- Made client-observed notification settings and permanent APNs token failures primary cleanup signals,
+  while retaining a renewable installation liveness window only as the fallback when a deleted or
+  dormant app cannot report state and no activity produces an APNs failure.
+- Required complete server installation deletion after explicit disablement, client-observed loss of
+  authorization, permanent invalidation of the current token, or liveness expiry. No dormant backend
+  credential remains after cleanup; a retained local key is not server tracking.
+- Specified the desired notification presentation: a locally generated account blockie attachment,
+  event title describing what happened, and `<account label> • <chain>` subtitle. Added a bundled
+  Notification Service Extension boundary so labels and full addresses remain off the APNs payload;
+  exact event vocabulary and disclosure remain a separate content specification.
+- Retained remote observations in a separate `observed_activity` table rather than upserting into the
+  shipped sender-centric `transactions` table.
+- Selected the non-synchronizable `ThisDeviceOnly` P-256 installation key plus backend installation ID as
+  a pseudonymous, best-effort same-device reinstall identity while an active server record exists.
+  Explicitly rejected APNs tokens and `identifierForVendor` as stable device identifiers.
+- Added complete revisioned configured-chain inventories per installation. Only notification-capable
+  installations count; a chain is staged until five distinct installations configure it, then becomes
+  sticky-active unless operator-disabled. Enabling an account covers all configured active chains.
+
+### Why
+
+- Apple does not expose notification authorization to APNs providers. A disabled notification setting
+  does not reliably invalidate the token, APNs success proves only acceptance, and `410` indicates an
+  inactive token rather than app deletion. Delivery responses alone cannot guarantee cleanup.
+- `ActivityStore` schema version 9 has global transaction-hash uniqueness, required dapp origin linkage,
+  and sender-account scoping, so direct remote upsert would require a high-risk table rebuild and would
+  mix network observation state with local submission authority.
+- Complete chain snapshots and sticky threshold activation prevent lost incremental mutations and
+  five-installation threshold flapping.
+- Deleting inactive server records matches the requirement that only notification-enabled installations
+  are tracked; same-installation recovery cannot override completed cleanup.
+
+### Verification
+
+- Re-read the current engineering handover, implementation notes, notification plan,
+  `ActivityStore.swift`, its schema-migration tests, `NetworkStore.swift`, app/extension entitlements,
+  `stupid-app.yml`, and the current blockie renderer.
+- Confirmed Apple documents that notification settings may change at any time and must be read through
+  `UNUserNotificationCenter`; APNs `410` means the token is inactive, may be delayed, and is not a
+  reliable disabled-setting or uninstall signal. APNs `200` does not prove device delivery or display.
+- Confirmed Apple documents that `identifierForVendor` changes after all vendor apps are removed and
+  reinstalled, while Keychain survival across uninstall is observed current behavior but not a promised
+  API contract.
+- Confirmed `stupid-app 0.0.13` can package configured app extensions, but signing setup currently derives
+  one union of requested capabilities across app and extensions; per-bundle capability derivation is a
+  prerequisite before adding app-only Push Notifications.
+- Confirmed the current app and Safari extension share the wallet keychain group and there is no proven
+  dedicated containing-app-only path for the installation identity; provisioning that path is a gate.
+- Updated `docs/engineering-handover.md` with the selected notification direction, risks, prerequisites,
+  and recommended next work while preserving the concurrent iCloud recovery changes.
+- `git diff --check` and a separate whitespace check of the untracked notification plan passed.
+- Documentation-only planning work; no app, backend, entitlement, profile, keychain item, or deployed
+  behavior changed.
+
+### Follow-Up
+
+- Approve a separate notification-content specification and choose the remaining liveness, event
+  retention, quota, bundle-identifier, App Attest, Mac-delivery, and upstream event-identity decisions.
+
+## 2026-09-04 - Initial Notification Scope Limited To Wallet Accounts
+
+### Summary
+
+- Narrowed the first implementation in `docs/wallet-backend-push-notifications-plan.md` to notification
+  enrollment for active accounts in the validated `WalletRegistry`.
+- Deferred user-entered watch addresses, no-wallet watch flows, watch labels, and watch-specific UI.
+- Retained an ownership-neutral backend: it stores canonical address/chain registrations, does not ask
+  for an Ethereum ownership signature, and does not treat registration as proof that an installation
+  controls an address.
+- Added a source-aware local enrollment boundary. The first implementation creates only
+  `walletAccount` sources and account deletion queues remote cleanup. A future `watchedAddress` source
+  can share the effective backend registration without being removed by wallet-account deletion.
+- Updated app flows, lifecycle behavior, acceptance gates, tests, metrics, and API terminology from a
+  first-class watchlist product to account notifications with explicit future-watch compatibility.
+
+### Why
+
+- Arbitrary address watching may be useful later, but it is not part of the initial product scope.
+- Keeping backend identity based on installation plus public address avoids an unnecessary migration or
+  authentication redesign if watch-only functionality is later approved.
+
+### Verification
+
+- Re-read the revised plan and searched it for stale no-wallet and arbitrary-watch acceptance criteria.
+- Confirmed arbitrary address entry appears only as a deferred compatibility requirement and a hermetic
+  backend protocol test, not as initial app behavior.
+- `git diff --check` and a separate whitespace check of the untracked plan passed.
+- Documentation-only planning work; no app, backend, entitlement, wallet, or deployed behavior changed.
+
+### Follow-Up
+
+- Review the initial account-notification scope and open backend quota/retention decisions before
+  approving the draft or updating `docs/engineering-handover.md`.
+
+## 2026-09-04 - Push Notifications Changed To Arbitrary Address Watches
+
+### Summary
+
+- Revised `docs/wallet-backend-push-notifications-plan.md` so notifications monitor arbitrary public
+  EVM addresses rather than requiring the user to own or import each address.
+- Removed the proposed EIP-712 ownership challenge, wallet signature, protected-key read, and
+  Face ID/passcode step from notification enrollment. Installation P-256 authentication now protects
+  watchlist mutation, event-feed access, APNs token changes, and backend deletion.
+- Made the watchlist independent of `WalletRegistry`: the flow is available with no wallet configured,
+  a local wallet account is only an address-selection convenience, and deleting a wallet account does
+  not delete a matching watch (or vice versa).
+- Replaced wallet bindings with leased installation watches keyed by `(installationId, address,
+  chainId)`, and added explicit anti-abuse requirements: App Attest where supported, hard per-installation
+  quotas, rate limits, request replay protection, and upstream subscription reference counting.
+- Updated API routes, D1 records, app flows, activity presentation, lifecycle acceptance gates, tests,
+  metrics, and open decisions to match the watch-only authorization model.
+
+### Why
+
+- Supported EVM activity is public data, so receiving a notification for an address should not imply or
+  require control of that address's private key.
+- Wallet ownership proof would unnecessarily prevent users from following public wallets and would tie
+  notification lifecycle to unrelated signing and wallet-deletion boundaries.
+
+### Verification
+
+- Re-read the current engineering handover and implementation notes and inspected the current plan.
+- Confirmed the installed CLI is now `stupid-app 0.0.13` and updated the plan's reference snapshot.
+- Inspected current `stupid-app` entitlement derivation and signing setup. Version `0.0.13` still passes
+  source entitlements through profile authorization but auto-enables only App Groups and AutoFill
+  Credential Provider; Push Notifications and App Attest capability work remains a prerequisite.
+- Documentation-only planning work; no app, backend, entitlement, wallet, or deployed behavior changed.
+
+### Follow-Up
+
+- Review the revised open decisions, especially anonymous-installation quotas and App Attest enforcement,
+  before approving the draft or updating `docs/engineering-handover.md`.
+
 ## 2026-09-01 - Empty-Popup-While-Pending Diagnostic And State Cleanup
 
 ### Summary

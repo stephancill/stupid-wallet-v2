@@ -1188,6 +1188,76 @@ reuse the legacy App Group `UserDefaults` key `connectedSites`
 this is a locked compatibility exception, and grants are treated as sensitive user data
 even though they are not key material.
 
+### Wallet Activity Notification Direction
+
+Wallet-activity push notifications are designed but not implemented. The broader design is
+`docs/wallet-backend-push-notifications-plan.md`; the approved first implementation scope and ordered
+gates are in `docs/wallet-backend-push-notifications-mvp-plan.md`. Add the TypeScript Cloudflare Worker
+to this repository under `WalletBackend/` and deploy it independently at
+`wallet-api.stupidtech.net`. It holds upstream webhook credentials, verifies exact-body HMAC deliveries,
+maintains installation/address/chain state, and sends best-effort APNs notifications. APNs is never the
+activity authority; the app synchronizes a cursor-based event feed and persists remote observations plus
+its cursor atomically in SQLite without changing the shipped sender-centric `transactions` identity.
+
+Initial enrollment is opt-in only for active `WalletRegistry` accounts. The backend stores canonical
+public address registrations without claiming ownership, so future watched-address support can reuse the
+protocol without weakening the first app UI. Enrollment and synchronization use a separate device-bound
+P-256 installation key and must never release a wallet key, create an Ethereum signature, or present
+Face ID/passcode. The key and backend installation ID require a dedicated containing-app-only,
+non-synchronizable `ThisDeviceOnly` keychain path; the current entitlements do not yet provide a proven
+path. Retained keychain state may recover the same active server installation after reinstall, but Apple
+does not guarantee keychain survival across uninstall. `identifierForVendor` and APNs tokens are not
+installation identities.
+
+The backend tracks only notification-capable installations: current alert authorization, an active APNs
+token, at least one account enrollment, and an unexpired liveness window are all required. Explicit
+disablement of the last account, client-observed loss of authorization, permanent invalidation of the
+current APNs token, or liveness expiry deletes server installation state through idempotent cleanup.
+APNs does not reliably report Settings changes or app deletion, and acceptance does not prove display,
+so client reconciliation plus bounded liveness remains required. A delayed APNs failure for an old token
+must not invalidate a replacement token.
+
+User-opened Safari toolbar popup activity also triggers a coalesced liveness renewal. The installation
+P-256 key remains app-only. Instead, the containing app creates a second non-synchronizable P-256 key in
+the existing shared app/Safari keychain group. The backend accepts that key only for extending the
+unchanged liveness of an already-active installation. It cannot create or revive an installation, read
+events, or mutate notification settings, APNs tokens, accounts, addresses, or chains. Popup renewal
+cannot extend past the freshness ceiling established by the containing app's last P-256-signed
+notification-settings check. Page JavaScript, ordinary provider requests, worker startup, and popup
+polling are not liveness signals.
+
+MVP lifecycle defaults are a 30-day liveness window, 90-day containing-app notification-settings
+freshness, popup renewal at most once per 24 hours, foreground full renewal at 14 days remaining, and
+30-day backend event retention. Limits are 25 addresses, 25 configured chains, and 250 effective
+address-chain pairs per installation. Disabling the final account deletes the complete server
+installation; no dormant backend credential remains.
+
+Each installation synchronizes a complete monotonic snapshot of every chain configured in
+`NetworkStore`; `includeInBalance` is unrelated. Enabling one account covers all configured chains that
+are globally active. A chain remains staged until five distinct notification-capable installations have
+it configured, then becomes sticky-active unless an operator disables it. Multiple accounts on one
+installation count once.
+
+The selected notification presentation is an event title plus `<account label> • <chain>` subtitle and
+a locally generated account-blockie attachment thumbnail. A Notification Service Extension resolves an
+opaque registration ID against minimal App Group display state; labels and full addresses do not belong
+in the base APNs payload. The standard app icon remains because iOS does not allow per-notification icon
+replacement. The categorical MVP titles and generic fallback are locked below; attachment behavior still
+requires physical-device review.
+
+The MVP title is categorical only: received/sent native funds, token, NFT, sent transaction, failed
+transaction, reverted activity, or generic wallet activity. Amounts, assets, counterparties,
+localization, and user-selectable preview detail are deferred. Webhook deliveries deduplicate by
+`(webhookId, eventType)` so current observed/reverted deliveries sharing one upstream ID both apply
+exactly once.
+
+No wallet entitlement or behavior changes until `stupid-app` supports per-bundle Push Notifications
+capability/profile reconciliation. The containing app alone receives push capability. App Attest
+collection and enforcement are deferred, with nullable backend trust state reserved for later work. The
+new Notification Service Extension receives App Group access only and no wallet keychain, push, or App
+Attest entitlement. MVP notification enrollment is hidden on Apple Silicon Mac; iPhone and iPad physical
+acceptance are required.
+
 ## Dependency Policy
 
 The target runtime dependencies are Apple system frameworks plus the vendored
@@ -1467,6 +1537,23 @@ device identifiers, or sensitive signing payloads.
 - **Private-key backup:** Authenticated reveal, local expiring pasteboard copy, inactivity
   clearing, and background clearing are implemented. Physical-device cancellation/timeout
   behavior and screen-capture exposure still require focused verification before release.
+- **Notification lifecycle:** APNs exposes no reliable disabled-setting or uninstall signal. Active
+  server state therefore depends on app-reported settings, permanent errors for the current token, and a
+  bounded liveness window. User-opened toolbar popup activity may renew unchanged liveness through a
+  narrowly scoped capability, but it cannot refresh notification authorization or revive deleted state.
+  The MVP locks 30-day liveness, 90-day settings freshness, 24-hour popup coalescing, 14-day foreground
+  renewal threshold, and 30-day server event retention; bounded rollout evidence must precede changing
+  them.
+- **Notification identity and provisioning:** Same-installation recovery after reinstall is best effort,
+  not an Apple guarantee. A dedicated containing-app-only keychain path and per-bundle `stupid-app`
+  Push Notifications handling plus Notification Service Extension packaging must be proven before
+  changing wallet entitlements. App Attest is deferred from MVP.
+- **Notification privacy and presentation:** Account labels and addresses stay out of base APNs payloads.
+  The MVP uses the locked categorical titles and generic fallback without amounts, assets, or
+  counterparties. Blockie attachment rendering still requires physical-device proof.
+- **Webhook event identity:** The upstream service currently reuses one delivery ID for observed and
+  reverted notifications despite documenting header-only deduplication. MVP explicitly deduplicates by
+  `(webhookId, eventType)` and requires a regression fixture for the collision.
 - **Safari profiles:** Current physical-iPhone acceptance proves `SFExtensionProfileKey` isolation on
   the tested OS. Verify availability and stability on every other supported iOS version before making
   profile binding mandatory there.
@@ -1510,11 +1597,19 @@ investigation history in implementation notes.
    optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
    inside Gate 6.
 5. Gate 7 and later per the implementation gates.
+6. Begin Gate 0 of `docs/wallet-backend-push-notifications-mvp-plan.md`: freeze shared Swift/TypeScript
+   contracts and sanitized observed/reverted fixtures. Then fix per-bundle Push Notifications derivation
+   in `stupid-app` and prove Notification Service Extension packaging before changing wallet entitlements
+   or implementing backend enrollment.
 
 ## Reference Sources
 
 - Existing app and migration source: `../ios-wallet`.
 - Approved multiple-account design: `docs/multi-account-implementation-plan.md`.
+- Draft wallet backend and push-notification design:
+  `docs/wallet-backend-push-notifications-plan.md`.
+- Approved wallet backend and push-notification MVP scope:
+  `docs/wallet-backend-push-notifications-mvp-plan.md`.
 - Repository debugging workflow: `skills/stupid-wallet-debugging/SKILL.md`.
 - `stupid-app` source and extension packaging behavior: `../stupid-ios-dev`.
 - Maintained CLI extension scope:
