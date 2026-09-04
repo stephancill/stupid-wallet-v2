@@ -116,18 +116,22 @@ The base APNs payload contains only:
 - Decimal `chainId`.
 - One bounded `eventKind`.
 - Payload schema version.
-- `mutable-content: 1`, generic fallback title, and opaque thread identifier.
+- `mutable-content: 1`, categorical fallback title, generic body, and opaque thread identifier.
 
 It contains no account label, full address, amount, asset symbol, token contract, counterparty, calldata,
 signature, or backend credential.
 
-The Notification Service Extension resolves local display state and renders:
+The Notification Service Extension resolves local display state and uses an incoming
+`INSendMessageIntent` to render:
 
 ```text
-thumbnail: locally generated account blockie
-title:     categorical event title
-subtitle:  <account label> • <chain>
+avatar:       locally generated account blockie (`INPerson.image`)
+title:        categorical event title
+message line: <account label> • <chain>
 ```
+
+The message line is assigned to both `INSendMessageIntent.content` and the mutable notification `body`
+before `updating(from:)`; the communication layout must not rely on `subtitle`, which may be omitted.
 
 MVP event kinds and English titles are:
 
@@ -148,8 +152,11 @@ Use the generic kind when one event has conflicting effects or cannot be classif
 Reorg and failed-execution states take precedence over transfer classifications. Amounts, symbols,
 counterparties, localization, and user-selectable preview detail are post-MVP.
 
-If extension processing fails or times out, iOS shows the generic fallback title. The standard app icon
-remains visible; the blockie is an attachment, not an icon replacement.
+If interaction donation, content updating, or extension processing fails or times out, iOS shows the
+categorical title with locally resolved account/network context when available, otherwise the base
+categorical title and generic body. The containing app declares Communication Notifications and Siri,
+and lists `INSendMessageIntent` in `NSUserActivityTypes`; the extension itself retains only App Group
+access.
 
 ## Repository Layout
 
@@ -299,7 +306,8 @@ The webhook path must:
 Before editing wallet entitlements, update `stupid-app` so capabilities are derived per bundle and Push
 Notifications correctly reconciles development and distribution `aps-environment` values.
 
-The containing app receives Push Notifications and the dedicated app-only keychain access group. The
+The containing app receives Push Notifications, Communication Notifications, Siri, and the dedicated
+app-only keychain access group. The
 Safari extension receives no push entitlement and retains only its existing shared keychain access. The
 Notification Service Extension receives the existing App Group only; it receives no push, App Attest, or
 keychain-sharing entitlement.
@@ -442,7 +450,8 @@ Exit conditions:
 
 - Sandbox push reaches a physical development installation.
 - Production push reaches a TestFlight installation.
-- The rendered title, blockie attachment, and `<account label> • <chain>` subtitle match the contract.
+- The rendered title, left-side blockie avatar, and `<account label> • <chain>` message line match the
+  Communication Notifications contract.
 - No amount, full address, label, token contract, or counterparty appears in the base payload.
 - Extension timeout renders the generic fallback.
 

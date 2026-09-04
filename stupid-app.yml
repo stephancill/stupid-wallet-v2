@@ -7,11 +7,21 @@ entitlementsPath: App.entitlements
 iconPath: Resources/AppIcon.png
 resources:
   - Resources/AppIcon.png
+capabilities:
+  - entitlementKey: aps-environment
+    type: PUSH_NOTIFICATIONS
+  - entitlementKey: com.apple.security.application-groups
+    type: APP_GROUPS
+  - entitlementKey: com.apple.developer.siri
+    type: SIRIKIT
 extensions:
   - product: StupidWalletSafari
     bundleID: co.za.stephancill.stupid-wallet.extension
     infoPath: SafariExtension/Info.plist
     entitlementsPath: SafariExtension/SafariExtension.entitlements
+    capabilities:
+      - entitlementKey: com.apple.security.application-groups
+        type: APP_GROUPS
     resources:
       - SafariExtension/Resources/manifest.json
       - SafariExtension/Resources/provider.js
@@ -30,3 +40,6 @@ extensions:
     bundleID: co.za.stephancill.stupid-wallet.notification-service
     infoPath: NotificationServiceExtension/Info.plist
     entitlementsPath: NotificationServiceExtension/NotificationService.entitlements
+    capabilities:
+      - entitlementKey: com.apple.security.application-groups
+        type: APP_GROUPS

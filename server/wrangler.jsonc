@@ -4,11 +4,13 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
   "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "routes": [{ "pattern": "wallet-api.stupidtech.net", "custom_domain": true }],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "stupid-wallet-backend",
-      "database_id": "<dev-d1-database-id>",
+      "database_id": "90d54af5-8e3f-4854-ad17-9bba9bf46ca9",
       "migrations_dir": "migrations",
     },
   ],
@@ -17,11 +19,17 @@
       { "binding": "UPSTREAM_QUEUE", "queue": "wallet-upstream-ops" },
       { "binding": "APNS_QUEUE", "queue": "wallet-apns-delivery" },
     ],
+    "consumers": [
+      { "queue": "wallet-upstream-ops", "max_batch_size": 10, "max_batch_timeout": 5 },
+      { "queue": "wallet-apns-delivery", "max_batch_size": 10, "max_batch_timeout": 5 },
+    ],
   },
   "triggers": {
-    "crons": [{ "cron": "*/15 * * * *", "request": "reconcile-scheduled" }],
+    "crons": ["*/15 * * * *"],
   },
   "vars": {
-    "ENVIRONMENT": "development",
+    "ENVIRONMENT": "production",
+    "APNS_TOPIC": "co.za.stephancill.stupid-wallet",
+    "UPSTREAM_WEBHOOK_ID": "wh_949b7cbaad31e0dd8e94cdcf",
   },
 }

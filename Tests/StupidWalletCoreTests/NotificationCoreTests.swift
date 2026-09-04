@@ -81,6 +81,7 @@ final class NotificationCoreTests: XCTestCase {
     var state = try await store.read()
     XCTAssertTrue(state.enrolledAddresses.isEmpty)
     state.enrolledAddresses.insert("0x1111111111111111111111111111111111111111")
+    state.displayLabelsByAddress["0x1111111111111111111111111111111111111111"] = "Account 1"
     state.configuredChains = ["1", "8453"]
     state.chainInventoryRevision = 2
     state.acknowledgedChainRevision = 2
@@ -88,8 +89,116 @@ final class NotificationCoreTests: XCTestCase {
 
     let loaded = try await store.read()
     XCTAssertEqual(loaded.enrolledAddresses.count, 1)
+    XCTAssertEqual(
+      loaded.displayLabelsByAddress["0x1111111111111111111111111111111111111111"],
+      "Account 1")
     XCTAssertEqual(loaded.configuredChains, ["1", "8453"])
     XCTAssertEqual(loaded.chainInventoryRevision, 2)
+  }
+
+  func testNotificationDisplayStoreAndOpaqueRegistrationID() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let store = NotificationDisplayStore(fileURL: directory.appendingPathComponent("display.json"))
+    let address = "0x1111111111111111111111111111111111111111"
+    let registrationID = NotificationRegistrationID.opaque(
+      installationID: "inst_test", address: address)
+    XCTAssertEqual(registrationID, "ar_zaam156GtU9__kJu_5xDs8Jp")
+
+    let alias = NotificationDisplayAlias(label: "Account 1", address: address)
+    try await store.write(NotificationDisplayState(aliases: [registrationID: alias]))
+    let loaded = await store.read()
+    XCTAssertEqual(loaded.aliases[registrationID], alias)
+  }
+
+  func testRegistrationStateWithoutDisplayLabelsRemainsBackwardCompatible() throws {
+    let legacy = Data(
+      """
+      {"version":1,"enrolledAddresses":[],"configuredChains":[],"chainInventoryRevision":0,"acknowledgedChainRevision":0,"pendingCleanup":false}
+      """.utf8)
+    let state = try JSONDecoder().decode(NotificationRegistrationState.self, from: legacy)
+    XCTAssertTrue(state.displayLabelsByAddress.isEmpty)
+  }
+
+  func testExistingIdentityRepairsMissingInstallationMetadata() throws {
+    let legacy = Data(
+      """
+      {"version":1,"enrolledAddresses":["0x1111111111111111111111111111111111111111"],"displayLabelsByAddress":{"0x1111111111111111111111111111111111111111":"Account 1"},"configuredChains":["1"],"chainInventoryRevision":1,"acknowledgedChainRevision":1,"pendingCleanup":false}
+      """.utf8)
+    var state = try JSONDecoder().decode(NotificationRegistrationState.self, from: legacy)
+    XCTAssertNil(state.installationId)
+
+    state.synchronizeInstallationMetadata(
+      installationID: "inst_existing", publicKeyHash: "pk_hash")
+
+    XCTAssertEqual(state.installationId, "inst_existing")
+    XCTAssertEqual(state.installationPublicKeyHash, "pk_hash")
+    let registrationID = NotificationRegistrationID.opaque(
+      installationID: try XCTUnwrap(state.installationId),
+      address: try XCTUnwrap(state.enrolledAddresses.first))
+    XCTAssertFalse(registrationID.isEmpty)
+  }
+
+  func testNotificationServiceExtensionUsesAppleExtensionPoint() throws {
+    let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let repoRoot = here.deletingLastPathComponent().deletingLastPathComponent()
+    let plistURL = repoRoot.appendingPathComponent("NotificationServiceExtension/Info.plist")
+    let data = try Data(contentsOf: plistURL)
+    let plist = try XCTUnwrap(
+      PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+    let extensionInfo = try XCTUnwrap(plist["NSExtension"] as? [String: Any])
+    XCTAssertEqual(
+      extensionInfo["NSExtensionPointIdentifier"] as? String,
+      "com.apple.usernotifications.service")
+  }
+
+  func testCommunicationNotificationConfiguration() throws {
+    let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    let repoRoot = here.deletingLastPathComponent().deletingLastPathComponent()
+
+    let infoData = try Data(contentsOf: repoRoot.appendingPathComponent("Info.plist"))
+    let info = try XCTUnwrap(
+      PropertyListSerialization.propertyList(from: infoData, format: nil) as? [String: Any])
+    XCTAssertEqual(info["NSUserActivityTypes"] as? [String], ["INSendMessageIntent"])
+
+    let entitlementData = try Data(
+      contentsOf: repoRoot.appendingPathComponent("App.entitlements"))
+    let entitlements = try XCTUnwrap(
+      PropertyListSerialization.propertyList(from: entitlementData, format: nil)
+        as? [String: Any])
+    XCTAssertEqual(entitlements["com.apple.developer.siri"] as? Bool, true)
+    XCTAssertEqual(
+      entitlements["com.apple.developer.usernotifications.communication"] as? Bool,
+      true)
+
+    let serviceSource = try String(
+      contentsOf: repoRoot.appendingPathComponent(
+        "Sources/StupidWalletNotificationService/NotificationService.swift"),
+      encoding: .utf8)
+    XCTAssertTrue(serviceSource.contains("mutable.body = context"))
+    XCTAssertFalse(serviceSource.contains("mutable.body = \"\""))
+  }
+
+  func testInstallationIdentityPersistsWithoutWalletAuthentication() throws {
+    let store = NotificationInstallationKeyStore(
+      service: "notification-tests-\(UUID().uuidString)", accessGroup: nil)
+    defer { try? store.delete() }
+
+    let created = try store.loadOrCreate()
+    XCTAssertNil(created.installationID)
+    XCTAssertNotNil(created.publicKeySPKIBase64URL)
+    try store.saveInstallationID("inst_test")
+
+    let recovered = try store.loadOrCreate()
+    XCTAssertEqual(recovered.privateKey, created.privateKey)
+    XCTAssertEqual(recovered.installationID, "inst_test")
+    let canonical = Data("notification-only".utf8)
+    let signature = try recovered.sign(canonical)
+    XCTAssertTrue(
+      try NotificationP256Verifier.verify(
+        spkiBase64URL: recovered.publicKeySPKIBase64URL ?? "",
+        signatureBase64URL: signature,
+        canonical: canonical))
   }
 
   func testEventKindTitles() {

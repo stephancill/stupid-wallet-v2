@@ -3,6 +3,7 @@ import type { UpstreamClient } from './upstream';
 import { setChainActivated, recomputeChainForAll } from './domain/registrations';
 import { sendApnsPush, type ApnsPayload, type ApnsCredentials } from './apns';
 import { aesGcmDecrypt } from './crypto';
+import { eventTitle } from './services/eventKinds';
 
 export interface ApnsDelivery {
   installationId: string;
@@ -108,7 +109,12 @@ export async function deliverApns(
   const payload: ApnsPayload = {
     aps: {
       'mutable-content': 1,
-      alert: { title: 'Wallet activity' },
+      // Keep a body in the base alert for the most conservative NSE activation shape.
+      // The extension clears it after adding the agreed local subtitle.
+      alert: {
+        title: eventTitle(delivery.eventKind),
+        body: 'Open stupid wallet to view activity.',
+      },
       'thread-id': delivery.installationId,
     },
     eventId: delivery.eventId,

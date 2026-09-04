@@ -11,7 +11,7 @@
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.usernotifications.serviceextension</string>
+		<string>com.apple.usernotifications.service</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>StupidWalletNotificationService.NotificationService</string>
 	</dict>
