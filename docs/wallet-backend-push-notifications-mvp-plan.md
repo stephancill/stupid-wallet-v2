@@ -115,18 +115,20 @@ The base APNs payload contains only:
 - Opaque installation-scoped `addressRegistrationId`.
 - Decimal `chainId`.
 - One bounded `eventKind`.
+- One bounded subject generated from validated fungible effects and cached public token metadata.
 - Payload schema version.
-- `mutable-content: 1`, categorical fallback title, generic body, and opaque thread identifier.
+- `mutable-content: 1`, the subject as the fallback title, a generic body, and an opaque thread
+  identifier.
 
-It contains no account label, full address, amount, asset symbol, token contract, counterparty, calldata,
-signature, or backend credential.
+It contains no account label, full address, token contract, counterparty, calldata, signature, or backend
+credential. An enriched subject may disclose a rounded USD amount and a bounded asset symbol to APNs.
 
 The Notification Service Extension resolves local display state and uses an incoming
 `INSendMessageIntent` to render:
 
 ```text
 avatar:       locally generated account blockie (`INPerson.image`)
-title:        categorical event title
+title:        enriched action subject, or categorical fallback
 message line: <account label> • <chain>
 ```
 
@@ -149,14 +151,17 @@ MVP event kinds and English titles are:
 | `activityDetected` | Wallet activity |
 
 Use the generic kind when one event has conflicting effects or cannot be classified without guessing.
-Reorg and failed-execution states take precedence over transfer classifications. Amounts, symbols,
-counterparties, localization, and user-selectable preview detail are post-MVP.
+Reorg and failed-execution states take precedence over transfer classifications. For successful fungible
+activity, resolve symbol, decimals, and USD price from DeFiLlama with a 10-minute D1 cache. A priced
+incoming/outgoing pair produces `Swapped <amount> <symbol> for <amount> <symbol>`; another priced leg
+produces `Received/Sent <$value> of <symbol>`. Resolution failure retains the categorical title. Token
+contracts, counterparties, localization, and user-selectable preview detail remain deferred.
 
 If interaction donation, content updating, or extension processing fails or times out, iOS shows the
-categorical title with locally resolved account/network context when available, otherwise the base
-categorical title and generic body. The containing app declares Communication Notifications and Siri,
-and lists `INSendMessageIntent` in `NSUserActivityTypes`; the extension itself retains only App Group
-access.
+enriched base title and generic body. The extension keeps the title action-only; the locally resolved
+account label remains in the message line. Malformed, missing, and unpriced subjects retain the categorical title. The
+containing app declares Communication Notifications and Siri, and lists `INSendMessageIntent` in
+`NSUserActivityTypes`; the extension itself retains only App Group access.
 
 ## Repository Layout
 
@@ -545,11 +550,13 @@ implementation notes, or command output committed to the repository.
 - Arbitrary watched-address UI.
 - App Attest collection or enforcement.
 - Apple Silicon Mac enrollment, push delivery, and popup liveness.
-- Amounts, symbols, prices, counterparties, decoded calldata, and rich notification previews.
+- Exact token amounts, counterparties, decoded calldata, and richer notification previews beyond the
+  bounded rounded-USD-and-symbol subject.
 - User-configurable notification categories, sounds, grouping, or preview privacy.
 - Silent-push correctness or required background refresh.
 - Historical activity backfill before enrollment.
-- Token metadata and internal-transfer indexing not supplied by the upstream service.
+- Token metadata beyond subject enrichment and internal-transfer indexing not supplied by the upstream
+  service.
 - A standalone operator dashboard; MVP uses Cloudflare deployment controls and public-safe aggregate
   observability.
 - Compatibility behavior without a shipped format or current upstream contract.

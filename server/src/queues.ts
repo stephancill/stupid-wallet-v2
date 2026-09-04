@@ -5,13 +5,45 @@ import { sendApnsPush, type ApnsPayload, type ApnsCredentials } from './apns';
 import { aesGcmDecrypt } from './crypto';
 import { eventTitle } from './services/eventKinds';
 
+const MAX_NOTIFICATION_SUBJECT_LENGTH = 120;
+
 export interface ApnsDelivery {
   installationId: string;
   eventId: string;
   addressRegistrationId: string;
   chainId: string;
   eventKind: string;
+  subject?: string;
 }
+
+export const buildApnsPayload = (delivery: ApnsDelivery, installationId: string): ApnsPayload => {
+  const candidate = delivery.subject?.trim();
+  const title =
+    candidate &&
+    candidate.length <= MAX_NOTIFICATION_SUBJECT_LENGTH &&
+    !candidate.includes('\n') &&
+    !candidate.includes('\r')
+      ? candidate
+      : eventTitle(delivery.eventKind);
+  return {
+    aps: {
+      'mutable-content': 1,
+      // Keep a body in the base alert for the most conservative NSE activation shape.
+      // The extension replaces it with locally resolved account and chain context.
+      alert: {
+        title,
+        body: 'Open stupid wallet to view activity.',
+      },
+      'thread-id': installationId,
+    },
+    eventId: delivery.eventId,
+    addressRegistrationId: delivery.addressRegistrationId,
+    chainId: delivery.chainId,
+    eventKind: delivery.eventKind,
+    subject: title,
+    schemaVersion: 1,
+  };
+};
 
 export async function processUpstreamOperation(
   db: Database,
@@ -106,23 +138,7 @@ export async function deliverApns(
     return;
   }
 
-  const payload: ApnsPayload = {
-    aps: {
-      'mutable-content': 1,
-      // Keep a body in the base alert for the most conservative NSE activation shape.
-      // The extension clears it after adding the agreed local subtitle.
-      alert: {
-        title: eventTitle(delivery.eventKind),
-        body: 'Open stupid wallet to view activity.',
-      },
-      'thread-id': delivery.installationId,
-    },
-    eventId: delivery.eventId,
-    addressRegistrationId: delivery.addressRegistrationId,
-    chainId: delivery.chainId,
-    eventKind: delivery.eventKind,
-    schemaVersion: 1,
-  };
+  const payload = buildApnsPayload(delivery, delivery.installationId);
 
   const outcome = await sendApnsPush(opts.creds, token, environment, payload);
   await db.run(

@@ -34,8 +34,10 @@ permission acceptance:
   `<unix-seconds>.<exact-body>`, a ±5-minute seconds-to-milliseconds replay check, and typed outer
   delivery envelope, with `(webhookId, eventType)` composite
   deduplication, a durable authenticated cursor event feed,
-  and bounded APNs/upstream clients plus scheduled reconciliation. Hermetic vitest suites run the same
-  schema/SQL on in-memory SQLite.
+  bounded APNs/upstream clients, webhook-time notification-subject enrichment using cached DeFiLlama
+  fungible metadata/prices, and scheduled reconciliation. Hermetic vitest suites run the same schema/SQL
+  on in-memory SQLite. The subject-enrichment migration and Worker are deployed to production; the
+  matching iOS release and physical enriched-push proof remain pending.
 - **Swift Core foundation** — `NotificationModels`, `NotificationSigning` (CryptoKit, with a test that
   proves the shared P-256 vector verifies identically in Web Crypto and CryptoKit), a sensitive
   `NotificationRegistrationStore` (atomic App Group), the shared `NotificationBlockie` renderer (Core
@@ -84,8 +86,16 @@ permission acceptance:
   enrichment. The root cause was an invalid notification-service extension-point identifier. The corrected
   appex is installed, the containing app now writes the previously missing display map, and APNs now uses
   the bounded categorical event title as a resilient privacy-safe fallback; corrected extension execution
-  still needs one focused push proof. Earlier swap deliveries rejected by the old header and timestamp
-  implementations remain dead-lettered upstream. `stupid-app doctor` passes 0/0.
+  still needs one focused push proof. The production backend now replaces categorical-only successful
+  fungible titles with bounded amount/asset subjects while keeping labels and addresses local; the matching
+  iOS release and physical push proof remain pending. Earlier swap deliveries rejected by the old header
+  and timestamp implementations remain dead-lettered upstream. The physical phone's lockdown and
+  CoreDevice network pairing were freshly replaced and independently verified through wireless tunnel,
+  RSD, and a small AFC crash-report probe. `run --network` stalls separately during the multi-megabyte
+  IPA's AFC staging, but the corrected build and both nested extensions were subsequently installed,
+  verified, and launched over USB. Physical action-only notification presentation still requires proof;
+  fix the large-transfer data path before relying on wireless deployment for similarly sized builds.
+  `stupid-app doctor` passes 0/0.
 
 ### Remaining notification acceptance
 
@@ -1360,14 +1370,17 @@ installation count once.
 The implemented notification presentation uses Apple's Communication Notifications API. A Notification
 Service Extension resolves an opaque registration ID against minimal App Group display state, creates an
 incoming `INSendMessageIntent`, and supplies the locally generated account blockie as the sender's
-`INPerson.image` so iOS can render it in the left-side avatar position. The categorical event title is the
-communication sender title and `<account label> • <chain>` is supplied as both the intent content and the
-mutable notification body so it survives the communication layout as the message line. Labels and full addresses do
-not belong in the base APNs payload. The base alert retains the same privacy-safe categorical title and a
-generic body so extension failure does not collapse known token/native/NFT direction or prevent mutable
-alert activation; the extension's pre-intent fail-safe is the agreed categorical title plus local account
-and chain context. The product owner explicitly approved the communication presentation and its associated
-notification-summary/Focus semantics for wallet activity.
+`INPerson.image` so iOS can render it in the left-side avatar position. The backend resolves successful
+fungible effects through a 10-minute D1 cache of DeFiLlama symbol/decimal/USD-price metadata and creates a
+bounded subject: a priced incoming/outgoing pair becomes a swap summary, and another priced leg becomes
+`Received/Sent <$value> of <symbol>`. Reorg, failed, unpriced, unsupported-chain, and malformed metadata
+retain the categorical title. The base APNs alert and custom `subject` carry that backend title unchanged;
+the title contains only the action and never receives an account-label prefix. `<account label> • <chain>`
+is supplied as both the intent content and mutable notification body so it survives the
+communication layout as the message line. Labels, full addresses, token contracts, and counterparties do
+not belong in the base APNs payload; rounded USD amount and bounded symbol disclosure are the narrow
+approved exception. The product owner explicitly approved the communication presentation and its
+associated notification-summary/Focus semantics for wallet activity.
 
 Reconciliation repairs `installationId` and its public-key hash in persisted notification state from the
 existing notification-only Keychain identity on every successful pass. This migration behavior is required:
@@ -1379,9 +1392,10 @@ deliverable installation. The small Codable display map uses the shared App Grou
 than a file-container URL or process-private temporary fallback. Opening the notification settings screen also
 refreshes the active account alias explicitly.
 
-The MVP title is categorical only: received/sent native funds, token, NFT, sent transaction, failed
-transaction, reverted activity, or generic wallet activity. Amounts, assets, counterparties,
-localization, and user-selectable preview detail are deferred. Webhook deliveries deduplicate by
+The categorical kinds remain received/sent native funds, token, NFT, sent transaction, failed transaction,
+reverted activity, or generic wallet activity. Successful fungible notifications use the enriched subject
+when public pricing resolves; token contracts, counterparties, localization, and user-selectable preview
+detail remain deferred. Webhook deliveries deduplicate by
 `(webhookId, eventType)` so current observed/reverted deliveries sharing one upstream ID both apply
 exactly once. Native direction requires a decimal transaction value greater than zero; zero-value swaps
 are classified from exact `erc20`/`erc721` effect kinds rather than substring guesses.
@@ -1700,7 +1714,9 @@ device identifiers, or sensitive signing payloads.
   Push Notifications handling plus Notification Service Extension packaging must be proven before
   changing wallet entitlements. App Attest is deferred from MVP.
 - **Notification privacy and presentation:** Account labels and addresses stay out of base APNs payloads.
-  The MVP uses bounded categorical fallback titles without amounts, assets, or counterparties. Sandbox
+  The backend now prepares bounded successful-fungible subjects containing a rounded USD amount and asset
+  symbol; this is an intentional lock-screen/APNs disclosure increase based on public activity. Categorical
+  fallback titles remain free of amounts, assets, and counterparties. Sandbox
   APNs delivery, a live swap, and physical banner presentation are proven. Communication Notifications
   now supplies the local blockie as an `INPerson` avatar and maps the event title plus local account/network
   context into the communication layout. Direct-device testing proved the left-side blockie and categorical

@@ -38,13 +38,14 @@ public class NotificationService: UNNotificationServiceExtension, @unchecked Sen
     // non-secret display map; its absence just means a generic fallback is rendered.
     let display = NotificationDisplayResolver.Display.resolve(
       registrationID: registrationID, chainID: chainID)
+    let subject = notificationSubject(value: userInfo["subject"], fallback: eventKind.title)
 
     guard let mutable = request.content.mutableCopy() as? UNMutableNotificationContent else {
       contentHandler(request.content)
       return
     }
     let context = notificationContext(display: display, chainID: chainID)
-    mutable.title = eventKind.title
+    mutable.title = subject
     mutable.body = context
     mutable.subtitle = ""
     mutable.attachments = []
@@ -66,7 +67,7 @@ public class NotificationService: UNNotificationServiceExtension, @unchecked Sen
     let sender = INPerson(
       personHandle: INPersonHandle(value: handleValue, type: .unknown),
       nameComponents: nil,
-      displayName: eventKind.title,
+      displayName: subject,
       image: INImage(imageData: avatarData),
       contactIdentifier: nil,
       customIdentifier: handleValue,
@@ -115,6 +116,14 @@ public class NotificationService: UNNotificationServiceExtension, @unchecked Sen
 
   private func stringValue(_ value: Any?) -> String {
     (value as? String) ?? ""
+  }
+
+  private func notificationSubject(value: Any?, fallback: String) -> String {
+    guard let raw = value as? String else { return fallback }
+    let subject = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !subject.isEmpty, subject.count <= 120, !subject.contains(where: { $0.isNewline })
+    else { return fallback }
+    return subject
   }
 
   private func chainDisplayName(_ chainID: String) -> String {

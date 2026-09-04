@@ -50,6 +50,140 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-04 - Physical Network Pairing Repair And Staging Diagnosis
+
+### Summary
+
+- Replaced and verified the selected physical iPhone's native lockdown and CoreDevice remote-pairing
+  records over USB. Wireless Pair-Verify, TCP tunnel establishment, RSD identity resolution, and a
+  bounded crash-report AFC probe all succeed with the phone physically unplugged.
+- Wireless deployment of the corrected action-only notification build reaches native AFC staging, then
+  stalls during the multi-megabyte IPA upload. Packet diagnostics show the device acknowledging upload
+  data and retransmitting the next AFC status response until the inner connection resets; replacing
+  pairing records again does not address this separate data-path failure. The same corrected build was
+  subsequently installed and launched successfully over USB without replacing app data.
+- Stopped only the stale privileged helper processes left by interrupted network-run attempts. Temporary
+  transfer-size and TCP-coalescing experiments were reverted after they did not change the failure.
+
+### Verification
+
+- `stupid-app device pair --usb --replace-lockdown-record` completed native lockdown pairing, verified
+  wireless lockdown, and stored a fresh CoreDevice record.
+- A bounded `stupid-app device crash --network ... --filter <nonexistent>` run established the wireless
+  tunnel, resolved RSD, connected to the crash-report service, and failed only because the intentionally
+  nonexistent report filter matched no file. This proves the repaired network pairing independently of
+  large-IPA installation.
+- `stupid-app run --usb --udid <device> --sudo /usr/bin/sudo` rebuilt and signed the app plus both nested
+  extensions, staged and installed the IPA, verified the installed bundle identifier, and launched the
+  containing app.
+- `stupid-app doctor` completed with zero failures and zero warnings. No diagnostic source changes remain
+  in the CLI worktree.
+
+### Follow-Up
+
+- Verify action-only notification presentation on the physical phone. Fix the separate macOS large-IPA
+  tunnel staging issue before relying on wireless deployment for similarly sized builds.
+
+## 2026-09-04 - Action-Only Notification Titles
+
+### Summary
+
+- Removed the locally resolved account-label prefix from enriched notification titles. The title now
+  contains only the backend action subject, while the existing `<account label> • <chain>` message line
+  continues to provide account context without duplication.
+- Kept malformed, absent, and oversized subject fallback behavior unchanged.
+
+### Why
+
+- Communication Notification presentation already shows the account label in its message line. Repeating
+  it in the title was redundant and made the action harder to scan.
+
+### Verification
+
+- Added a source-level regression assertion that the Notification Service Extension does not pass the
+  local account label into subject construction.
+- A corrected development build still requires physical-device reinstall and notification presentation
+  proof.
+
+## 2026-09-04 - Enriched Notification Subjects Production Deployment
+
+### Summary
+
+- Applied the additive token-cache migration to the production D1 database before deploying the updated
+  Worker at the existing production custom domain.
+- Deployed webhook subject enrichment and APNs subject propagation with all existing D1, queue, cron,
+  domain, and environment bindings retained.
+- This deploy changes only the backend. Shipping the matching Notification Service Extension remains a
+  separate iOS release step.
+- Updated the in-app notification privacy copy to disclose that alerts may include a rounded USD amount
+  and asset symbol while account labels and blockies are added locally.
+
+### Verification
+
+- `wrangler d1 migrations list stupid-wallet-backend --remote` reported only
+  `0002_token_cache.sql` before migration and no pending migrations afterward.
+- A remote schema query confirmed the `token_cache` composite key and metadata, price, and timestamp
+  columns. The table was initially empty as expected and will populate from verified webhook activity.
+- `wrangler deploy` uploaded the Worker and activated the custom domain, scheduled trigger, upstream
+  queue bindings, APNs queue bindings, and production D1 binding. The deployment list confirmed the new
+  version receives 100% of traffic.
+- HTTPS requests to the production custom domain returned the expected root `404 Not Found` response and
+  a `204` CORS preflight response for the public challenge route.
+- A development-signed physical-iPhone USB install completed, including both nested extensions, and the
+  installer verified the installed bundle identifier. Automatic launch first failed at privileged TUN
+  creation; the phone disconnected from USB before the privileged retry, so launch and enriched push
+  presentation still require manual confirmation on the phone.
+
+### Follow-Up
+
+- Ship the matching iOS build, then prove one priced transfer and one swap notification on a physical
+  lock screen without initiating an unapproved financial transaction.
+
+## 2026-09-04 - Enriched Notification Subjects
+
+### Summary
+
+- Added webhook-time notification-subject enrichment modeled on the wallet email notification service.
+  Successful fungible activity resolves token/native symbol, decimals, and USD price through DeFiLlama;
+  metadata is cached in D1 for 10 minutes by a new additive migration.
+- A priced incoming/outgoing pair produces a bounded swap subject. Another priced leg produces
+  `Received/Sent <$value> of <symbol>`. Reorgs, transaction failures, unsupported chains, malformed
+  metadata, and unavailable pricing retain the existing categorical title.
+- The APNs queue and payload now carry the bounded subject and use it as the base alert title. Older
+  queued messages without a subject retain categorical fallback behavior.
+- The Notification Service Extension validates the subject and uses it for the Communication
+  Notification sender/title. When local display state is available, it prepends the account label only
+  to an enriched subject; the existing account/chain message line and local blockie remain unchanged.
+- This intentionally expands APNs/lock-screen disclosure for successful fungible activity to a rounded
+  USD amount and bounded asset symbol. Account labels, full addresses, token contracts, counterparties,
+  and credentials remain absent from the base payload.
+
+### Why
+
+- Categorical titles such as `Token received` omit the useful value and asset context already available
+  from the signed webhook. The email implementation provided a proven enrichment and formatting model,
+  while this wallet keeps its stricter local-only account identity boundary.
+
+### Verification
+
+- In `server/`, `bun run format:check`, `bun run lint`, `bun run typecheck`, and `bun run test` pass: 30
+  tests / 7 files. Coverage includes native USD subjects, two-sided swap subjects, unavailable-price and
+  reorg fallbacks, APNs subject propagation, and old queue-message fallback.
+- `swift test` passes: 306 tests / 34 suites. The focused notification suite passes 16 tests, including
+  the service-extension subject wiring assertions.
+- `xcrun swift-format lint` is clean for the changed Swift files. `stupid-app 0.0.15 doctor` passes with
+  0 failures and 0 warnings, and `stupid-app build` succeeds against the iOS 26.5 SDK.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app on
+  the preferred iOS 26.3 simulator. Accessibility inspection confirmed the retained wallet home is
+  running.
+- `git diff --check` passes.
+
+### Follow-Up
+
+- The D1 migration and Worker deployment are complete. Install the matching iOS build before expecting
+  the new locally prefixed title presentation, then prove one priced transfer and one swap on a physical
+  lock screen without initiating an unapproved financial transaction.
+
 ## 2026-09-04 - Notification Display-Map Migration Repair
 
 ### Summary

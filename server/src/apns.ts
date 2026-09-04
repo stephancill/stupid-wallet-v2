@@ -17,6 +17,7 @@ export interface ApnsPayload {
   addressRegistrationId: string;
   chainId: string;
   eventKind: string;
+  subject: string;
   schemaVersion: 1;
 }
 
