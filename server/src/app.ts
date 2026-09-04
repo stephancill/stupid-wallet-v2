@@ -20,15 +20,15 @@ import {
   replaceChainsSnapshot,
   syncUpstream,
 } from './domain/registrations';
-import { ingestWebhook } from './domain/webhook';
+import { ingestWebhook, opaqueRegistrationId } from './domain/webhook';
 import { listInstallationEvents } from './domain/events';
 import { purgeInstallation } from './domain/lifecycle';
 import { authenticateRequest, bodyDigestOf } from './auth/request';
 import { verifyPopupLiveness } from './auth/popup';
-import { schemas } from './schemas';
+import { schemas, type UpstreamWebhookEnvelope, type WebhookEvent } from './schemas';
 import { checkRate } from './rate';
 import { HttpError } from './errors';
-import { constantTimeEqual, hmacSha256Base64Url } from './crypto';
+import { constantTimeEqual, hmacSha256Hex } from './crypto';
 import { verifyP256 } from './p256';
 import { CONFIG } from './config';
 
@@ -181,6 +181,7 @@ export const createBackend = (deps: BackendDeps): Hono => {
       { appDataKey: deps.appDataKey },
       {
         publicKey: body.publicKey,
+        popupLivenessPublicKey: body.popupLivenessPublicKey,
         appVersion: body.appVersion,
         appBuild: body.appBuild,
         apnsEnvironment: body.apnsEnvironment,
@@ -299,7 +300,57 @@ export const createBackend = (deps: BackendDeps): Hono => {
         body.chains.chainIds,
         at(),
       );
-      return c.json({ ok: true });
+      const active = await activeChainIds(db);
+      const stageRows = await db.all('SELECT chain_id, status FROM webhook_chain_stages');
+      const statusByChain = new Map(stageRows.map((r) => [String(r.chain_id), String(r.status)]));
+      return c.json({
+        accepted: body.chains.chainIds.map((chainId) => ({
+          chainId,
+          stage: statusByChain.get(chainId) ?? 'staged',
+        })),
+        activeChains: active,
+      });
+    }),
+  );
+
+  app.post(
+    '/v1/installations/:id/test-notification',
+    signed(async (c) => {
+      const installationId = requireParam(c.req.param('id'));
+      await checkRate(
+        db,
+        `test-notification:${installationId}`,
+        CONFIG.rateLimits.installationMutation.windowSeconds,
+        5,
+        at(),
+      );
+      const registration = await db.first(
+        `SELECT address, chain_id
+           FROM installation_addresses
+          WHERE installation_id = ? AND revoked_at IS NULL AND status = 'active'
+          ORDER BY CAST(chain_id AS INTEGER), address
+          LIMIT 1`,
+        [installationId],
+      );
+      if (!registration) {
+        throw new HttpError(409, 'conflict', 'no active notification registration');
+      }
+      if (!deps.onWebhookFanout) {
+        throw new HttpError(503, 'unavailable', 'notification delivery is unavailable');
+      }
+      const address = String(registration.address);
+      const chainId = String(registration.chain_id);
+      await deps.onWebhookFanout([
+        {
+          installationId,
+          eventId: `test_${crypto.randomUUID()}`,
+          addressRegistrationId: await opaqueRegistrationId(installationId, address),
+          chainId,
+          eventKind: 'activityDetected',
+          createdAt: at(),
+        },
+      ]);
+      return c.json({ ok: true }, 202);
     }),
   );
 
@@ -373,26 +424,42 @@ export const createBackend = (deps: BackendDeps): Hono => {
       at(),
     );
     const exactBody = new Uint8Array(await c.req.arrayBuffer());
-    const webhookId = c.req.header('x-wallet-hook-id') ?? '';
-    const hookTimestamp = c.req.header('x-wallet-hook-timestamp') ?? '';
-    const signatureHeader = c.req.header('x-wallet-hook-signature') ?? '';
-    if (!webhookId || !hookTimestamp || !signatureHeader) {
+    const deliveryId = c.req.header('webhook-id') ?? '';
+    const hookTimestamp = c.req.header('webhook-timestamp') ?? '';
+    const signatureHeader = c.req.header('webhook-signature') ?? '';
+    if (!deliveryId || !hookTimestamp || !signatureHeader) {
       throw new HttpError(401, 'unauthorized', 'missing webhook headers');
     }
-    if (Math.abs(at() - Number(hookTimestamp)) > CONFIG.clockSkewSeconds * 1000) {
+    if (!/^[0-9]+$/.test(hookTimestamp)) {
+      throw new HttpError(401, 'unauthorized', 'malformed webhook timestamp');
+    }
+    const hookTimestampMilliseconds = Number(hookTimestamp) * 1_000;
+    if (
+      !Number.isSafeInteger(hookTimestampMilliseconds) ||
+      Math.abs(at() - hookTimestampMilliseconds) > CONFIG.clockSkewSeconds * 1_000
+    ) {
       throw new HttpError(401, 'unauthorized', 'webhook timestamp outside window');
     }
 
     const secret = new TextEncoder().encode(deps.webhookSecret);
-    const mac = await webhookHmac(secret, webhookId, hookTimestamp, exactBody);
+    const mac = await webhookHmac(secret, hookTimestamp, exactBody);
     const expected = signatureHeader.replace(/^v1,?/, '');
     if (!constantTimeEqual(new TextEncoder().encode(mac), new TextEncoder().encode(expected))) {
       throw new HttpError(401, 'unauthorized', 'webhook signature invalid');
     }
 
     const payloadText = new TextDecoder().decode(exactBody);
-    const payload = schemas.webhookEvent.parse(payloadText ? JSON.parse(payloadText) : {});
-    const result = await ingestWebhook(db, payload, webhookId, at());
+    const envelope = schemas.upstreamWebhookEnvelope.parse(
+      payloadText ? JSON.parse(payloadText) : {},
+    );
+    if (envelope.id !== deliveryId) {
+      throw new HttpError(400, 'bad_request', 'webhook delivery id mismatch');
+    }
+    if (envelope.type === 'webhook.test') {
+      return c.json({ ok: true, test: true }, 202);
+    }
+    const payload = normalizeWebhookEvent(envelope);
+    const result = await ingestWebhook(db, payload, deliveryId, at());
 
     if (!result.duplicate && deps.onWebhookFanout && result.fanout.length > 0) {
       const deliveries = result.fanout.map((target) => ({
@@ -414,14 +481,40 @@ export const createBackend = (deps: BackendDeps): Hono => {
 
 const webhookHmac = async (
   secret: Uint8Array,
-  webhookId: string,
   hookTimestamp: string,
   exactBody: Uint8Array,
 ): Promise<string> => {
   const encoder = new TextEncoder();
-  const prefixBytes = encoder.encode(`${webhookId}.${hookTimestamp}.`);
+  const prefixBytes = encoder.encode(`${hookTimestamp}.`);
   const combined = new Uint8Array(prefixBytes.length + exactBody.length);
   combined.set(prefixBytes, 0);
   combined.set(exactBody, prefixBytes.length);
-  return hmacSha256Base64Url(secret, combined);
+  return hmacSha256Hex(secret, combined);
+};
+
+const normalizeWebhookEvent = (
+  envelope: Exclude<UpstreamWebhookEnvelope, { type: 'webhook.test' }>,
+): WebhookEvent => {
+  const data = envelope.data;
+  const transaction = envelope.type === 'activity.observed' ? envelope.data.transaction : undefined;
+  return schemas.webhookEvent.parse({
+    eventId: envelope.id,
+    eventType: envelope.type,
+    chainId: String(data.chainId),
+    address: data.trackedAddress,
+    observationId: envelope.id,
+    blockNumber: data.blockNumber,
+    blockHash: data.blockHash,
+    blockTimestamp:
+      envelope.type === 'activity.observed' ? Number(envelope.data.blockTimestamp) : undefined,
+    transactionHash: transaction?.hash,
+    transactionFrom: transaction?.from,
+    transactionTo: transaction?.to,
+    transactionStatus: transaction?.status,
+    transactionNonce: transaction?.nonce,
+    transactionValue: transaction?.value,
+    initiatedByTrackedAddress:
+      envelope.type === 'activity.observed' ? envelope.data.initiatedByTrackedAddress : undefined,
+    effects: envelope.type === 'activity.observed' ? envelope.data.effects : undefined,
+  });
 };

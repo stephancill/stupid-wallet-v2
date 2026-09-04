@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import { createBackend, type BackendDeps } from '../src/app';
-import { createTestDb } from './helpers';
+import { createTestDb, generateTestKeypair } from './helpers';
 import { createInstallation } from '../src/domain/installations';
 import {
   enrollAddresses,
@@ -29,7 +29,7 @@ const makeDeps = (db: Database, deliveries: Array<Record<string, unknown>>): Bac
   },
 });
 
-const hmac = async (secret: string, id: string, timestamp: string, exactBody: Uint8Array) => {
+const hmac = async (secret: string, timestamp: string, exactBody: Uint8Array) => {
   const key = await crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(secret),
@@ -37,13 +37,101 @@ const hmac = async (secret: string, id: string, timestamp: string, exactBody: Ui
     false,
     ['sign'],
   );
-  const prefix = new TextEncoder().encode(`${id}.${timestamp}.`);
+  const prefix = new TextEncoder().encode(`${timestamp}.`);
   const combined = new Uint8Array(prefix.length + exactBody.length);
   combined.set(prefix, 0);
   combined.set(exactBody, prefix.length);
   const sig = await crypto.subtle.sign('HMAC', key, combined);
-  return Buffer.from(sig).toString('base64url');
+  return Buffer.from(sig).toString('hex');
 };
+
+describe('installation HTTP route', () => {
+  it('persists the constrained popup liveness key', async () => {
+    const db = createTestDb();
+    const deliveries: Array<Record<string, unknown>> = [];
+    const app = createBackend(makeDeps(db, deliveries));
+    const installationKey = await generateTestKeypair();
+    const popupKey = await generateTestKeypair();
+    const challengeResponse = await app.request('/v1/installations/challenges', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        publicKey: installationKey.publicKeySpki,
+        packageName: 'co.za.stephancill.stupid-wallet',
+      }),
+    });
+    expect(challengeResponse.status).toBe(201);
+    const challenge = (await challengeResponse.json()) as { challengeId: string };
+    const body = JSON.stringify({
+      challengeId: challenge.challengeId,
+      publicKey: installationKey.publicKeySpki,
+      popupLivenessPublicKey: popupKey.publicKeySpki,
+      apnsEnvironment: 'development',
+      apnsToken: 'a'.repeat(64),
+      notificationAuthorization: 'authorized',
+      notificationAlertSetting: 'enabled',
+    });
+    const timestamp = String(NOW());
+    const requestId = 'request_popup_key';
+    const digest = Buffer.from(
+      await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)),
+    ).toString('base64url');
+    const signature = await installationKey.sign(
+      new TextEncoder().encode(
+        ['v1', 'POST', '/v1/installations', timestamp, requestId, digest].join('\n'),
+      ),
+    );
+    const createResponse = await app.request('/v1/installations', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-wallet-request-id': requestId,
+        'x-wallet-timestamp': timestamp,
+        'x-wallet-signature': `v1,${signature}`,
+      },
+      body,
+    });
+    expect(createResponse.status).toBe(201);
+    const created = (await createResponse.json()) as { installationId: string };
+    const row = await db.first('SELECT popup_liveness_public_key FROM installations WHERE id = ?', [
+      created.installationId,
+    ]);
+    expect(row?.popup_liveness_public_key).toBe(popupKey.publicKeySpki);
+
+    await replaceChainsSnapshot(db, created.installationId, 1, ['1'], NOW());
+    await setChainActivated(db, '1', NOW());
+    await enrollAddresses(
+      db,
+      created.installationId,
+      ['0x1111111111111111111111111111111111111111'],
+      NOW(),
+    );
+    await syncUpstream(db, NOW());
+
+    const testPath = `/v1/installations/${created.installationId}/test-notification`;
+    const testTimestamp = String(NOW());
+    const testRequestId = 'request_test_notification';
+    const emptyDigest = Buffer.from(
+      await crypto.subtle.digest('SHA-256', new Uint8Array()),
+    ).toString('base64url');
+    const testSignature = await installationKey.sign(
+      new TextEncoder().encode(
+        ['v1', 'POST', testPath, testTimestamp, testRequestId, emptyDigest].join('\n'),
+      ),
+    );
+    const testResponse = await app.request(testPath, {
+      method: 'POST',
+      headers: {
+        'x-wallet-request-id': testRequestId,
+        'x-wallet-timestamp': testTimestamp,
+        'x-wallet-signature': `v1,${testSignature}`,
+      },
+    });
+    expect(testResponse.status).toBe(202);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.eventKind).toBe('activityDetected');
+  });
+});
 
 describe('webhook HTTP route', () => {
   let db: Database;
@@ -73,18 +161,21 @@ describe('webhook HTTP route', () => {
     await syncUpstream(db, NOW());
   });
 
-  const post = async (body: Record<string, unknown>, webhookId: string) => {
+  const post = async (
+    body: Record<string, unknown>,
+    webhookId: string,
+    timestamp = String(Math.floor(NOW() / 1_000)),
+  ) => {
     deliveries = [];
     const app = createBackend(makeDeps(db, deliveries));
     const bodyText = new TextEncoder().encode(JSON.stringify(body));
-    const timestamp = String(NOW());
-    const sig = await hmac('test-secret', webhookId, timestamp, bodyText);
+    const sig = await hmac('test-secret', timestamp, bodyText);
     return app.request('/internal/v1/wallet-activity', {
       method: 'POST',
       headers: {
-        'x-wallet-hook-id': webhookId,
-        'x-wallet-hook-timestamp': timestamp,
-        'x-wallet-hook-signature': `v1,${sig}`,
+        'webhook-id': webhookId,
+        'webhook-timestamp': timestamp,
+        'webhook-signature': sig,
         'content-type': 'application/json',
       },
       body: bodyText,
@@ -94,18 +185,78 @@ describe('webhook HTTP route', () => {
   it('accepts a signed delivery and enqueues fanout', async () => {
     const res = await post(
       {
-        eventId: 'obs-1',
-        eventType: 'activity.observed',
-        chainId: '1',
-        address: '0x1111111111111111111111111111111111111111',
-        observationId: 'obs-1',
+        id: 'obs-1',
+        type: 'activity.observed',
+        createdAt: new Date(NOW()).toISOString(),
+        data: {
+          chainId: 1,
+          trackedAddress: '0x1111111111111111111111111111111111111111',
+          initiatedByTrackedAddress: false,
+          blockNumber: '123',
+          blockHash: `0x${'cd'.repeat(32)}`,
+          blockTimestamp: String(Math.floor(NOW() / 1_000)),
+          transaction: {
+            hash: `0x${'ab'.repeat(32)}`,
+            index: 0,
+            from: '0x2222222222222222222222222222222222222222',
+            to: '0x1111111111111111111111111111111111111111',
+            status: 'success',
+            nonce: '1',
+            value: '1000000000000000000',
+          },
+          effects: [],
+        },
       },
-      'hook-1',
+      'obs-1',
     );
     expect(res.status).toBe(202);
     const json = (await res.json()) as { duplicate: boolean };
     expect(json.duplicate).toBe(false);
     expect(deliveries.length).toBe(1);
+    expect(deliveries[0]?.eventKind).toBe('nativeReceived');
+  });
+
+  it('accepts and classifies a real-shape zero-native-value ERC-20 swap', async () => {
+    const res = await post(
+      {
+        id: 'obs-swap-1',
+        type: 'activity.observed',
+        createdAt: new Date(NOW()).toISOString(),
+        data: {
+          chainId: 1,
+          trackedAddress: '0x1111111111111111111111111111111111111111',
+          initiatedByTrackedAddress: true,
+          blockNumber: '124',
+          blockHash: `0x${'ef'.repeat(32)}`,
+          blockTimestamp: String(Math.floor(NOW() / 1_000)),
+          transaction: {
+            hash: `0x${'bc'.repeat(32)}`,
+            index: 1,
+            from: '0x1111111111111111111111111111111111111111',
+            to: '0x3333333333333333333333333333333333333333',
+            status: 'success',
+            nonce: '2',
+            value: '0',
+          },
+          effects: [
+            {
+              id: 'effect-1',
+              kind: 'erc20',
+              direction: 'outgoing',
+              logIndex: 3,
+              from: '0x1111111111111111111111111111111111111111',
+              to: '0x3333333333333333333333333333333333333333',
+              assetAddress: '0x4444444444444444444444444444444444444444',
+              amount: '1000',
+            },
+          ],
+        },
+      },
+      'obs-swap-1',
+    );
+    expect(res.status).toBe(202);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]?.eventKind).toBe('tokenSent');
   });
 
   it('rejects a bad HMAC', async () => {
@@ -114,15 +265,40 @@ describe('webhook HTTP route', () => {
     const res = await app.request('/internal/v1/wallet-activity', {
       method: 'POST',
       headers: {
-        'x-wallet-hook-id': 'hook-2',
-        'x-wallet-hook-timestamp': String(NOW()),
-        'x-wallet-hook-signature': 'v1,bogus',
+        'webhook-id': 'hook-2',
+        'webhook-timestamp': String(Math.floor(NOW() / 1_000)),
+        'webhook-signature': 'bogus',
         'content-type': 'application/json',
       },
       body: bodyText,
     });
-    // eslint-disable-next-line no-console
-    console.log('BAD HMAC BODY:', await res.text());
     expect(res.status).toBe(401);
+  });
+
+  it('rejects millisecond and malformed webhook timestamps', async () => {
+    const body = {
+      id: 'test-delivery-timestamp',
+      type: 'webhook.test',
+      createdAt: new Date(NOW()).toISOString(),
+      data: { webhookId: 'configured-webhook-1' },
+    };
+    const milliseconds = await post(body, 'test-delivery-timestamp', String(NOW()));
+    expect(milliseconds.status).toBe(401);
+    const malformed = await post(body, 'test-delivery-timestamp', 'not-a-timestamp');
+    expect(malformed.status).toBe(401);
+  });
+
+  it('accepts a signed upstream test ping without fanout', async () => {
+    const res = await post(
+      {
+        id: 'test-delivery-1',
+        type: 'webhook.test',
+        createdAt: new Date(NOW()).toISOString(),
+        data: { webhookId: 'configured-webhook-1' },
+      },
+      'test-delivery-1',
+    );
+    expect(res.status).toBe(202);
+    expect(deliveries).toHaveLength(0);
   });
 });

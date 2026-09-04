@@ -57,6 +57,25 @@ export const hmacSha256Base64Url = async (
   return base64UrlEncode(new Uint8Array(signature));
 };
 
+/** Lowercase hexadecimal HMAC-SHA256 used by the upstream webhook contract. */
+export const hmacSha256Hex = async (
+  key: Uint8Array,
+  input: Uint8Array | string,
+): Promise<string> => {
+  const keyHandle = await crypto.subtle.importKey(
+    'raw',
+    asBufferSource(key)!,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : input;
+  const signature = new Uint8Array(
+    await crypto.subtle.sign('HMAC', keyHandle, asBufferSource(bytes)!),
+  );
+  return Array.from(signature, (byte) => byte.toString(16).padStart(2, '0')).join('');
+};
+
 /** Keyed HMAC-SHA256 hash used for APNs token lookup (never stores the raw token). */
 export const keyedHash = (keyBase64: string, input: string): Promise<string> => {
   const keyBytes = base64UrlDecode(keyBase64);

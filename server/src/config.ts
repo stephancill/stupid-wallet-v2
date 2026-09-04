@@ -46,6 +46,8 @@ export interface Env {
   APP_DATA_KEY: string;
   /** Upstream Stupid Wallet Webhooks API key. */
   UPSTREAM_API_KEY: string;
+  /** One upstream webhook owned by this backend account. */
+  UPSTREAM_WEBHOOK_ID: string;
   /** Upstream webhook HMAC-SHA256 shared secret. */
   UPSTREAM_WEBHOOK_SECRET: string;
   /** APNs provider .p8 private key (base64 DER PKCS8). */

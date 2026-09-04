@@ -61,6 +61,18 @@ describe('installation registration and chain staging', () => {
     }
   });
 
+  it('persists the route-scoped popup liveness key', async () => {
+    const popupKey = 'popup-public-key';
+    const id = await createInstallation(db, APP_KEY, {
+      publicKey: 'installation-public-key',
+      popupLivenessPublicKey: popupKey,
+    });
+    const row = await db.first('SELECT popup_liveness_public_key FROM installations WHERE id = ?', [
+      id,
+    ]);
+    expect(row?.popup_liveness_public_key).toBe(popupKey);
+  });
+
   it('stages a chain at 5 eligible installations', async () => {
     const stage = (await listStages(db)).find((s) => s.chainId === '1');
     expect(stage?.status).toBe('enabling');

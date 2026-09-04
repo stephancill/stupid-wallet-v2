@@ -8,6 +8,10 @@
 	<array>
 		<string>group.co.za.stephancill.stupid-wallet</string>
 	</array>
+	<key>com.apple.developer.siri</key>
+	<true/>
+	<key>com.apple.developer.usernotifications.communication</key>
+	<true/>
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)co.za.stephancill.stupid-wallet</string>

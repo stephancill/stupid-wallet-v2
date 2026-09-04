@@ -73,6 +73,102 @@ generic error text and do not bypass the canonical approval protocol.
     `DTSDKBuild`, and `DTSDKName` in `Payload/<app>.app/Info.plist` (`unzip -p <ipa>` then
     `plutil -p`); genuine Xcode archives always include the SDK build keys. A genuine-Xcode build can
     be used as a probe to isolate a packaging defect from a policy change.
+16. Enabling App Groups capability on an App ID does not associate any concrete App Group. A development
+    profile can still be created and later fail signing with an App Group entitlement value mismatch.
+    In Certificates, Identifiers & Profiles, open the exact App ID, configure App Groups, select the
+    production group, save, and regenerate every affected profile. If profile creation reports duplicate
+    display names, use a unique `stupid-app signing setup --profile-name` prefix rather than deleting
+    profiles during diagnosis.
+17. Backend tests use the native `better-sqlite3` module. A failure that reports mismatched
+    `NODE_MODULE_VERSION` values means the current shell runtime differs from the runtime that built
+    `server/node_modules`; it is not a schema or application-test failure. Select the repository's Node
+    22 toolchain consistently. If the native module was rebuilt under another runtime, run the existing
+    Bun install with `--force` under Node 22 before retesting; do not commit ignored `node_modules` output.
+18. If an installed `stupid-app` aborts before `doctor` with `could not load resource bundle`, inspect
+    whether `stupid-app_SigningKit.bundle` still exists beside that exact executable or in its original
+    Swift build configuration. This is a CLI-launcher packaging failure, not a project diagnostic. Use
+    the matching build executable that still has its adjacent bundle, or reinstall the CLI and bundle,
+    before changing wallet configuration.
+19. Stupid Webhooks subscription creation uses `chainIds` as an array and requires the destination
+    `webhookId`; the response wraps created records in `subscriptions`. Chain discovery communicates
+    support through status: HTTP 200 means supported and HTTP 404 means unsupported. Do not invent a
+    `supported` response field or collapse non-404 failures into an unsupported result.
+20. Immediately after publishing a custom Worker domain, public resolvers can succeed while a physical
+    iPhone retains a negative DNS result. Run a bounded Worker tail and a privacy-safe D1 count while
+    foregrounding the app: no request plus no row change locates the failure before the Worker. Refresh
+    the phone's network state only with user approval, then require both cleared UI error state and a
+    persisted installation before calling enrollment successful.
+21. Apple limits active team-scoped APNs authentication keys. A portal rejection at that limit is an
+    account-capacity boundary, not a signing or entitlement defect. Do not delete keys or silently reuse
+    an all-topics key; reuse requires explicit approval because it broadens credential authority, and a
+    narrower replacement should remain follow-up work when account capacity permits.
+22. Wrangler cron triggers are arrays of cron strings, for example `"crons": ["*/15 * * * *"]`. An
+    object such as `{ "cron": "*/15 * * * *", "request": "..." }` can be ignored without a deployment
+    error, leaving D1 outbox rows pending indefinitely. Require deploy output to list `schedule:` and
+    verify at least one scheduled dispatch rather than treating configuration presence as proof.
+23. For a bounded operator recovery when an upstream outbox row exists but has not been dispatched, the
+    Cloudflare Queue dashboard can send a JSON message containing only the expected queue discriminator
+    and numeric operation ID. Resolve IDs from a privacy-safe D1 query, send only explicitly approved
+    operations, and verify terminal outbox state plus non-null provider subscription IDs independently.
+    This dispatches the normal consumer; it is not permission to fabricate installations or bypass
+    upstream capability checks.
+24. Stupid Webhooks deliveries use `webhook-id`, `webhook-timestamp`, and `webhook-signature`. The
+    timestamp is Unix **seconds**, while JavaScript `Date.now()` is milliseconds; convert before applying
+    the ±5-minute replay window. Verify a lowercase hexadecimal HMAC-SHA256 over
+    `<seconds>.<exact-body>` and parse the outer
+    `{id,type,createdAt,data}` envelope before normalizing activity. The older `x-wallet-hook-*`,
+    `<id>.<timestamp>.<body>`, Base64URL, or flat-body assumptions reject every real delivery even when
+    local fixtures built around those assumptions pass.
+25. Notification toggle, APNs registration callback, foreground entry, and test-push actions can converge
+    on the same installation reconciliation. Coalesce them behind one in-flight task and wait for it before
+    final-installation deletion; otherwise a successful create can race another mutation and briefly show
+    the generic service-retry error.
+26. Diagnose APNs separately from upstream activity with a signed, rate-limited installation test route
+    that queues a synthetic categorical alert without creating a cursor event. Require three distinct
+    observations: HTTP acceptance of the signed test request, APNs queue consumption, and the persisted
+    APNs provider outcome. Provider `accepted` proves APNs accepted the token/payload, not that iOS
+    presented a banner; verify Notification Center and the service-extension result on the physical phone.
+27. For activity classification, decimal transaction value `"0"` is not native movement. Treat only a
+    value greater than zero as native, and match the provider's exact effect kinds (`erc20`, `erc721`)
+    rather than searching serialized effects for the words `token` or `nft`. A swap commonly has zero
+    native value plus one or more token effects.
+28. When the event row and APNs ledger carry a specific `eventKind` but the phone displays the base alert
+    unchanged, debug Notification Service Extension presentation separately from ingestion and transport.
+    First verify that the containing app actually writes the non-secret App Group display map; an extension
+    reader without a writer can never resolve an account label/address seed. Keep the APNs base title
+    categorical from the bounded `eventKind`, because that information is already in the payload and is a
+    safe fallback when iOS skips or terminates the extension. Capture a filtered physical-device log with
+    `idevicesyslog -p StupidWalletNotificationService` during the next push to distinguish no launch from
+    a launch-time failure. The Apple Notification Service Extension point is exactly
+    `com.apple.usernotifications.service`; `com.apple.usernotifications.serviceextension` looks plausible
+    but does not register the extension for mutable alert delivery.
+29. A WhatsApp-style left-side avatar requires Communication Notifications, not a
+    `UNNotificationAttachment`. Put `com.apple.developer.usernotifications.communication` and, for
+    `INSendMessageIntent` donation, `com.apple.developer.siri` on the containing app; add
+    `INSendMessageIntent` to its top-level `NSUserActivityTypes`. Keep those entitlements off the
+    Notification Service Extension unless a profile proves a separate requirement. In the extension,
+    use the local PNG as `INPerson.image`, donate an incoming `INInteraction`, wait for donation success,
+    then call `UNNotificationContent.updating(from:)`. Preserve a bounded ordinary-alert fallback and an
+    exactly-once timeout handler. Apple's public App Store Connect OpenAPI capability enum can enable
+    `SIRIKIT` but currently omits Communication Notifications, so enable that capability in the Developer
+    portal before regenerating profiles. A portal capability change invalidates profiles; if setup reports
+    duplicate default profile names, use a unique `--profile-name` rather than deleting unknown profiles.
+30. Communication notification layouts do not reliably render `UNMutableNotificationContent.subtitle`.
+    Put the intended message line in both `INSendMessageIntent.content` and the mutable notification's
+    `body` before calling `updating(from:)`; an empty mutable body can produce the correct sender avatar
+    and title with no visible detail line even when intent donation succeeds.
+31. If a communication notification shows only the chain and its blockie does not match the active account,
+    the extension has fallen back because its App Group display map lacks the payload's opaque registration
+    ID. Check for `notificationDisplay.json` in the App Group. During format migration, a Keychain identity
+    may already contain the installation ID while older persisted notification state does not. Reconciliation
+    must copy the existing identity's installation ID into state on every success, not only after creating a
+    new backend installation, before deriving and writing registration-ID aliases. Repair and write the local
+    display map during local alias refresh too; do not make notification presentation depend on a successful
+    remote enrollment pass when an existing installation can already receive pushes.
+    Do not cache a temporary-directory fallback during early singleton initialization; that permanently isolates
+    the containing app's map from the extension. For this small Codable map, use the shared App Group
+    `UserDefaults` suite, which is cross-process and avoids file-container URL availability. Refresh the alias
+    explicitly when opening the notification screen, where the active address and account label are definitive.
 
 ## Stack Map
 

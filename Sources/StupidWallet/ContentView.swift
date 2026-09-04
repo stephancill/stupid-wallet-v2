@@ -9,6 +9,7 @@ import SwiftUI
   struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var vm = WalletViewModel()
+    @StateObject private var notifications = NotificationCoordinator.shared
     @State private var showBalanceDetails = false
     @State private var showActivity = false
     @State private var showConnectedApps = false
@@ -88,17 +89,28 @@ import SwiftUI
           Task { await vm.refreshBalance() }
         }
       ) {
-        SettingsView(address: vm.addressHex, accountName: homeAccountName)
-          .id(vm.addressHex.lowercased())
+        SettingsView(
+          address: vm.addressHex,
+          accountName: homeAccountName,
+          notificationCoordinator: notifications
+        )
+        .id(vm.addressHex.lowercased())
       }
       .sheet(isPresented: $showAccountPicker) {
         AccountPickerView(vm: vm)
       }
       .task {
+        await notifications.updateDisplayAlias(address: vm.addressHex, label: homeAccountName)
         await vm.refreshBalance()
       }
       .onChange(of: scenePhase) { _, phase in
-        if phase == .active { Task { await vm.refreshBalance() } }
+        if phase == .active {
+          Task {
+            await notifications.updateDisplayAlias(address: vm.addressHex, label: homeAccountName)
+            await vm.refreshBalance()
+            await notifications.foreground()
+          }
+        }
       }
       .onChange(of: vm.addressHex) { oldAddress, newAddress in
         guard oldAddress.caseInsensitiveCompare(newAddress) != .orderedSame else { return }
@@ -106,6 +118,9 @@ import SwiftUI
         showActivity = false
         showConnectedApps = false
         showSettingsSheet = false
+        Task {
+          await notifications.updateDisplayAlias(address: newAddress, label: homeAccountName)
+        }
       }
     }
 

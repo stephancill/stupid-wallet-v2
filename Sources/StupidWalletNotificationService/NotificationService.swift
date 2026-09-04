@@ -1,13 +1,23 @@
 import Foundation
+@preconcurrency import Intents
+import OSLog
 import StupidWalletCore
-import UserNotifications
+@preconcurrency import UserNotifications
+
+private let notificationLogger = Logger(
+  subsystem: "co.za.stephancill.stupid-wallet.notification-service",
+  category: "delivery")
 
 /// The Notification Service Extension resolves local display state from the opaque,
-/// installation-scoped registration id and renders `<account label> • <chain>` with a
-/// locally generated blockie. It never receives or holds a private key, an installation
-/// key, an APNs token, or any backend credential, and it never reads the wallet registry
-/// beyond non-secret display state.
-public class NotificationService: UNNotificationServiceExtension {
+/// installation-scoped registration id and renders a Communication Notification whose
+/// left-side avatar is a locally generated blockie. It never receives or holds a private
+/// key, an installation key, an APNs token, or any backend credential, and it never reads
+/// the wallet registry beyond non-secret display state.
+public class NotificationService: UNNotificationServiceExtension, @unchecked Sendable {
+  private let deliveryLock = NSLock()
+  private var contentHandler: ((UNNotificationContent) -> Void)?
+  private var bestAttemptContent: UNNotificationContent?
+
   public override init() {
     super.init()
   }
@@ -16,6 +26,7 @@ public class NotificationService: UNNotificationServiceExtension {
     _ request: UNNotificationRequest,
     withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
   ) {
+    notificationLogger.notice("Processing mutable notification")
     let userInfo = request.content.userInfo
 
     // Bounded, type-safe extraction. Anything malformed falls back to the base alert.
@@ -32,26 +43,67 @@ public class NotificationService: UNNotificationServiceExtension {
       contentHandler(request.content)
       return
     }
+    let context = notificationContext(display: display, chainID: chainID)
     mutable.title = eventKind.title
-    mutable.subtitle =
-      display.label.isEmpty
-      ? chainDisplayName(chainID)
-      : "\(display.label) • \(chainDisplayName(chainID))"
+    mutable.body = context
+    mutable.subtitle = ""
+    mutable.attachments = []
 
-    // Locally generated blockie attachment from the address seed.
-    if let png = NotificationBlockie.renderPNG(seed: display.addressSeed, pixelsPerCell: 16),
-      let written = writeToTempFile(png),
-      let attachment = try? UNNotificationAttachment(
-        identifier: "blockie", url: written, options: nil)
-    {
-      mutable.attachments = [attachment]
+    deliveryLock.lock()
+    self.contentHandler = contentHandler
+    bestAttemptContent = mutable
+    deliveryLock.unlock()
+
+    guard
+      let avatarData = NotificationBlockie.renderPNG(
+        seed: display.addressSeed, pixelsPerCell: 16)
+    else {
+      finish(with: mutable)
+      return
     }
 
-    contentHandler(mutable)
+    let handleValue = registrationID.isEmpty ? "wallet-\(chainID)" : registrationID
+    let sender = INPerson(
+      personHandle: INPersonHandle(value: handleValue, type: .unknown),
+      nameComponents: nil,
+      displayName: eventKind.title,
+      image: INImage(imageData: avatarData),
+      contactIdentifier: nil,
+      customIdentifier: handleValue,
+      isMe: false,
+      suggestionType: .none)
+    let intent = INSendMessageIntent(
+      recipients: nil,
+      outgoingMessageType: .outgoingMessageText,
+      content: context,
+      speakableGroupName: nil,
+      conversationIdentifier: "\(handleValue):\(chainID)",
+      serviceName: "stupid wallet",
+      sender: sender,
+      attachments: nil)
+    let interaction = INInteraction(intent: intent, response: nil)
+    interaction.direction = .incoming
+    interaction.donate { [self] error in
+      if error != nil {
+        notificationLogger.error("Communication interaction donation failed")
+        finish(with: mutable)
+        return
+      }
+      do {
+        let updated = try mutable.updating(from: intent)
+        notificationLogger.notice("Returning Communication Notification")
+        finish(with: updated)
+      } catch {
+        notificationLogger.error("Communication notification update failed")
+        finish(with: mutable)
+      }
+    }
   }
 
   public override func serviceExtensionTimeWillExpire() {
-    // iOS displays the generic fallback from the base payload.
+    if let bestAttemptContent {
+      finish(with: bestAttemptContent)
+    }
   }
 
   // MARK: - Parsing
@@ -74,15 +126,20 @@ public class NotificationService: UNNotificationServiceExtension {
     }
   }
 
-  private func writeToTempFile(_ data: Data) -> URL? {
-    let url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("blockie-\(UUID().uuidString).png")
-    do {
-      try data.write(to: url)
-      return url
-    } catch {
-      return nil
-    }
+  private func notificationContext(
+    display: NotificationDisplayResolver.Display, chainID: String
+  ) -> String {
+    let chain = chainDisplayName(chainID)
+    return display.label.isEmpty ? chain : "\(display.label) • \(chain)"
+  }
+
+  private func finish(with content: UNNotificationContent) {
+    deliveryLock.lock()
+    let handler = contentHandler
+    contentHandler = nil
+    bestAttemptContent = nil
+    deliveryLock.unlock()
+    handler?(content)
   }
 }
 
@@ -96,48 +153,13 @@ private struct NotificationDisplayResolver {
     let addressSeed: String
 
     static func resolve(registrationID: String, chainID: String) -> Display {
-      guard !registrationID.isEmpty, let mappingURL = NotificationDisplayState.mappingURL else {
+      guard !registrationID.isEmpty else {
         return Display(label: "", addressSeed: "notification-\(chainID)")
       }
-      let state = NotificationDisplayState.load(from: mappingURL)
-      if let alias = state.alias(for: registrationID) {
+      if let alias = NotificationDisplayStore.read().aliases[registrationID] {
         return Display(label: alias.label, addressSeed: alias.address.lowercased())
       }
       return Display(label: "", addressSeed: "notification-\(chainID)")
     }
-  }
-}
-
-/// Shared non-secret mapping written by the containing app so the extension can resolve
-/// opaque registration ids without holding any wallet authority.
-private enum NotificationDisplayState {
-  struct Alias: Codable {
-    let label: String
-    let address: String
-  }
-
-  struct State: Codable {
-    var aliases: [String: Alias]
-
-    func alias(for registrationID: String) -> Alias? {
-      aliases[registrationID]
-    }
-  }
-
-  static var mappingURL: URL? {
-    guard
-      let container = FileManager.default.containerURL(
-        forSecurityApplicationGroupIdentifier: "group.co.za.stephancill.stupid-wallet")
-    else { return nil }
-    return container.appendingPathComponent("notificationDisplay.json")
-  }
-
-  static func load(from url: URL) -> State {
-    guard let data = try? Data(contentsOf: url),
-      let state = try? JSONDecoder().decode(State.self, from: data)
-    else {
-      return State(aliases: [:])
-    }
-    return state
   }
 }

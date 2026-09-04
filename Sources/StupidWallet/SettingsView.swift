@@ -10,6 +10,7 @@ import SwiftUI
   struct SettingsView: View {
     let address: String
     let accountName: String?
+    @ObservedObject var notificationCoordinator: NotificationCoordinator
 
     var body: some View {
       NavigationView {
@@ -35,6 +36,16 @@ import SwiftUI
           Section {
             NavigationLink(destination: NetworksView()) {
               Text("Networks")
+            }
+            if notificationCoordinator.isAvailable {
+              NavigationLink(
+                destination: NotificationsView(
+                  address: address,
+                  accountName: accountName,
+                  coordinator: notificationCoordinator)
+              ) {
+                Text("Notifications")
+              }
             }
             NavigationLink(destination: AuthorizationsView(address: address)) {
               Text("Authorizations")

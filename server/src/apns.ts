@@ -10,7 +10,7 @@ export type ApnsOutcome =
 export interface ApnsPayload {
   aps: {
     'mutable-content': 1;
-    alert: { title: string };
+    alert: { title: string; body: string };
     'thread-id': string;
   };
   eventId: string;

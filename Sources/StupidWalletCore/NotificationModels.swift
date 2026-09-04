@@ -110,16 +110,20 @@ public struct NotificationRegistrationState: Sendable, Codable, Equatable {
   public var version: Int
   public var installationId: String?
   public var installationPublicKeyHash: String?
-  /// Last observed APNs token hash (keyed aley). Never the token itself.
+  /// Last observed APNs token hash. Never the token itself.
   public var apnsTokenHash: String?
   public var settings: NotificationSettingsObservation?
   public var enrolledAddresses: Set<String>
+  /// Non-secret labels used only to build the local notification display map.
+  public var displayLabelsByAddress: [String: String]
   public var configuredChains: Set<String>
+  public var chainStages: [String: ChainRegistrationStage]
   public var chainInventoryRevision: Int
   public var acknowledgedChainRevision: Int
   public var lastCursorEventID: String?
   public var lastSuccessfulReconciliationUnixMs: Int?
   public var pendingCleanup: Bool
+  public var lastPublicError: String?
 
   public init(
     version: Int = 1,
@@ -128,12 +132,15 @@ public struct NotificationRegistrationState: Sendable, Codable, Equatable {
     apnsTokenHash: String? = nil,
     settings: NotificationSettingsObservation? = nil,
     enrolledAddresses: Set<String> = [],
+    displayLabelsByAddress: [String: String] = [:],
     configuredChains: Set<String> = [],
+    chainStages: [String: ChainRegistrationStage] = [:],
     chainInventoryRevision: Int = 0,
     acknowledgedChainRevision: Int = 0,
     lastCursorEventID: String? = nil,
     lastSuccessfulReconciliationUnixMs: Int? = nil,
-    pendingCleanup: Bool = false
+    pendingCleanup: Bool = false,
+    lastPublicError: String? = nil
   ) {
     self.version = version
     self.installationId = installationId
@@ -141,12 +148,54 @@ public struct NotificationRegistrationState: Sendable, Codable, Equatable {
     self.apnsTokenHash = apnsTokenHash
     self.settings = settings
     self.enrolledAddresses = enrolledAddresses
+    self.displayLabelsByAddress = displayLabelsByAddress
     self.configuredChains = configuredChains
+    self.chainStages = chainStages
     self.chainInventoryRevision = chainInventoryRevision
     self.acknowledgedChainRevision = acknowledgedChainRevision
     self.lastCursorEventID = lastCursorEventID
     self.lastSuccessfulReconciliationUnixMs = lastSuccessfulReconciliationUnixMs
     self.pendingCleanup = pendingCleanup
+    self.lastPublicError = lastPublicError
+  }
+
+  public mutating func synchronizeInstallationMetadata(
+    installationID: String, publicKeyHash: String?
+  ) {
+    installationId = installationID
+    installationPublicKeyHash = publicKeyHash
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case version, installationId, installationPublicKeyHash, apnsTokenHash, settings
+    case enrolledAddresses, displayLabelsByAddress, configuredChains, chainStages,
+      chainInventoryRevision
+    case acknowledgedChainRevision, lastCursorEventID, lastSuccessfulReconciliationUnixMs
+    case pendingCleanup, lastPublicError
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    version = try values.decode(Int.self, forKey: .version)
+    installationId = try values.decodeIfPresent(String.self, forKey: .installationId)
+    installationPublicKeyHash = try values.decodeIfPresent(
+      String.self, forKey: .installationPublicKeyHash)
+    apnsTokenHash = try values.decodeIfPresent(String.self, forKey: .apnsTokenHash)
+    settings = try values.decodeIfPresent(NotificationSettingsObservation.self, forKey: .settings)
+    enrolledAddresses = try values.decode(Set<String>.self, forKey: .enrolledAddresses)
+    displayLabelsByAddress =
+      try values.decodeIfPresent([String: String].self, forKey: .displayLabelsByAddress) ?? [:]
+    configuredChains = try values.decode(Set<String>.self, forKey: .configuredChains)
+    chainStages =
+      try values.decodeIfPresent(
+        [String: ChainRegistrationStage].self, forKey: .chainStages) ?? [:]
+    chainInventoryRevision = try values.decode(Int.self, forKey: .chainInventoryRevision)
+    acknowledgedChainRevision = try values.decode(Int.self, forKey: .acknowledgedChainRevision)
+    lastCursorEventID = try values.decodeIfPresent(String.self, forKey: .lastCursorEventID)
+    lastSuccessfulReconciliationUnixMs = try values.decodeIfPresent(
+      Int.self, forKey: .lastSuccessfulReconciliationUnixMs)
+    pendingCleanup = try values.decode(Bool.self, forKey: .pendingCleanup)
+    lastPublicError = try values.decodeIfPresent(String.self, forKey: .lastPublicError)
   }
 }
 

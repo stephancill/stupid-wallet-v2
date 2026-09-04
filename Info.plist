@@ -16,6 +16,10 @@
     <string>Face ID is used to authorize signing and access protected wallet keys.</string>
     <key>MinimumOSVersion</key>
     <string>17.0</string>
+    <key>NSUserActivityTypes</key>
+    <array>
+        <string>INSendMessageIntent</string>
+    </array>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

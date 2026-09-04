@@ -26,6 +26,7 @@ export type ChallengeCreateBody = z.infer<typeof challengeCreateBodySchema>;
 const installationCreateBodySchema = z.object({
   challengeId: z.string().min(8).max(64),
   publicKey: z.string().min(44).max(180),
+  popupLivenessPublicKey: z.string().min(44).max(180).optional(),
   apnsEnvironment: apnsEnvironment.optional(),
   apnsToken: z.string().min(16).max(512).optional(),
   appVersion: z.string().max(64).optional(),
@@ -81,18 +82,70 @@ export const webhookEventSchema = z.object({
     .regex(/^0x[0-9a-fA-F]{64}$/)
     .optional(),
   transactionFrom: evmAddress.optional(),
-  transactionTo: evmAddress.optional(),
+  transactionTo: evmAddress.nullable().optional(),
   transactionStatus: z.enum(['success', 'reverted']).optional(),
-  transactionNonce: z.number().int().optional(),
+  transactionNonce: z
+    .string()
+    .regex(/^[0-9]+$/)
+    .optional(),
   transactionValue: z
     .string()
     .regex(/^[0-9]+$/)
     .optional(),
   initiatedByTrackedAddress: z.boolean().optional(),
-  effects: z.record(z.string(), z.unknown()).optional(),
+  effects: z.array(z.record(z.string(), z.unknown())).optional(),
   observationId: z.string().min(1).max(160),
 });
 export type WebhookEvent = z.infer<typeof webhookEventSchema>;
+
+const upstreamTransactionSchema = z
+  .object({
+    hash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+    index: z.number().int().min(0),
+    from: evmAddress,
+    to: evmAddress.nullable(),
+    status: z.enum(['success', 'reverted']),
+    nonce: z.string().regex(/^[0-9]+$/),
+    value: z.string().regex(/^[0-9]+$/),
+  })
+  .passthrough();
+
+const upstreamBaseActivityDataSchema = z
+  .object({
+    chainId: z.number().int().positive(),
+    trackedAddress: evmAddress,
+    blockNumber: z.string().regex(/^[0-9]+$/),
+    blockHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+  })
+  .passthrough();
+
+/** Exact outer delivery envelope emitted by Stupid Webhooks. */
+export const upstreamWebhookEnvelopeSchema = z.discriminatedUnion('type', [
+  z.object({
+    id: z.string().min(1).max(160),
+    type: z.literal('activity.observed'),
+    createdAt: z.string().datetime(),
+    data: upstreamBaseActivityDataSchema.extend({
+      initiatedByTrackedAddress: z.boolean(),
+      blockTimestamp: z.string().regex(/^[0-9]+$/),
+      transaction: upstreamTransactionSchema,
+      effects: z.array(z.record(z.string(), z.unknown())),
+    }),
+  }),
+  z.object({
+    id: z.string().min(1).max(160),
+    type: z.literal('activity.reverted'),
+    createdAt: z.string().datetime(),
+    data: upstreamBaseActivityDataSchema,
+  }),
+  z.object({
+    id: z.string().min(1).max(160),
+    type: z.literal('webhook.test'),
+    createdAt: z.string().datetime(),
+    data: z.object({ webhookId: z.string().min(1).max(64) }),
+  }),
+]);
+export type UpstreamWebhookEnvelope = z.infer<typeof upstreamWebhookEnvelopeSchema>;
 
 const renewBodySchema = z.object({
   addresses: z.array(evmAddress).max(25),
@@ -109,4 +162,5 @@ export const schemas = {
   addresses: addressesBodySchema,
   renew: renewBodySchema,
   webhookEvent: webhookEventSchema,
+  upstreamWebhookEnvelope: upstreamWebhookEnvelopeSchema,
 };
