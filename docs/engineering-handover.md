@@ -18,27 +18,46 @@ confirmation stack (a prototype, not yet gate-proven):
 
 - Product: `StupidWallet` (SwiftUI), deployment target iOS 17.0.
 
-## Wallet Backend MVP (Gates 0-3)
+## Push Notifications MVP (Gates 0-4 foundation + provisioning)
 
-The approved notification MVP (`docs/wallet-backend-push-notifications-mvp-plan.md`) now has a
-verifiable backend foundation under `server/` (developer rename of the plan's `WalletBackend/` label).
-It is a TypeScript + Hono + Zod + D1 + Queues + Bun Cloudflare Worker intended to deploy at
-`wallet-api.stupidtech.net`, with strict migration SQL, installation-key authentication and replay
-defense, chain staging at the five-installation gate, reference-counted upstream subscriptions and an
-outbox, signed webhook ingestion with `(webhookId, eventType)` composite deduplication, a durable
-authenticated cursor event feed, and bounded APNs/upstream clients. Hermetic vitest suites run the
-Additive `StupidWalletCore` foundation files now exist (`NotificationModels`, `NotificationSigning`,
-`NotificationRegistrationStore`, `NotificationBlockie`) with a CryptoKit test proving the same P-256
-vector verifies in CryptoKit and in the backend Web Crypto suite, so the shared event kinds and
-canonical `v1` signing contract are frozen across targets. A `StupidWalletNotificationService` appex
-product/extension is scaffolded (bundle id `co.za.stephancill.stupid-wallet.notification-service`)
-with the shared blockie renderer, a `UNNotificationServiceExtension` that resolves
-`<account label> • <chain>` from an App Group display map, App-Group-only entitlements, and
-`aps-environment: development` added to the containing app. The extension is not yet packaged/signed:
-that needs provisioning the notification-service profile and installing the updated `stupid-app` tool.
-`NotificationPolicy` in `StupidWalletCore` now holds the pure desired-enrollment and
-eligibility/cadence rules (authorization, APNs token, liveness ≤14d, settings ≤30d, popup coalescing
-≤24h) the app coordinator will call, covered by deterministic tests.
+The approved notification MVP (`docs/wallet-backend-push-notifications-mvp-plan.md`) is implemented as
+far as the code that is verifiable without a physical device:
+
+- **Backend (`server/`)** — a TypeScript + Hono + Zod + D1 + Queues + Bun Cloudflare Worker intended to
+  deploy at `wallet-api.stupidtech.net`. Covers installation challenge/create, canonical `v1` P-256
+  installation-key signing and replay defense, popup-liveness capability, full chain-inventory
+  snapshots with quotas, chain staging at the five-installation gate, effective address-chain
+  registrations with reference-counted upstream subscriptions and an outbox, signed webhook ingestion
+  with `(webhookId, eventType)` composite deduplication, a durable authenticated cursor event feed,
+  and bounded APNs/upstream clients plus scheduled reconciliation. Hermetic vitest suites run the same
+  schema/SQL on in-memory SQLite.
+- **Swift Core foundation** — `NotificationModels`, `NotificationSigning` (CryptoKit, with a test that
+  proves the shared P-256 vector verifies identically in Web Crypto and CryptoKit), a sensitive
+  `NotificationRegistrationStore` (atomic App Group), the shared `NotificationBlockie` renderer (Core
+  Graphics, deterministic), and `NotificationPolicy` (desired enrollment + eligibility/cadence rules:
+  authorization/APNs eligibility, liveness ≤14-day renewal, settings ≤30-day refresh, popup ≤24-hour
+  coalescing). `StupidWalletCore` compiles and the full `swift test` suite passes (305/34).
+- **Notification Service Extension** — `StupidWalletNotificationService` appex product/extension,
+  bundle id `co.za.stephancill.stupid-wallet.notification-service`, a `UNNotificationServiceExtension`
+  that resolves `<account label> • <chain>` from an App Group display map and renders the local
+  blockie attachment. Holds no wallet/backend credential; entitlements are App-Group-only.
+- **Tooling** — `stupid-app` 0.0.14 adds per-bundle capability derivation (an entitlement is enabled
+  only on the bundle that declares it) and `EntitlementDeriver` reconciling `aps-environment`
+  (`development`/`production`). Release-built and installed; the app's `aps-environment: development`
+  plus the extension are wired into `stupid-app.yml` and `Package.swift`.
+- **Provisioning** — the containing app got Push Notifications + App Groups; distribution (App Store)
+  profiles exist for the app, Safari extension, and notification-service (new App ID registered with
+  App Groups). `stupid-app doctor` passes 0/0.
+
+### Remaining before physical acceptance
+
+- Associate the App Group identifier for the new notification-service App ID (a one-click portal step;
+  signing fails loud if missing).
+- Provision development profiles and register a physical test device, then `stupid-app build` and
+  `run --simulator`/`--usb` to prove sandbox then production APNs enrollment and the on-device
+  blockie + `<account label> • <chain>` rendering.
+- Wire the SwiftUI app surface: `NotificationCoordinator` + `NotificationsView` (APNs registration,
+  settings read, `NotificationPolicy` triggers) and the `observed_activity`/cursor store.
 
 Multiple wallet groups and accounts are approved next-scope, and Gates A through H are complete. Gate
 I is implemented hermetically and on the simulator: wallet-group/account labels are editable (with
