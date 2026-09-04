@@ -17,6 +17,10 @@ let package = Package(
             name: "StupidWalletSafari",
             targets: ["StupidWalletSafari"],
         ),
+        .library(
+            name: "StupidWalletNotificationService",
+            targets: ["StupidWalletNotificationService"],
+        ),
     ],
     targets: [
         .target(
@@ -39,6 +43,10 @@ let package = Package(
         ),
         .target(
             name: "StupidWalletSafari",
+            dependencies: ["StupidWalletCore"]
+        ),
+        .target(
+            name: "StupidWalletNotificationService",
             dependencies: ["StupidWalletCore"]
         ),
         .testTarget(

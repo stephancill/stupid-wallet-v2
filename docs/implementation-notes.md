@@ -50,6 +50,37 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-04 - Notification Service Extension Scaffolded
+
+### Summary
+
+- Added the `StupidWalletNotificationService` appex product and target (bundle id
+  `co.za.stephancill.stupid-wallet.notification-service` as a compatibility prefix of the containing
+  app) with a `UNNotificationServiceExtension` that resolves the opaque `addressRegistrationId` from
+  shared non-secret App Group display state, renders the deterministic account blockie locally, and
+  produces `<account label> • <chain>` from the bounded event kind. It holds no wallet or backend
+  credential.
+- Added a shared `NotificationBlockie` renderer in `StupidWalletCore` (Core Graphics, platform-neutral)
+  used by both the app and the extension, with a deterministic-PNG regression test.
+- Added `NotificationServiceExtension/Info.plist` (point identifier `...serviceextension`) and
+  `NotificationService.entitlements` (App Group only; no push or keychain sharing).
+- Configured the extension in `stupid-app.yml` and added `aps-environment: development` to
+  `App.entitlements` (the containing app gets Push; the Safari and notification-service extensions do
+  not).
+
+### Why
+
+- This is the Gate 4 notification-rendering target that turns the bounded APNs payload into the local
+  title, blockie attachment, and subtitle without ever putting a label or full address on the payload.
+
+### Verification
+
+- `swift build --target StupidWalletNotificationService` builds on the current host.
+- `swift test` passes: 305 tests / 34 suites, 0 failures (blockie determinism covered).
+- `plutil -lint` on the new Info.plist and both entitlements passes.
+- The extension is not yet packaged/signed by `stupid-app`: that still requires installing the updated
+  tool and provisioning the notification-service profile (Gate 1).
+
 ## 2026-09-04 - Swift Notification Core Scaffolding (Gate 4 Foundation)
 
 ### Summary

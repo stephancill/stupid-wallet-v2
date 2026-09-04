@@ -26,3 +26,7 @@ extensions:
       - SafariExtension/Resources/toolbar-icon-19.png
       - SafariExtension/Resources/toolbar-icon-32.png
       - SafariExtension/Resources/toolbar-icon-38.png
+  - product: StupidWalletNotificationService
+    bundleID: co.za.stephancill.stupid-wallet.notification-service
+    infoPath: NotificationServiceExtension/Info.plist
+    entitlementsPath: NotificationServiceExtension/NotificationService.entitlements
