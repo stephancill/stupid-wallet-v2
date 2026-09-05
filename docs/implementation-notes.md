@@ -6583,3 +6583,8 @@ physical profiles and mixed-process acceptance remain open.
 Live Chrome acceptance of the installed distribution artifact also passed an authenticated local
 message signature independently recovered to the connected wallet. The existing profile remained
 paired across the Apple Development → Developer ID helper replacement. No transfer was requested.
+
+Published GitHub prerelease `chrome-v0.0.6-beta.1` from source commit `278c9bf` on
+`codex/chrome-beta-release`, with the two ZIPs, installation guide and SHA256SUMS. Verified all four
+uploaded asset sizes and GitHub SHA-256 digests against the local tested files. Release:
+https://github.com/stephancill/stupid-wallet-v2/releases/tag/chrome-v0.0.6-beta.1.
