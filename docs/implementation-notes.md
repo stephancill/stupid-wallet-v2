@@ -6670,3 +6670,29 @@ the local fixture. Live popup verification now shows the connected account and D
 the grouped picker opens with the current account marked and closes successfully. Existing pairing
 and connection were retained. No account was switched or disconnected during this check; live
 mutation acceptance remains pending. No GitHub release was published.
+
+## 2026-09-05 — Chrome 0.0.7 release and TestFlight build 101
+
+Committed the idle account controls as `c499181` and pushed main. Published GitHub prerelease
+`chrome-v0.0.7-beta.1` from that commit with extension 0.0.7, notarized helper 0.0.5,
+RELEASE-INSTALL.md and SHA256SUMS. All four GitHub asset SHA-256 digests match local files.
+GitHub rejected the abbreviated target SHA; retrying with the full pushed SHA succeeded.
+Release notes disclose that live account-switch/disconnect mutation acceptance remains pending.
+
+`stupid-app release new-build` selected 101; `stupid-app release bump --build-number 101`
+synchronized both bundles. Preflight reported READY and doctor reported zero warnings/failures.
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer stupid-app release archive --output
+.release/testflight-101` passed native signature verification. IPA SHA-256:
+`6aaa6ff20facf03ae5aba1c0c36e92ced6a95eb3a0cb0cc6ecaa636ffe09294f`.
+Both packaged bundles contain version 1.0.0 (101), DTXcode 2660, DTXcodeBuild 17F113,
+and DTPlatformBuild/DTSDKBuild 23F81a. Preferred simulator reinstall/launch passed.
+The implementation previously passed 320 Swift and 38 JavaScript tests. Upload to Apple is
+in progress; external availability will be recorded after live status verification.
+
+`stupid-app release upload --output .release/testflight-101 --ipa
+.release/testflight-101/StupidWallet.ipa --wait` completed with processing VALID and internal
+IN_BETA_TESTING. `stupid-app release external-beta --output .release/testflight-101 --group-name
+External --whats-new <public-test-note> --no-wait` added the build to the existing group, saved
+account-control test notes and submitted review. `stupid-app release status --live --output
+.release/testflight-101` then verified external IN_BETA_TESTING. Build 101 is available to external
+testers. No stupid-app source or wallet storage identities changed.

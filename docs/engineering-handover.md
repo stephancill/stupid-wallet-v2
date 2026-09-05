@@ -84,6 +84,10 @@ default policy. Current source versions are Safari manifest 0.1.55, Chrome 0.0.7
 Helper 0.0.5 has passed Apple notarization, stapling and Gatekeeper verification and is installed
 locally. Chrome 0.0.7 live acceptance confirms the idle connected-account bar and grouped picker,
 with existing pairing retained. Live switch/disconnect mutation acceptance remains pending.
+GitHub prerelease `chrome-v0.0.7-beta.1` publishes these artifacts from `c499181`; all four
+uploaded asset digests match local files. Both Apple bundles are now version 1.0.0 (101).
+Build 101 is uploaded and live App Store Connect status confirms external IN_BETA_TESTING
+in the existing External group.
 
 Protocol version 3 requires one-time Chrome-profile pairing before native approval. The extension
 stores a non-exportable P-256 signing CryptoKey in its origin-owned IndexedDB; the helper stores only
