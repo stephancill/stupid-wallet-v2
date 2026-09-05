@@ -31,6 +31,27 @@ struct ChromeNativeProtocolTests {
     }
   }
 
+  @Test func connectionManagementEnvelopes() throws {
+    var session = ChromeNativeSession()
+    _ = try session.accept(hello)
+    _ = try session.accept(
+      frame(.object(["action": .string("siteAccounts"), "origin": .string("https://example.com")])))
+    let message: JSONValue = .object([
+      "action": .string("disconnectReviewed"),
+      "origin": .string("https://example.com"),
+      "payload": .object(["account": .string("0x" + String(repeating: "1", count: 40))]),
+    ])
+    _ = try session.accept(frame(message))
+    #expect(throws: ChromeNativeSession.Failure.self) {
+      try session.accept(
+        frame(
+          .object([
+            "action": .string("disconnectReviewed"), "origin": .string("https://example.com"),
+            "payload": .object(["account": .string("wrong"), "profile": .string("other")]),
+          ])))
+    }
+  }
+
   @Test func rejectsVersionAndUnknownAuthority() throws {
     var session = ChromeNativeSession()
     #expect(throws: ChromeNativeSession.Failure.self) {

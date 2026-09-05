@@ -66,6 +66,25 @@ Chrome artifact 0.0.6 omits the Safari in-page pending banner while preserving d
 completion. Safari retains its existing notice. Background tabs and duplicate route registration do not reopen the popup. Physical Chrome acceptance
 confirmed automatic message review opening without a toolbar click, followed by rejection.
 
+The shared idle popup now has a fixed account bar for the active HTTP(S) page. It shows the
+connected account's label/blockie, offers the grouped picker to connect or switch, and provides
+Disconnect for the displayed account. Disconnected pages show Not connected with the same picker.
+The worker validates the extension-owned popup sender, captures the active tab and a per-document
+isolated-bridge token, and refuses stale/reloaded/navigated contexts. Chrome additionally binds its
+trusted documentId. Unsupported pages show an actionable unavailable state rather than another
+page's account. Account selection creates/rebinds a native canonical connect request, verifies its
+kind/account/origin against the displayed choice, then approves through the existing paired proof
+path. Failed/queued switches reject their own prepared request; existing requests retain queue order.
+No signature or authentication is involved in an ordinary connect. Disconnect atomically checks the
+reviewed account and revokes its grant without selecting another retained grant. Both actions emit
+origin-scoped account-refresh notifications; the page resolves its native profile-bound snapshot.
+The app's home account is unchanged; successful connect selection retains the existing connection-
+default policy. Current source versions are Safari manifest 0.1.55, Chrome 0.0.7 and helper 0.0.5
+(protocol 3). Chrome 0.0.7 requires helper 0.0.5 for these added account-management APIs.
+Helper 0.0.5 has passed Apple notarization, stapling and Gatekeeper verification and is installed
+locally. Chrome 0.0.7 live acceptance confirms the idle connected-account bar and grouped picker,
+with existing pairing retained. Live switch/disconnect mutation acceptance remains pending.
+
 Protocol version 3 requires one-time Chrome-profile pairing before native approval. The extension
 stores a non-exportable P-256 signing CryptoKey in its origin-owned IndexedDB; the helper stores only
 the paired public key in an entitled data-protection keychain item. These credentials are distinct

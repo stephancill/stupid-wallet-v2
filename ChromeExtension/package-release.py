@@ -56,7 +56,7 @@ def main():
     (contents / 'Info.plist').write_bytes(plistlib.dumps(dict(
         CFBundleIdentifier=BUNDLE, CFBundleExecutable='StupidWalletChromeHost',
         CFBundlePackageType='APPL', CFBundleName='Stupid Wallet Chrome Helper',
-        CFBundleVersion='4', CFBundleShortVersionString='0.0.4', LSUIElement=True,
+        CFBundleVersion='5', CFBundleShortVersionString='0.0.5', LSUIElement=True,
         LSMinimumSystemVersion='14.0', NSFaceIDUsageDescription='Authenticate a reviewed wallet request.')))
     licenses = contents / 'Resources/Licenses'
     licenses.mkdir(parents=True)

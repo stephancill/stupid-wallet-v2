@@ -170,6 +170,32 @@ public actor ConnectedSitesStore {
     }
   }
 
+  /// Popup revocation is conditional on the exact account the user reviewed. The check and
+  /// removal share the connection lock, so a concurrent account switch cannot revoke another grant.
+  public func disconnectReviewed(account: String, origin: String, profileID: String?) throws {
+    let normalized = Origin.normalize(origin)
+    let domain = Origin.downHost(of: origin)
+    try mutate { state in
+      let exact = state.activeConnections.first {
+        $0.origin == normalized && $0.profileID == profileID
+      }
+      let legacy =
+        profileID?.hasPrefix("chrome:") != true
+          && !state.grants.contains { $0.precision == .exact && $0.legacyDomain == domain }
+        ? state.grants.first { $0.precision == .hostname && $0.legacyDomain == domain }?.account
+        : nil
+      guard (exact?.account ?? legacy)?.caseInsensitiveCompare(account) == .orderedSame else {
+        throw WalletError.bindingMismatch
+      }
+      state.grants.removeAll {
+        $0.account.caseInsensitiveCompare(account) == .orderedSame
+          && (($0.precision == .exact && $0.origin == normalized && $0.profileID == profileID)
+            || ($0.precision == .hostname && $0.legacyDomain == domain))
+      }
+      state.activeConnections.removeAll { $0.origin == normalized && $0.profileID == profileID }
+    }
+  }
+
   /// Removes the exact or hostname grant represented by a connected-app row.
   public func disconnect(site: ConnectedSite) throws {
     if let origin = site.origin {
@@ -241,7 +267,13 @@ public actor ConnectedSitesStore {
       try registryStore.withLockedReady { registry in
         _ = try connectionStore.mutate { state in
           try transform(&state)
-          try state.validate(against: registry)
+          // ConnectionStateStore commits the next revision after this transform. Validate
+          // that prospective state so the preceding connect marker remains historical.
+          try ConnectionState(
+            revision: state.revision + 1, defaultAccount: state.defaultAccount,
+            grants: state.grants, activeConnections: state.activeConnections,
+            connectCommits: state.connectCommits
+          ).validate(against: registry)
         }
       }
     } else {

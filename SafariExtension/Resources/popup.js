@@ -79,6 +79,7 @@
       detail.textContent = "Open an app to connect, sign, or send.";
       standby.append(title, detail);
       tray.appendChild(standby);
+      void renderConnectionBar(standby);
       return;
     }
 
@@ -89,6 +90,62 @@
       note.textContent = "Requests are handled one at a time in order.";
       tray.appendChild(note);
     }
+  }
+
+  async function connectionMessage(type, payload = {}) {
+    try {
+      return await browser.runtime.sendMessage({ type: `popup.${type}`, ...payload });
+    } catch (error) {
+      return { ok: false, error: error.message || "Connection controls unavailable" };
+    }
+  }
+
+  async function renderConnectionBar(standby) {
+    const reply = await connectionMessage("siteAccounts");
+    if (!standby.isConnected) return;
+    const data = reply?.data;
+    const actions = document.createElement("div");
+    actions.className = "actions idle-actions";
+    if (!reply?.ok || !data || !Array.isArray(data.groups)) {
+      const unavailable = document.createElement("span");
+      unavailable.className = "muted";
+      unavailable.textContent = errorMessage(reply);
+      actions.appendChild(unavailable);
+      tray.appendChild(actions);
+      return;
+    }
+    standby.querySelector("p").textContent = hostFor(data.origin);
+    const selected = data.groups
+      .flatMap((group) => group.accounts || [])
+      .find((item) => item.address.toLowerCase() === data.account?.toLowerCase());
+    const account = document.createElement("button");
+    account.type = "button";
+    account.className = "account account-select";
+    account.setAttribute(
+      "aria-label",
+      data.account ? "Switch connected account" : "Connect account",
+    );
+    if (data.account) account.appendChild(addressView(data.account, selected?.label));
+    else account.textContent = "Not connected";
+    account.disabled = data.groups.length === 0;
+    account.addEventListener("click", () => openAccountPicker({ data, actions, site: true }));
+    actions.appendChild(account);
+    if (data.account) {
+      const disconnect = document.createElement("button");
+      disconnect.className = "reject";
+      disconnect.textContent = "Disconnect";
+      disconnect.addEventListener("click", async () => {
+        setActionsDisabled(actions, true);
+        const result = await connectionMessage("disconnectAccount", {
+          contextId: data.contextId,
+          account: data.account,
+        });
+        await refresh();
+        if (!result?.ok) showError(result);
+      });
+      actions.appendChild(disconnect);
+    }
+    tray.appendChild(actions);
   }
 
   function requestView(item) {
@@ -439,9 +496,11 @@
     return actions;
   }
 
-  async function openAccountPicker({ requestId, data, actions }) {
+  async function openAccountPicker({ requestId, data, actions, site = false }) {
     setActionsDisabled(actions, true);
-    const reply = await native("connectAccounts", { requestId, revision: data.revision });
+    const reply = site
+      ? { ok: true, data }
+      : await native("connectAccounts", { requestId, revision: data.revision });
     if (!reply || reply.ok === false || reply.error) {
       showError(reply);
       setActionsDisabled(actions, false);
@@ -461,7 +520,7 @@
     const heading = document.createElement("div");
     heading.className = "account-picker-heading";
     const title = document.createElement("strong");
-    title.textContent = "Choose account";
+    title.textContent = site ? "Connect account to " + hostFor(data.origin) : "Choose account";
     const close = document.createElement("button");
     close.type = "button";
     close.className = "picker-close";
@@ -511,15 +570,20 @@
         option.append(identity, checkmark);
         option.addEventListener("click", async () => {
           for (const button of picker.querySelectorAll("button")) button.disabled = true;
-          const rebound = await native("rebindConnect", {
-            requestId,
-            revision: data.revision,
-            account: item.address,
-          });
+          const rebound = site
+            ? await connectionMessage("switchAccount", {
+                contextId: data.contextId,
+                account: item.address,
+              })
+            : await native("rebindConnect", {
+                requestId,
+                revision: data.revision,
+                account: item.address,
+              });
           if (!rebound || rebound.ok === false || rebound.error) {
             picker.remove();
-            showError(rebound);
             await refresh();
+            showError(rebound);
             return;
           }
           picker.remove();

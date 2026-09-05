@@ -22,6 +22,14 @@ import {
   };
   const popupSchema = z.discriminatedUnion("type", [
     z.strictObject({ type: z.literal("popup.list") }),
+    z.strictObject({ type: z.literal("popup.siteAccounts") }),
+    ...["popup.switchAccount", "popup.disconnectAccount"].map((type) =>
+      z.strictObject({
+        type: z.literal(type),
+        contextId: z.uuid(),
+        account: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+      }),
+    ),
     z.strictObject({
       type: z.literal("popup.approve"),
       ...decision,
@@ -316,7 +324,13 @@ import {
         throw new Error("The requesting tab origin changed.");
       }
     },
-    async remember(requestId, sender) {
+    async pageSender(tab) {
+      const frame = await api.webNavigation.getFrame({ tabId: tab.id, frameId: 0 });
+      if (!frame?.documentId || new URL(frame.url).origin !== new URL(tab.url).origin)
+        throw new Error("The page changed.");
+      return { tab, origin: new URL(frame.url).origin, documentId: frame.documentId };
+    },
+    async remember(requestId, sender, { open = true } = {}) {
       const existing = (await api.storage.local.get(`route:${requestId}`))[`route:${requestId}`];
       await api.storage.local.set({
         [`route:${requestId}`]: {
@@ -326,7 +340,7 @@ import {
           profileId: await profileID(),
         },
       });
-      if (!existing) await this.openReview({ requestId, tabId: sender.tab.id });
+      if (!existing && open) await this.openReview({ requestId, tabId: sender.tab.id });
     },
     async openReview({ requestId, tabId }) {
       if (!api.action?.openPopup) return;

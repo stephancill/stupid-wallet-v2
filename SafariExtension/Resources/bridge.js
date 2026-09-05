@@ -8,7 +8,15 @@
   const DST_CHANNEL = "__stupid-wallet:response";
   const EVENT_CHANNEL = "__stupid-wallet:event";
 
-  browser.runtime.onMessage.addListener((message) => {
+  let documentToken;
+  browser.runtime.onMessage.addListener((message, _sender, respond) => {
+    if (message?.type === "wallet.documentContext") {
+      documentToken ??= Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
+      respond({ token: documentToken });
+      return;
+    }
     if (message?.type === "wallet.chainChanged" && typeof message.chainIdHex === "string") {
       postChainChanged(message.chainIdHex);
     } else if (message?.type === "wallet.refreshAccounts") {

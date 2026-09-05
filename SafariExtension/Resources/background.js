@@ -125,6 +125,139 @@
     if (chain) publishChain(chain);
   }
 
+  let popupContext;
+  function requirePopup(sender) {
+    if (sender?.url !== browser.runtime.getURL("popup.html") || sender.tab || sender.incognito) {
+      throw new Error("Connection controls are only available in the wallet popup.");
+    }
+  }
+  async function pageSnapshot() {
+    const tabs = await new Promise((resolve) =>
+      browser.tabs.query({ active: true, currentWindow: true }, resolve),
+    );
+    const tab = tabs?.[0];
+    const origin = tabOrigin(tab);
+    if (!Number.isInteger(tab?.id) || tab.incognito || !origin || !/^https?:\/\//.test(origin)) {
+      throw new Error("Open a web page to manage its wallet connection.");
+    }
+    const document = await browser.tabs.sendMessage(
+      tab.id,
+      { type: "wallet.documentContext" },
+      { frameId: 0 },
+    );
+    if (!/^[0-9a-f]{32}$/.test(document?.token))
+      throw new Error("Reload this page to manage its wallet connection.");
+    const chromeSender = globalThis.walletChromeContext
+      ? await globalThis.walletChromeContext.pageSender(tab)
+      : null;
+    return { tabId: tab.id, origin, documentToken: document.token, chromeSender };
+  }
+  async function reviewedPage(contextId) {
+    const expected = popupContext;
+    if (!expected || expected.contextId !== contextId)
+      throw new Error("Reopen the wallet popup to refresh this page.");
+    const current = await pageSnapshot();
+    if (
+      current.tabId !== expected.tabId ||
+      current.origin !== expected.origin ||
+      current.documentToken !== expected.documentToken ||
+      current.chromeSender?.documentId !== expected.chromeSender?.documentId
+    ) {
+      throw new Error("The page changed. Reopen the wallet popup.");
+    }
+    return expected;
+  }
+  function requireNative(reply) {
+    if (!reply?.ok || !reply.data)
+      throw new Error(reply?.error?.message || reply?.error || "Wallet request failed");
+    return reply.data;
+  }
+  async function manageConnection(message, sender) {
+    requirePopup(sender);
+    if (message.type === "popup.siteAccounts") {
+      const page = await pageSnapshot();
+      const contextId = crypto.randomUUID();
+      popupContext = { ...page, contextId };
+      const state = requireNative(await native({ action: "siteAccounts", origin: page.origin }));
+      await reviewedPage(contextId);
+      return { ok: true, data: { ...state, origin: page.origin, contextId } };
+    }
+    if (typeof message.account !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(message.account)) {
+      throw new Error("Choose a valid wallet account.");
+    }
+    const page = await reviewedPage(message.contextId);
+    if (message.type === "popup.disconnectAccount") {
+      requireNative(
+        await native({
+          action: "disconnectReviewed",
+          origin: page.origin,
+          payload: { account: message.account },
+        }),
+      );
+      publishAccountRefresh(page.origin);
+      return { ok: true };
+    }
+    // The chosen account and displayed page are the popup's connection approval. Native
+    // still prepares/rebinds a canonical request and verifies the paired Chrome proof.
+    let summary;
+    let requestId;
+    let completed = false;
+    try {
+      const prepared = requireNative(
+        await native({
+          action: "prepare",
+          method: "eth_requestAccounts",
+          params: [],
+          origin: page.origin,
+        }),
+      );
+      requestId = prepared.requestId;
+      summary = requireNative(await native({ action: "summary", payload: { requestId } }));
+      if (!summary || summary.queued)
+        throw new Error("Handle the pending request before switching accounts.");
+      const rebound = requireNative(
+        await native({
+          action: "rebindConnect",
+          payload: { requestId, revision: summary.revision, account: message.account },
+        }),
+      );
+      summary = rebound.summary;
+      if (
+        !summary ||
+        summary.kind !== "connect" ||
+        summary.origin !== page.origin ||
+        summary.account.toLowerCase() !== message.account.toLowerCase()
+      )
+        throw new Error("Connection review changed.");
+      await reviewedPage(message.contextId);
+      if (globalThis.walletChromeContext)
+        await globalThis.walletChromeContext.remember(requestId, page.chromeSender, {
+          open: false,
+        });
+      requireNative(
+        await native({
+          action: "approve",
+          payload: {
+            requestId,
+            revision: summary.revision,
+            bindingDigest: summary.bindingDigest,
+          },
+        }),
+      );
+      completed = true;
+      publishAccountRefresh(page.origin);
+      return { ok: true };
+    } finally {
+      if (requestId && !completed) {
+        if (!summary) summary = (await native({ action: "summary", payload: { requestId } }))?.data;
+        if (summary)
+          await native({ action: "reject", payload: { requestId, revision: summary.revision } });
+      }
+      if (requestId && globalThis.walletChromeContext)
+        await globalThis.walletChromeContext.forget(requestId);
+    }
+  }
+
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handle(message, sender, sendResponse);
     return true; // keep the channel open; we respond asynchronously
@@ -134,6 +267,14 @@
     try {
       if (globalThis.walletChromeContext)
         await globalThis.walletChromeContext.validate(message, sender);
+      if (
+        ["popup.siteAccounts", "popup.switchAccount", "popup.disconnectAccount"].includes(
+          message?.type,
+        )
+      ) {
+        sendResponse(await manageConnection(message, sender));
+        return;
+      }
       switch (message.type) {
         case "ethereum.request":
           return await route(message, sender, sendResponse);

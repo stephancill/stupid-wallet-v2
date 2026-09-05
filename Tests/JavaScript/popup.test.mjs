@@ -124,8 +124,9 @@ test("popup falls back to background messaging when direct native transport is u
   vm.runInNewContext(popupSource, { browser, document, Promise, URL, window: {} });
   await rendered;
 
-  assert.equal(backgroundMessages.length, 1);
+  assert.equal(backgroundMessages.length, 2);
   assert.equal(backgroundMessages[0].type, "popup.list");
+  assert.equal(backgroundMessages[1].type, "popup.siteAccounts");
 });
 
 test("popup renders addresses, collapses queued requests, and expands raw calldata", async () => {
@@ -445,6 +446,10 @@ class TestElement {
     this.onAppend = onAppend;
   }
 
+  get isConnected() {
+    return !!this.parentNode;
+  }
+
   get textContent() {
     return this._textContent || this.children.map((child) => child.textContent || "").join("");
   }
@@ -577,4 +582,57 @@ test("Chrome popup uses only the worker and displays an unavailable helper inste
   assert.equal(messages[0].type, "popup.list");
   assert.equal(nodes[0].textContent, "Wallet helper unavailable");
   assert.match(nodes[1].textContent, /Install or repair/);
+});
+
+test("idle popup shows the site account, switches it and retains a disconnect control", async () => {
+  const first = "0x" + "1".repeat(40),
+    second = "0x" + "2".repeat(40);
+  let account = first;
+  const calls = [];
+  const tray = new TestElement("div");
+  const document = { getElementById: () => tray, createElement: (tag) => new TestElement(tag) };
+  const browser = {
+    runtime: {
+      sendNativeMessage(_app, _message, callback) {
+        callback({ ok: true, data: { pending: [] } });
+      },
+      async sendMessage(message) {
+        calls.push(message);
+        if (message.type === "popup.siteAccounts")
+          return {
+            ok: true,
+            data: {
+              account,
+              origin: "https://dapp.example",
+              contextId: "context",
+              groups: [
+                {
+                  label: "Wallet",
+                  accounts: [
+                    { address: first, label: "First" },
+                    { address: second, label: "Second" },
+                  ],
+                },
+              ],
+            },
+          };
+        if (message.type === "popup.switchAccount") account = message.account;
+        if (message.type === "popup.disconnectAccount") account = null;
+        return { ok: true };
+      },
+    },
+  };
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  vm.runInNewContext(popupSource, { browser, document, Promise, URL, window: {} });
+  await settle();
+  assert.equal(tray.querySelector(".account-label").textContent, "First");
+  tray.querySelector(".account-select").click();
+  await settle();
+  tray.querySelectorAll(".account-option")[1].click();
+  await settle();
+  assert.equal(tray.querySelector(".account-label").textContent, "Second");
+  tray.querySelector(".reject").click();
+  await settle();
+  assert.equal(tray.querySelector(".account-select").textContent, "Not connected");
+  assert.equal(calls.find((call) => call.type === "popup.disconnectAccount").account, second);
 });

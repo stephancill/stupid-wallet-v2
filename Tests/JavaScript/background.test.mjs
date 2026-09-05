@@ -505,3 +505,152 @@ test("EIP-5792 methods use native-authoritative routes and preserve method spell
     [],
   );
 });
+
+function connectionHarness() {
+  let listener;
+  const calls = [],
+    events = [];
+  let documentToken = "a".repeat(32),
+    account = "0x" + "1".repeat(40),
+    queued = false;
+  let summary;
+  const browser = {
+    runtime: {
+      getURL: (path) => `safari-web-extension://wallet/${path}`,
+      onMessage: {
+        addListener(fn) {
+          listener = fn;
+        },
+      },
+      sendNativeMessage(_app, message, callback) {
+        calls.push(message);
+        let data = {};
+        if (message.action === "siteAccounts") data = { account, groups: [] };
+        if (message.action === "prepare") {
+          summary = {
+            id: "request-1",
+            revision: 0,
+            bindingDigest: "digest",
+            kind: "connect",
+            origin: message.origin,
+            account,
+            queued,
+          };
+          data = { requestId: summary.id };
+        }
+        if (message.action === "summary") data = summary;
+        if (message.action === "rebindConnect") {
+          summary = { ...summary, revision: 1, account: message.payload.account };
+          data = { summary };
+        }
+        if (message.action === "approve") {
+          account = summary.account;
+          data = { result: [account] };
+        }
+        if (message.action === "disconnectReviewed") account = null;
+        callback({ ok: true, data });
+      },
+    },
+    tabs: {
+      query(query, callback) {
+        callback([
+          { id: 1, url: "https://dapp.example/page" },
+          ...(!query.active ? [{ id: 2, url: "https://other.example" }] : []),
+        ]);
+      },
+      async sendMessage(id, message) {
+        if (message.type === "wallet.documentContext") return { token: documentToken };
+        events.push({ id, message });
+      },
+    },
+  };
+  vm.runInNewContext(backgroundSource, {
+    browser,
+    crypto: { randomUUID: () => "context" },
+    Promise,
+    URL,
+  });
+  return {
+    calls,
+    events,
+    navigate() {
+      documentToken = "b".repeat(32);
+    },
+    queue() {
+      queued = true;
+    },
+    send(message, sender = { url: browser.runtime.getURL("popup.html") }) {
+      return new Promise((resolve) => listener(message, sender, resolve));
+    },
+  };
+}
+
+test("idle connection switching uses canonical native approval and refreshes only the site", async () => {
+  const h = connectionHarness();
+  const state = await h.send({ type: "popup.siteAccounts" });
+  assert.equal(state.data.origin, "https://dapp.example");
+  const result = await h.send({
+    type: "popup.switchAccount",
+    contextId: state.data.contextId,
+    account: "0x" + "2".repeat(40),
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    h.calls.map((call) => call.action),
+    ["siteAccounts", "prepare", "summary", "rebindConnect", "approve"],
+  );
+  assert.equal(h.calls.at(-1).payload.bindingDigest, "digest");
+  assert.equal(h.events.length, 1);
+  assert.equal(h.events[0].id, 1);
+});
+
+test("idle controls reject page senders, same-origin navigation and stale popup contexts", async () => {
+  const h = connectionHarness();
+  assert.ok(
+    (await h.send({ type: "popup.siteAccounts" }, { url: "https://dapp.example", tab: { id: 1 } }))
+      .error,
+  );
+  const state = await h.send({ type: "popup.siteAccounts" });
+  h.navigate();
+  assert.ok(
+    (
+      await h.send({
+        type: "popup.disconnectAccount",
+        contextId: state.data.contextId,
+        account: "0x" + "1".repeat(40),
+      })
+    ).error,
+  );
+  assert.deepEqual(
+    h.calls.map((call) => call.action),
+    ["siteAccounts"],
+  );
+});
+
+test("idle disconnect binds the displayed account and queued switches clean up their own request", async () => {
+  const h = connectionHarness();
+  const state = await h.send({ type: "popup.siteAccounts" });
+  assert.equal(
+    (
+      await h.send({
+        type: "popup.disconnectAccount",
+        contextId: state.data.contextId,
+        account: state.data.account,
+      })
+    ).ok,
+    true,
+  );
+  assert.equal(h.calls.at(-1).payload.account, state.data.account);
+  h.queue();
+  assert.ok(
+    (
+      await h.send({
+        type: "popup.switchAccount",
+        contextId: state.data.contextId,
+        account: "0x" + "2".repeat(40),
+      })
+    ).error,
+  );
+  assert.equal(h.calls.at(-1).action, "reject");
+  assert.equal(h.calls.filter((call) => call.action === "approve").length, 0);
+});

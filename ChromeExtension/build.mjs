@@ -13,7 +13,7 @@ await mkdir(output, { recursive: true });
 const source = resolve(root, "SafariExtension/Resources");
 const manifest = JSON.parse(await readFile(resolve(source, "manifest.json"), "utf8"));
 manifest.name = "stupid wallet";
-manifest.version = "0.0.6";
+manifest.version = "0.0.7";
 manifest.permissions = [...new Set([...manifest.permissions, "webNavigation"])];
 manifest.minimum_chrome_version = "111";
 manifest.incognito = "not_allowed";

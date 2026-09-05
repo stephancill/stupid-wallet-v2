@@ -388,6 +388,12 @@ public actor WalletService {
       account: account, origin: origin, profileID: profileID)
   }
 
+  public func disconnectReviewed(account: String, origin: String, profileID: String?) async throws {
+    try ensureRegistryReady()
+    try await connectedSites.disconnectReviewed(
+      account: account, origin: origin, profileID: profileID)
+  }
+
   public nonisolated var account: String { signing.account }
 
   /// Fail-closed adoption barrier. When a registry authority is supplied, request

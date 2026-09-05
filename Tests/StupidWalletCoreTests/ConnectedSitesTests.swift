@@ -51,6 +51,81 @@ struct ConnectedSitesTests {
         origin: "https://dapp.example", address: second, profileID: "profile-a"))
   }
 
+  @Test("reviewed disconnect rejects stale account and preserves other profiles and grants")
+  func reviewedDisconnect() async throws {
+    let store = ConnectedSitesStore(suiteName: "reviewed-\(UUID().uuidString)")
+    let first = try address(secret: 1)
+    let second = try address(secret: 2)
+    for (account, profile) in [(first, "one"), (second, "one"), (second, "two")] {
+      try await store.connect(
+        site: ConnectedSite(
+          domain: "dapp.example", address: account,
+          origin: "https://dapp.example", profileID: profile))
+    }
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await store.disconnectReviewed(
+        account: first, origin: "https://dapp.example", profileID: "one")
+    }
+    #expect(
+      try await store.visibleAccount(origin: "https://dapp.example", profileID: "one") == second)
+    try await store.disconnectReviewed(
+      account: second, origin: "https://dapp.example", profileID: "one")
+    #expect(try await store.visibleAccount(origin: "https://dapp.example", profileID: "one") == nil)
+    #expect(
+      try await store.visibleAccount(origin: "https://dapp.example", profileID: "two") == second)
+    #expect(try await store.all().count == 2)
+  }
+
+  @Test("disconnect after a committed connection validates the next revision")
+  func disconnectAfterCommit() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let account = try address(secret: 1)
+    let registry = WalletRegistry(
+      revision: 0, adoptionState: .migrating,
+      groups: [
+        WalletGroup(
+          id: UUID(), kind: .privateKey, createdAt: Date(), nextDerivationIndex: nil,
+          accounts: [WalletAccount(address: account, derivationIndex: nil, createdAt: Date())],
+          lifecycle: .active)
+      ],
+      homeSelectedAddress: account, legacyWalletAddressFallbackRemoved: true)
+    let registryStore = WalletRegistryStore(directory: directory)
+    try registryStore.create(registry)
+    _ = try registryStore.update(expectedRevision: 0) { current in
+      WalletRegistry(
+        revision: 1, adoptionState: .complete, groups: current.groups,
+        homeSelectedAddress: account, legacyWalletAddressFallbackRemoved: true)
+    }
+    let suite = "committed-\(UUID().uuidString)"
+    let stateStore = ConnectionStateStore(directory: directory, suiteName: suite)
+    _ = try stateStore.getOrCreate(ConnectionState(revision: 0))
+    let grant = ConnectionGrant(
+      account: account, origin: "https://dapp.example", legacyDomain: "dapp.example",
+      profileID: "one", connectedAt: Date(), precision: .exact)
+    _ = try stateStore.update(expectedRevision: 0) { _ in
+      ConnectionState(
+        revision: 1, defaultAccount: account, grants: [grant],
+        activeConnections: [
+          ActiveConnection(origin: "https://dapp.example", profileID: "one", account: account)
+        ],
+        connectCommits: [
+          ConnectCommit(
+            requestID: UUID(), requestRevision: 0, connectionRevision: 1,
+            origin: "https://dapp.example", profileID: "one", account: account,
+            bindingDigest: String(repeating: "a", count: 64), result: .array([.string(account)]),
+            committedAt: Date())
+        ])
+    }
+    let store = ConnectedSitesStore(appGroupID: suite, directory: directory)
+    try await store.disconnectReviewed(
+      account: account, origin: "https://dapp.example", profileID: "one")
+    #expect(try stateStore.load()?.revision == 2)
+    #expect(try stateStore.load()?.activeConnections.isEmpty == true)
+    #expect(try stateStore.load()?.connectCommits.count == 1)
+  }
+
   @Test("legacy hostname grant remains authorized until a normalized reconnect")
   func legacyGrantCompatibility() async throws {
     let suite = "grants-\(UUID().uuidString)"

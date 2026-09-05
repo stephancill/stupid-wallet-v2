@@ -541,3 +541,18 @@ stupid-app run --simulator --udid 6552DF1D-95CE-48E3-801F-8F80F0AA8D29
   global CryptoKey constructor; webcrypto.CryptoKey is undefined. Swift Testing macros cannot directly
   invoke a mutating struct method through their immutable captured argument; store its result before
   #expect. These are test-harness failures, not evidence of a product cryptographic failure.
+
+- Idle popup account controls resolve the active web tab through the worker, not from the pending
+  queue. A missing document-context reply means the page must reload its isolated bridge. The
+  worker's context token must fail after same-origin reload as well as cross-origin navigation.
+  Native summary replies place the summary directly in data; rebindConnect replies wrap it as
+  data.summary. For switching, verify the canonical connect origin/account and Chrome route before
+  approve, then prove accountsChanged matches a fresh eth_accounts response. Disconnect must test
+  stale-account refusal and preserve other origin/profile grants.
+- An `invalidCommit` during disconnect immediately after connect can mean validation used the old
+  connection-state revision after changing grants. Validate the prospective revision that the locked
+  store will persist; preserve historical connect commits and cover this sequence in a regression.
+- A popup `invalid_union` discriminator error listing only the older popup message types can mean
+  new unpacked popup files are talking to an already-running old worker. Check Chrome's displayed
+  extension version, reload the extension, and reload the dapp's isolated bridge. Rebuilding files
+  alone does not update the running worker. Verify the installed helper version separately.

@@ -14,6 +14,32 @@ public enum NativeWalletDispatcher {
         return errorJSON(4900, "Connection state is unavailable")
       }
 
+    case "siteAccounts":
+      do {
+        let accounts = try await service.visibleAccounts(
+          origin: envelope.origin ?? "unknown", profileID: profileID)
+        let groups = try await service.availableAccountGroups()
+        return success([
+          "account": accounts.first.map(JSONValue.string) ?? .null,
+          "groups": .array(groups.map(accountGroupJSON)),
+        ])
+      } catch {
+        return errorJSON(4900, "Wallet accounts are unavailable")
+      }
+
+    case "disconnectReviewed":
+      guard let account = envelope.selectedAccount(), let origin = envelope.origin else {
+        return errorJSON(-32602, "Invalid connection review")
+      }
+      do {
+        try await service.disconnectReviewed(account: account, origin: origin, profileID: profileID)
+        return success(["ok": .bool(true)])
+      } catch WalletError.bindingMismatch {
+        return errorJSON(-32602, "Connected account changed; reopen the popup")
+      } catch {
+        return errorJSON(4900, "Disconnect failed")
+      }
+
     case "chain":
       guard let state = try? await service.activeChainState(),
         let hex = ChainStore.hexChainID(state.chainID)

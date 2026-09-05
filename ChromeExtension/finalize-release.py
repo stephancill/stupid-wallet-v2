@@ -18,7 +18,7 @@ package.mkdir()
 shutil.copytree(app, package / app.name)
 for file in ['install-release.command', 'RELEASE-INSTALL.md']:
     shutil.copy2(root / 'ChromeExtension' / file, package / file)
-archive = output / 'stupid-wallet-chrome-helper-0.0.4-macos-arm64.zip'
+archive = output / 'stupid-wallet-chrome-helper-0.0.5-macos-arm64.zip'
 subprocess.run(['ditto', '-c', '-k', '--keepParent', str(package), str(archive)], check=True)
 shutil.copy2(root / 'ChromeExtension/RELEASE-INSTALL.md', output / 'RELEASE-INSTALL.md')
 files = [archive, pathlib.Path(state['extension']), output / 'RELEASE-INSTALL.md']

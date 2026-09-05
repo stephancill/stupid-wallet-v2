@@ -51,7 +51,7 @@ port disconnects never replay approvals. Incognito is denied. Chrome inherits no
 Pairing protects against an unpaired caller imitating the native protocol. It does not protect against
 malware controlling Chrome or stealing the browser credential: non-exportability is a browser API
 restriction, not guaranteed hardware-backed storage. Fresh wallet authentication remains mandatory.
-Use extension 0.0.6 with helper 0.0.4; protocol 2 is intentionally incompatible.
+Use extension 0.0.7 with helper 0.0.5; protocol 2 is intentionally incompatible.
 
 Chrome bundles pinned Zod 4.5.4 and esbuild 0.28.2; use the committed Bun lockfile. Zod validates privileged
 transport envelopes. Shared browser resources remain framework-free and all private-key operations
@@ -128,3 +128,8 @@ This staples and validates the app, requires Gatekeeper acceptance, and creates 
 ZIP, extension ZIP, installation guide and SHA256SUMS. Upload only those four files. Never upload
 the entire .release directory, staging metadata, credentials, or a development profile. The signed
 app necessarily embeds its Apple-authorized direct-distribution profile.
+
+The idle popup shows the current page's connected account. Choose it to connect/switch accounts,
+or use Disconnect to revoke the displayed account. These controls use the same canonical native
+connection path and emit accountsChanged to the page. Reopen the popup after page navigation.
+Chrome 0.0.7 needs helper 0.0.5 for its additional account APIs; the published 0.0.6 beta is unchanged.

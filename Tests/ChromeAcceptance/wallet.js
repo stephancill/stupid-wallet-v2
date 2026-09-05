@@ -7,8 +7,25 @@ addEventListener("eip6963:announceProvider", (event) => {
   if (
     event.detail?.info?.rdns === "net.stupidtech.wallet" ||
     event.detail?.info?.name?.toLowerCase().includes("stupid")
-  )
+  ) {
+    if (wallet === event.detail.provider) return;
     wallet = event.detail.provider;
+    wallet.on("accountsChanged", async (accounts) => {
+      try {
+        const current = await wallet.request({ method: "eth_accounts" });
+        const matches =
+          JSON.stringify(current.map((item) => item.toLowerCase())) ===
+          JSON.stringify(accounts.map((item) => item.toLowerCase()));
+        show(
+          matches
+            ? `PASS: accountsChanged matches eth_accounts (${accounts.length ? "connected" : "disconnected"}).`
+            : "FAILED: account event differs from native state.",
+        );
+      } catch (error) {
+        show(`FAILED: ${error.message}`);
+      }
+    });
+  }
 });
 dispatchEvent(new Event("eip6963:requestProvider"));
 const result = document.querySelector("pre");

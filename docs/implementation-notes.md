@@ -6613,3 +6613,60 @@ External --whats-new <public-test-note> --no-wait` added build 100 to the existi
 saved the Safari/Chrome test note and submitted review. A subsequent
 `stupid-app release status --live --output .release/testflight-100` verified external
 IN_BETA_TESTING. Release is available to external testers; no pending review remains.
+
+
+## 2026-09-05 — Idle popup account management
+
+Added an always-present idle account bar to the shared Safari/Chrome popup. It displays the current
+page's connected account, reuses the grouped account picker for connecting/switching, and offers
+Disconnect. A disconnected page can connect through the same picker. Existing button styling and
+pending request review remain intact. The worker validates popup ownership and active-tab identity,
+including an isolated per-document token and Chrome documentId, and rejects stale page contexts.
+Switching still prepares/rebinds/approves a native canonical connect request with Chrome's existing
+paired approval challenge; it does not introduce an alternate grant authority. Queued switches
+reject their own prepared request. Disconnect conditionally revokes the displayed account under
+the connection-store lock, preserving other grants/profiles and rejecting stale account selections.
+Successful changes trigger origin-scoped account refresh and native profile-bound provider snapshots.
+
+Added worker tests for canonical switch approval, same-origin navigation, unauthorized page senders,
+queued cleanup, account-bound disconnect and origin-scoped events; popup tests cover the persistent
+bar, selecting an account and disconnected state. Native tests cover stale-account disconnect and
+profile/grant isolation plus strict new protocol envelopes. Safari manifest is 0.1.55, Chrome is
+0.0.7, helper is 0.0.5; protocol 3 remains in use and new APIs require the updated helper.
+
+Verification so far: 38 JavaScript tests passed; 318 Swift tests passed before the additional
+protocol-envelope test, followed by all 7 protocol tests passing. Configured JavaScript formatting/
+linting, Swift formatting, Chrome build, optimized helper build, stupid-app build, doctor (zero
+warnings/failures) and preferred simulator reinstall/launch passed. Release signing with the existing
+Developer ID identity succeeded. Automatic approval review paused notarization of this new artifact
+for explicit owner approval of the Apple upload; live account-switch testing also awaits the owner’s
+approval for the additional local-fixture account connection. No new release has been published.
+
+Final regression coverage reproduced a connection-store `invalidCommit` failure when disconnecting
+immediately after a committed connection. Store mutations now validate the prospective next revision,
+matching the revision that the locked state store persists, while retaining historical connect
+commits. The regression verifies the grant is removed and its commit remains. All 320 Swift tests
+and 38 JavaScript tests pass after this correction; the optimized helper and iOS builds also pass.
+The final helper must be notarized and installed before live Chrome acceptance can be completed.
+
+The corrected build was reinstalled and launched on the preferred simulator. Developer ID signing
+and strict signature verification passed for the rebuilt helper 0.0.5, and extension 0.0.7 was
+packaged. These artifacts remain local pending notarization approval and live Chrome acceptance.
+
+## 2026-09-05 — Stale Chrome worker diagnosis
+
+The owner reported a popup discriminator error listing only the older message types. Chrome's
+extension manager confirmed the running version was 0.0.6 despite generated files being 0.0.7.
+Reloaded the extension to 0.0.7 and restarted the stalled local acceptance fixture. The discriminator
+error disappeared in the real popup; it now reports helper unavailable. The installed helper is
+still 0.0.4, so the prepared 0.0.5 helper must complete notarization and installation before the
+new controls can be accepted live. No account grant or signature was requested during this check.
+
+After explicit owner approval, Apple accepted notarization of helper 0.0.5. Ran
+`uv run --no-project python ChromeExtension/finalize-release.py`: stapling, staple validation,
+strict codesign verification and Gatekeeper assessment passed. Extracted the resulting helper ZIP
+and ran its `install-release.command`, preserving the prior installation. Reloaded Chrome 0.0.7 and
+the local fixture. Live popup verification now shows the connected account and Disconnect button;
+the grouped picker opens with the current account marked and closes successfully. Existing pairing
+and connection were retained. No account was switched or disconnected during this check; live
+mutation acceptance remains pending. No GitHub release was published.

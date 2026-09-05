@@ -99,10 +99,23 @@ public struct ChromeNativeSession: Sendable {
       else { throw Failure.schema }
       return
     }
+    if action == "disconnectReviewed" {
+      guard Set(message.keys) == ["action", "origin", "payload"],
+        let origin = message["origin"]?.stringValue,
+        let url = URL(string: origin), ["http", "https"].contains(url.scheme),
+        url.host != nil, url.user == nil, url.password == nil, url.path.isEmpty,
+        url.query == nil, url.fragment == nil,
+        case .object(let payload)? = message["payload"], Set(payload.keys) == ["account"],
+        let account = payload["account"]?.stringValue, account.hasPrefix("0x"),
+        Hex.data(String(account.dropFirst(2)))?.count == 20
+      else { throw Failure.schema }
+      return
+    }
     let allowed: Set<String>
     switch action {
     case "chain", "list": allowed = ["action"]
-    case "visibleAccounts", "isConnected", "disconnectSite": allowed = ["action", "origin"]
+    case "visibleAccounts", "isConnected", "disconnectSite", "siteAccounts":
+      allowed = ["action", "origin"]
     case "prepare": allowed = ["action", "method", "params", "origin", "requestKey"]
     case "passthrough": allowed = ["action", "method", "params", "origin"]
     case "switchChain", "getCapabilities", "getCallsStatus":
