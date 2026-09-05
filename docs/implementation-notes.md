@@ -6588,3 +6588,28 @@ Published GitHub prerelease `chrome-v0.0.6-beta.1` from source commit `278c9bf` 
 `codex/chrome-beta-release`, with the two ZIPs, installation guide and SHA256SUMS. Verified all four
 uploaded asset sizes and GitHub SHA-256 digests against the local tested files. Release:
 https://github.com/stephancill/stupid-wallet-v2/releases/tag/chrome-v0.0.6-beta.1.
+
+## 2026-09-05 — External TestFlight build 100
+
+The owner requested a new external TestFlight build after the Chrome beta release. Bumped the
+containing app and Safari extension together from 1.0.0 (98) to 1.0.0 (100), using Apple's next
+available build number. This release follows the Chrome-integration branch based on external build
+98; the separate internal build 99 notification branch is not merged into this release.
+
+`stupid-app release preflight` reported READY and `stupid-app doctor` reported zero failures or
+warnings. `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer stupid-app release archive
+--output .release/testflight-100` produced an IPA whose native post-sign verifier passed. Direct
+archive inspection confirmed both bundles have version 1.0.0/build 100, Face ID usage declarations,
+and SDK provenance DTXcode 2660, DTXcodeBuild 17F113 and DTPlatformBuild/DTSDKBuild 23F81a.
+IPA SHA-256: `e491934353413d0e9ad36853b100b79df228da4c9af4fabd6a50c0733cad5845`.
+`stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched successfully.
+The unchanged core and browser implementation had already passed 317 Swift and 34 JavaScript tests
+for the preceding Chrome release. No stupid-app source or wallet storage identity changed.
+
+`stupid-app release upload --output .release/testflight-100 --ipa
+.release/testflight-100/StupidWallet.ipa --wait` completed with processing VALID and internal
+IN_BETA_TESTING. `stupid-app release external-beta --output .release/testflight-100 --group-name
+External --whats-new <public-test-note> --no-wait` added build 100 to the existing external group,
+saved the Safari/Chrome test note and submitted review. A subsequent
+`stupid-app release status --live --output .release/testflight-100` verified external
+IN_BETA_TESTING. Release is available to external testers; no pending review remains.

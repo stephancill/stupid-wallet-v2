@@ -1500,8 +1500,11 @@ Both test grants and the disposable Safari profile were removed after acceptance
 force-quit once after replacing the installed extension so its content script and background worker
 were loaded from the new build; a page reload alone retained the pre-install extension context.
 
-External-TestFlight status (2026-08-29): version 1.0.0 build 97 is the current external candidate,
-approved for external testing with its what's-to-test note preserved from build 96. It carries the
+External-TestFlight status (2026-09-05): version 1.0.0 build 100 is live in the existing External
+group (`IN_BETA_TESTING` verified from Apple). It contains the Chrome-integration shared-core
+changes on top of external build 98; separate internal build 99 notification work is not included.
+The app and Safari extension both carry version 1.0.0/build 100, and the distribution archive and
+simulator launch passed. Build 97 was previously approved with its test note preserved from build 96. It carries the
 restored `NSFaceIDUsageDescription` in both the containing app and the Safari extension. Build 95 had
 earlier been the first external candidate after the SDK-build-metadata fix.
 Builds 92–94 were rejected or flagged by Apple's external gate because their archives omitted the
