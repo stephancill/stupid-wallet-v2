@@ -129,6 +129,7 @@ public class NotificationService: UNNotificationServiceExtension, @unchecked Sen
   private func chainDisplayName(_ chainID: String) -> String {
     switch chainID {
     case "1": return "Ethereum"
+    case "10": return "Optimism"
     case "137": return "Polygon"
     case "8453": return "Base"
     default: return "Chain \(chainID)"

@@ -7797,3 +7797,45 @@ Rendered a legacy before/after simulator run to confirm clear signing in the Saf
 - `stupid-app release bump` set Apple CFBundleVersion 101→102 across the app and Safari extension;
   `release archive` produced `.release/StupidWallet.ipa` and `release upload --wait` was accepted by
   App Store Connect with build state VALID and internal IN_BETA_TESTING.
+## 2026-09-05 - Received Token Alert Threshold And Notifications Rebase
+
+### Summary
+
+- Checked out `feat/wallet-notifications-mvp-plan` and rebased its nine commits onto local `main`.
+  Preserved both Chrome and notification package products/targets and documentation, and retained
+  main's build 101 with all three Apple bundles aligned. Corrected a misplaced package target found
+  during build verification of the conflict resolution.
+- Referenced `../wallet-email-notifs` for the existing priced action subject convention. The backend
+  now returns the subject and alert decision from one enrichment pass. Unsolicited token receipts
+  alert only above $0.50 of combined priced incoming fungible value; exactly $0.50, lower amounts,
+  and unavailable prices do not enqueue APNs. Outgoing amounts cannot satisfy that threshold.
+- Transactions initiated by the tracked address remain eligible even for dust or unpriced tokens.
+  Priced receipts retain titles such as `Received $5 of USDC`; unpriced initiated activity retains
+  categorical fallback because no reliable USD value is available. Native, NFT, failed, and reorg
+  event policies remain unchanged. This intentionally changes which unsolicited token alerts appear.
+- Filtered events remain persisted in the installation feed and retain webhook replay deduplication.
+  Unexpected enrichment/database failures now fail the request rather than restoring a generic alert.
+- The notification context now renders chain 10 as Optimism. Account labels and blockies stay local.
+  Updated the handover and debugging skill with policy and test-runtime diagnostics.
+
+### Verification
+
+- In `server/`, `bun run format:check`, `bun run lint`, and `bun run typecheck` passed.
+- `PATH="$HOME/.nvm/versions/node/v22.23.1/bin:$PATH" bun run test` passed all 45 tests in 7 files.
+  The initial default-Node test run failed because the existing native SQLite binary targets Node 22
+  (ABI 127), while the default runtime uses ABI 147. Selecting installed Node 22 resolved it without
+  changing dependencies. New tests cover strict threshold boundaries, Optimism token subjects,
+  unpriced/initiated activity, incoming-only aggregation, feed preservation, and replay suppression.
+- `swift test` passed 320 Swift Testing tests and 16 XCTest notification tests.
+- `node --test Tests/JavaScript/*.test.mjs` passed 38 tests after the rebase.
+- `xcrun swift-format lint Package.swift Sources/StupidWalletNotificationService/NotificationService.swift`
+  and `git diff --check` passed.
+- `stupid-app doctor` passed with zero failures/warnings. `stupid-app build` produced the app and
+  extensions against the iOS 26.5 SDK using stupid-app 0.0.16.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, reinstalled, and launched
+  successfully on the preferred iOS 26.3 simulator.
+
+### Follow-Up
+
+- Production Worker deployment and physical notification presentation remain unperformed for this
+  change. No transaction, production push, or release upload was initiated.

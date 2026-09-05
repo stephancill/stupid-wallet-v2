@@ -664,3 +664,17 @@ stupid-app run --simulator --udid 6552DF1D-95CE-48E3-801F-8F80F0AA8D29
   `tabs.sendMessage` could not reach the isolated bridge. Reload the dapp page after extension
   installation/reload, then reopen the popup. Catch this rejection at document-context lookup and
   explain recovery; never bypass document binding or treat the missing reply as a connection grant.
+
+
+## Received Token Notification Diagnosis
+
+- Trace `server/src/services/notificationSubject.ts` enrichment and alert eligibility before APNs
+  queue/payload construction. A categorical `Token received` subject can mean unavailable or rejected
+  price metadata; successful service-extension rendering does not prove pricing succeeded.
+- Unsolicited token receipts require combined priced incoming value strictly above $0.50. The
+  tracked-address initiation flag exempts owner-initiated activity. Preserve filtered events and
+  deduplication in the feed, but do not enqueue an APNs alert. Never count outgoing legs toward the
+  receipt threshold or restore a generic alert on price-service failure.
+- Server tests use native `better-sqlite3`. A NODE_MODULE_VERSION 127 versus 147 mismatch is a local
+  Node runtime mismatch; run the suite with the installed Node 22 runtime that matches that binary
+  before diagnosing notification logic. No dependency upgrade is required for that mismatch.

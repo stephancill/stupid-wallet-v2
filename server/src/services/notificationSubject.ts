@@ -23,16 +23,16 @@ const fungibleEffectSchema = z
   })
   .passthrough();
 
-export async function notificationSubject(params: {
+export async function notificationSummary(params: {
   db: Database;
   event: WebhookEvent;
   eventKind: string;
   now: number;
   fetchImpl: PriceFetcher;
-}): Promise<string> {
+}): Promise<{ subject: string; shouldNotify: boolean }> {
   const { db, event, eventKind, now, fetchImpl } = params;
   if (eventKind === 'activityReverted' || eventKind === 'transactionFailed') {
-    return eventTitle(eventKind);
+    return { subject: eventTitle(eventKind), shouldNotify: true };
   }
 
   const legs: SubjectLeg[] = [];
@@ -75,18 +75,28 @@ export async function notificationSubject(params: {
 
   const incoming = legs.filter((leg) => leg.direction === 'incoming');
   const outgoing = legs.filter((leg) => leg.direction === 'outgoing');
+  // Price only received legs; unrelated outgoing value must not admit token dust.
+  const receivedUsd = incoming.reduce((total, leg) => total + leg.usdValue, 0);
+  const shouldNotify =
+    event.initiatedByTrackedAddress === true || eventKind !== 'tokenReceived' || receivedUsd > 0.5;
   if (incoming.length > 0 && outgoing.length > 0) {
     const sent = highestValue(outgoing)!;
     const received = highestValue(incoming)!;
-    return boundSubject(
-      `Swapped ${sent.humanAmount} ${sent.symbol} for ${received.humanAmount} ${received.symbol}`,
-    );
+    return {
+      subject: boundSubject(
+        `Swapped ${sent.humanAmount} ${sent.symbol} for ${received.humanAmount} ${received.symbol}`,
+      ),
+      shouldNotify,
+    };
   }
 
   const primary = highestValue(legs);
-  if (!primary) return eventTitle(eventKind);
+  if (!primary) return { subject: eventTitle(eventKind), shouldNotify };
   const verb = primary.direction === 'incoming' ? 'Received' : 'Sent';
-  return boundSubject(`${verb} ${formatSubjectDollars(primary.usdValue)} of ${primary.symbol}`);
+  return {
+    subject: boundSubject(`${verb} ${formatSubjectDollars(primary.usdValue)} of ${primary.symbol}`),
+    shouldNotify,
+  };
 }
 
 const resolveLeg = (params: {

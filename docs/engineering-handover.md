@@ -1512,9 +1512,15 @@ incoming `INSendMessageIntent`, and supplies the locally generated account block
 fungible effects through a 10-minute D1 cache of DeFiLlama symbol/decimal/USD-price metadata and creates a
 bounded subject: a priced incoming/outgoing pair becomes a swap summary, and another priced leg becomes
 `Received/Sent <$value> of <symbol>`. Reorg, failed, unpriced, unsupported-chain, and malformed metadata
-retain the categorical title. The base APNs alert and custom `subject` carry that backend title unchanged;
+retain the categorical title when the event qualifies for an alert. Unsolicited `tokenReceived` events
+now alert only when the combined resolved incoming fungible value is strictly greater than $0.50.
+Unpriced receipts and values at or below $0.50 remain in the event feed without APNs fanout.
+Transactions initiated by the tracked address are exempt, including dust and unpriced activity.
+The title and filter share one enrichment pass; outgoing legs do not count toward the receipt threshold.
+Price-service failure cannot restore an unsolicited categorical token alert. Other event kinds retain
+their existing alert policy. The base APNs alert and custom `subject` carry the backend title unchanged;
 the title contains only the action and never receives an account-label prefix. `<account label> • <chain>`
-is supplied as both the intent content and mutable notification body so it survives the
+is supplied as both the intent content and mutable notification body (chain 10 displays Optimism) so it survives the
 communication layout as the message line. Labels, full addresses, token contracts, and counterparties do
 not belong in the base APNs payload; rounded USD amount and bounded symbol disclosure are the narrow
 approved exception. The product owner explicitly approved the communication presentation and its
@@ -1952,11 +1958,11 @@ investigation history in implementation notes.
    transaction/batch acceptance with explicit authorization, physical profile isolation, interruption
    and mixed-process checks, then Developer ID/notarized packaging. Local connection and authenticated
    message/typed-data signing are installed and proven. Do not modify `stupid-app` without a new request.
-6. Resolve the remaining password-policy, snapshot-scope, deletion-copy, update-key, and
+7. Resolve the remaining password-policy, snapshot-scope, deletion-copy, update-key, and
    maximum-item-size decisions in `docs/icloud-wallet-backup-plan.md`. Then complete its
    synchronizable-Keychain and cryptographic-format gates before adding backup UI or reading
    protected wallet sources.
-7. Continue notification MVP acceptance: prove a new or operator-replayed provider-signed activity
+8. Continue notification MVP acceptance: prove a new or operator-replayed provider-signed activity
    webhook, production APNs, and
    service-extension subtitle/blockie rendering. Wire direct account/group/network mutation reconciliation and Safari popup
    liveness, then implement atomic cursor-feed activity persistence. Production deployment, physical

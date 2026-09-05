@@ -14,8 +14,7 @@ let package = Package(
     // A stupid-app project contains one library product per app/extension bundle.
     .library(
       name: "StupidWallet",
-      targets: [
-    .target(name: "StupidWalletNotificationService", dependencies: ["StupidWalletCore"]),"StupidWallet"],
+      targets: ["StupidWallet"],
     ),
     .library(
       name: "StupidWalletSafari",
@@ -23,6 +22,7 @@ let package = Package(
     ),
   ],
   targets: [
+    .target(name: "StupidWalletNotificationService", dependencies: ["StupidWalletCore"]),
     .executableTarget(
       name: "StupidWalletChromeProofHost", dependencies: ["StupidWalletCore"],
       path: "ChromeExtension/proofs/LifecycleHost"),

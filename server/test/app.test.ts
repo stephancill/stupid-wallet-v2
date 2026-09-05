@@ -226,6 +226,73 @@ describe('webhook HTTP route', () => {
     expect(deliveries[0]?.subject).toBe('Received $2,500 of ETH');
   });
 
+  it.each([
+    ['500000', false, false],
+    ['510000', false, true],
+    ['1', true, true],
+    ['999999999', false, false],
+  ])(
+    'filters token receipts before APNs while retaining the feed (%s, %s)',
+    async (amount, initiated, expected) => {
+      const tokenAddress = '0x5555555555555555555555555555555555555555';
+      await db.run(
+        'INSERT OR REPLACE INTO token_cache (chain_id, address, symbol, decimals, price_usd, fetched_at) VALUES (?, ?, ?, ?, ?, ?)',
+        ['1', tokenAddress, 'USDC', 6, 1, NOW()],
+      );
+      const id = `receipt-${amount}-${initiated}`;
+      const body = {
+        id,
+        type: 'activity.observed',
+        createdAt: new Date(NOW()).toISOString(),
+        data: {
+          chainId: 1,
+          trackedAddress: '0x1111111111111111111111111111111111111111',
+          initiatedByTrackedAddress: initiated,
+          blockNumber: '125',
+          blockHash: `0x${'cd'.repeat(32)}`,
+          blockTimestamp: String(Math.floor(NOW() / 1_000)),
+          transaction: {
+            hash: `0x${'ab'.repeat(32)}`,
+            index: 0,
+            from: initiated
+              ? '0x1111111111111111111111111111111111111111'
+              : '0x2222222222222222222222222222222222222222',
+            to: '0x1111111111111111111111111111111111111111',
+            status: 'success',
+            nonce: '1',
+            value: '0',
+          },
+          effects: [
+            {
+              kind: 'erc20',
+              direction: 'incoming',
+              amount,
+              assetAddress:
+                amount === '999999999'
+                  ? '0x6666666666666666666666666666666666666666'
+                  : tokenAddress,
+            },
+          ],
+        },
+      };
+      expect((await post(body, id)).status).toBe(202);
+      expect(deliveries).toHaveLength(expected ? 1 : 0);
+      if (amount === '510000') expect(deliveries[0]?.subject).toBe('Received $0.51 of USDC');
+      const stored = await db.first('SELECT event_id FROM activity_events WHERE webhook_id = ?', [
+        id,
+      ]);
+      expect(stored).not.toBeNull();
+      expect(
+        await db.first('SELECT event_id FROM installation_events WHERE event_id = ?', [
+          stored!.event_id,
+        ]),
+      ).not.toBeNull();
+      const replay = await post(body, id);
+      expect(await replay.json()).toMatchObject({ duplicate: true });
+      expect(deliveries).toHaveLength(0);
+    },
+  );
+
   it('accepts and classifies a real-shape zero-native-value ERC-20 swap', async () => {
     const res = await post(
       {

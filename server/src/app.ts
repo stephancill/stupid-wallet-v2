@@ -31,8 +31,8 @@ import { HttpError } from './errors';
 import { constantTimeEqual, hmacSha256Hex } from './crypto';
 import { verifyP256 } from './p256';
 import { CONFIG } from './config';
-import { classifyEvent, eventTitle } from './services/eventKinds';
-import { notificationSubject } from './services/notificationSubject';
+import { classifyEvent } from './services/eventKinds';
+import { notificationSummary } from './services/notificationSubject';
 import type { PriceFetcher } from './services/tokenInfo';
 
 export interface BackendDeps {
@@ -471,19 +471,19 @@ export const createBackend = (deps: BackendDeps): Hono => {
       return c.json({ ok: true, duplicate: true }, 202);
     }
     const eventKind = classifyEvent(payload);
-    const subject = await notificationSubject({
+    const { subject, shouldNotify } = await notificationSummary({
       db,
       event: payload,
       eventKind,
       now: at(),
       fetchImpl: deps.fetch ?? fetch,
-    }).catch(() => eventTitle(eventKind));
+    });
     const result = await ingestWebhook(db, payload, deliveryId, at());
     if (result.duplicate) {
       return c.json({ ok: true, duplicate: true }, 202);
     }
 
-    if (deps.onWebhookFanout && result.fanout.length > 0) {
+    if (shouldNotify && deps.onWebhookFanout && result.fanout.length > 0) {
       const deliveries = result.fanout.map((target) => ({
         installationId: target.installationId,
         eventId: result.eventId,
