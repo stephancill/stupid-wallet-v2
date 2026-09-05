@@ -96,7 +96,8 @@ public actor ConnectedSitesStore {
     }) {
       return active.account
     }
-    guard !exactOnly else { return nil }
+    // Chrome is a new client: Dawn hostname grants never authorize a Chrome profile.
+    guard !exactOnly, profileID?.hasPrefix("chrome:") != true else { return nil }
     let domain = Origin.downHost(of: origin)
     if state.grants.contains(where: { $0.precision == .exact && $0.legacyDomain == domain }) {
       return nil

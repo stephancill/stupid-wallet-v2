@@ -90,16 +90,19 @@ public struct WalletAccountResolver: AccountResolving, Sendable {
   private let keyStore: any WalletKeyStoring
   private let seedStore: any WalletSeedStoring
   private let lifecycle: WalletGroupLifecycleCoordinator
+  private let cancellation: ProtectedOperationCancellation?
 
   public init(
     directory: URL? = nil,
     appGroup: String = PendingRequestStore.defaultAppGroup,
     keyStore: KeychainKeyStore = KeychainKeyStore(),
-    seedStore: KeychainSeedStore = KeychainSeedStore()
+    seedStore: KeychainSeedStore = KeychainSeedStore(),
+    cancellation: ProtectedOperationCancellation? = nil
   ) {
     registryStore = WalletRegistryStore(directory: directory, appGroup: appGroup)
     self.keyStore = keyStore
     self.seedStore = seedStore
+    self.cancellation = cancellation
     lifecycle = WalletGroupLifecycleCoordinator(directory: directory, appGroup: appGroup)
   }
 
@@ -107,12 +110,14 @@ public struct WalletAccountResolver: AccountResolving, Sendable {
     registryStore: WalletRegistryStore,
     keyStore: any WalletKeyStoring,
     seedStore: any WalletSeedStoring,
-    lifecycle: WalletGroupLifecycleCoordinator
+    lifecycle: WalletGroupLifecycleCoordinator,
+    cancellation: ProtectedOperationCancellation? = nil
   ) {
     self.registryStore = registryStore
     self.keyStore = keyStore
     self.seedStore = seedStore
     self.lifecycle = lifecycle
+    self.cancellation = cancellation
   }
 
   public func signer(address: String) throws -> any Signing {
@@ -167,6 +172,7 @@ public struct WalletAccountResolver: AccountResolving, Sendable {
     reason: String,
     operation: ([UInt8]) throws -> T
   ) throws -> T {
+    guard cancellation?.isCancelled != true else { throw SigningError.authenticationRequired }
     let initial = try resolve(address: address)
     return try lifecycle.withClaim(groupID: initial.group.id) {
       let current = try resolve(address: address)
@@ -189,7 +195,10 @@ public struct WalletAccountResolver: AccountResolving, Sendable {
       guard derived.caseInsensitiveCompare(current.account.address) == .orderedSame else {
         throw SigningError.accountMismatch
       }
-      return try operation(secret)
+      guard cancellation?.isCancelled != true else { throw SigningError.authenticationRequired }
+      let result = try operation(secret)
+      guard cancellation?.isCancelled != true else { throw SigningError.authenticationRequired }
+      return result
     }
   }
 }

@@ -198,6 +198,26 @@ struct WalletGroupManagerTests {
     #expect(!environment.keys.contains(account: accountOne.address))
   }
 
+  @Test("cancelled browser signing never loads protected entropy")
+  func cancelledSigningDoesNotLoad() throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+    let cancellation = ProtectedOperationCancellation()
+    let resolver = WalletAccountResolver(
+      registryStore: environment.registry,
+      keyStore: environment.keys, seedStore: environment.seeds,
+      lifecycle: WalletGroupLifecycleCoordinator(directory: environment.directory),
+      cancellation: cancellation)
+    let signer = try resolver.signer(address: group.accounts[0].address)
+    let before = environment.seeds.loadCount(groupID: group.id)
+    cancellation.cancel()
+    #expect(throws: SigningError.authenticationRequired) {
+      try signer.signDigest([UInt8](repeating: 0, count: 32))
+    }
+    #expect(environment.seeds.loadCount(groupID: group.id) == before)
+  }
+
   @Test("home selection persists without changing connection authority")
   func selectsHomeAccountOnly() throws {
     let environment = try Environment()

@@ -494,6 +494,7 @@ public actor WalletService {
   }
 
   public struct Summary: Sendable {
+    public let bindingDigest: String
     public let id: String
     public let kind: String
     public let method: String
@@ -740,6 +741,7 @@ public actor WalletService {
       rows.append(("Network Fee", await estimatedNetworkFee(for: record)))
     }
     return Summary(
+      bindingDigest: record.payloadDigest,
       id: record.id.uuidString,
       kind: record.kind.rawValue,
       method: record.method,

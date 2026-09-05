@@ -6133,3 +6133,453 @@ from the fixed build. The txlink request completed and `viem recoverAddress` ret
 account for the signature; the wallet now computes the canonical EIP-712 digest it produced and
 which matches viem/ethers byte-for-byte. Before the fix the identical request produced a
 signature that only recovered under the wallet's non-standard digest. Fix confirmed on-device.
+
+
+## 2026-09-05 — Chrome-on-macOS feasibility investigation
+
+Investigated whether the Safari wallet can support Google Chrome on macOS without weakening its
+native key-protection, canonical approval, origin-binding, or fresh-authentication invariants. This
+was documentation-only architecture work; Chrome has not been added to product scope and no app,
+extension, signing, or release configuration changed.
+
+Findings:
+
+- A secure implementation is feasible with an installed, signed, and notarized native messaging
+  host. It can be a narrow helper bundled inside a desktop Stupid Wallet app rather than a separate
+  user-facing product. Chrome still requires a registered stdio executable, and the current
+  iOS-on-Mac/TestFlight app and Safari extension cannot supply that endpoint unchanged. Apple's iOS
+  package rules do not permit adding an arbitrary standalone macOS helper to the existing iOS/iPadOS
+  binary. A Catalyst/native Mac app may share source and App Store identity but is a separate macOS
+  build/archive; a smaller helper-only macOS package could instead coexist with the current app. A
+  Chrome-extension-only implementation is rejected because wallet key material and signing would
+  enter JavaScript, WebAssembly, or browser-managed state without the existing native per-operation
+  keychain and LocalAuthentication boundary.
+- The current Manifest V3 provider, isolated bridge, canonical popup, service-worker request routing,
+  and most `StupidWalletCore` policy and signing code are reusable. `StupidWalletCore` already declares
+  macOS 14 support.
+- Chrome native messaging requires a registered stdio executable, exact extension ID in
+  `allowed_origins`, native-endian length-prefixed JSON, and separate installation. The existing
+  Safari app/extension process cannot act directly as that host. The current Safari native app name
+  contains a hyphen and is invalid under Chrome's host-name grammar, so Chrome needs a distinct name.
+- Chrome gives the helper the extension origin but not dapp origin, tab, or browser profile. The
+  service worker must derive dapp origin from `runtime.MessageSender.origin`, generate an
+  extension-owned profile ID in profile-local storage, and persist those bindings natively. Initial
+  scope rejects incognito.
+- Chrome approval actions should route popup -> service worker -> a `connectNative()` port rather than
+  using Safari's direct popup-to-native preference. This keeps authentication independent of popup
+  focus/lifetime while native pending records remain authoritative across worker or host restarts.
+- `SafariWebExtensionHandler.Server` should become a transport-neutral native dispatcher rather than
+  duplicating privileged policy. The Chrome helper must explicitly configure the production keychain
+  access group because the current macOS default is `nil`.
+- Existing JavaScript uses `browser.*` while declaring Chrome 111. Chrome's `browser` namespace starts
+  at Chrome 148, so a Chrome artifact must use a small `browser ?? chrome` API adapter or raise its
+  actual minimum version.
+- Chrome Web Store distribution does not install a native helper. Production therefore needs a
+  signed/notarized companion package, a reserved stable Web Store extension ID, missing-host and
+  protocol-version UX, and `stupid-app` release support or an explicitly approved release-authority
+  exception.
+
+Added `docs/chrome-extension-feasibility.md` with the threat boundary, reusable and new components,
+distribution constraints, and ordered proof gates for transport lifecycle, shared Apple storage,
+profile/canonical authority, physical-Mac authentication, end-to-end wallet behavior, and release.
+Windows and Linux were explicitly excluded from the proposal. No runtime claim was made from an
+inconclusive headless Chrome extension-load experiment.
+
+Packaging decision: if Chrome implementation is approved, retain the current iOS-on-Mac wallet app
+and ship a minimal Developer-ID-signed helper-only macOS package plus Chrome registration manifest.
+Do not add a second wallet UI or desktop wallet app solely to carry the helper. Shared App Group and
+keychain access remains subject to the physical-Mac proof gate.
+
+Verification: documentation was checked with `git diff --check`; no app build was required because no
+source, resource, package, entitlement, or project configuration changed.
+
+## 2026-09-05 — Chrome-on-macOS scope approval
+
+The product owner approved Chrome-on-macOS implementation as product scope and retained the selected
+helper-only packaging direction: keep the current iOS-on-Mac wallet app, add a minimal
+Developer-ID-signed macOS native-messaging package and Chrome extension, and do not add a second
+wallet UI solely for Chrome integration.
+
+Implementation remains ordered behind the proof gates in `docs/chrome-extension-feasibility.md`.
+Scope and packaging decisions complete part of Gate 0; stable Chrome extension/native-host identity
+and required `stupid-app` native-host build, signing, packaging, and release support remain. Priority
+relative to unfinished multiple-account Gate I acceptance was not established by the scope approval.
+No source, target, entitlement, signing, or release configuration changed.
+
+Verification: `git diff --check` passed. No app build was required for the documentation-only scope
+change.
+
+
+## 2026-09-05 — Chrome transport foundation and Arc acceptance preparation
+
+Started the approved Chrome-on-macOS implementation at the owner's direction, with Arc selected for
+acceptance. Preserved the pre-existing documentation edits and unrelated untracked server work.
+
+Implemented:
+
+- Extracted the Safari dispatch switch into `StupidWalletCore.NativeWalletDispatcher` and its typed
+  `NativeWalletEnvelope`. Safari retains its property-list boundary, native profile extraction and
+  adoption barrier. A comparison against HEAD verified that dispatch policy was byte-identical after
+  the required type/visibility renames.
+- Added `ChromeNativeFrames` with exact reads, native-endian UInt32 framing, 256-KiB input/output
+  limits, and truncated/empty/oversized frame rejection. `ChromeNativeSession` requires a version-1
+  handshake, a port-bound Chrome profile UUID and action-specific field validation. Decisions accept
+  exactly canonical request ID plus reviewed revision; unknown decision parameters are rejected.
+- Added the `StupidWalletChromeHost` SwiftPM proof entry point. It validates the exact development
+  caller origin and answers the handshake. Every wallet operation returns 4900 without opening any
+  production store. This is deliberately not a functional wallet host or a signed installation.
+- Added a generated Chrome artifact from the shared Safari resources. The public development key
+  fixes unpacked identity to `pnefobbcijpfceblkkcbfklpldfhmbof`; no corresponding private key was
+  written to disk. Chose valid host name `net.stupidtech.stupid_wallet`. Production store reservation
+  remains separate. Retained Chrome 111 through a namespace adapter and disabled incognito.
+- Added a service-worker-owned native port with correlated responses, bounded waits, clear unavailable
+  and incompatible-host errors, and reconnect on a subsequent call without replaying mutations.
+  Profile initialization is serialized; corrupt identity fails closed. Non-authoritative completion
+  routes bind request ID to profile, origin, tab and document. Page-originated popup actions fail.
+- Chrome popup requests use only the worker and display missing-helper errors explicitly. Safari's
+  direct-native preference remains intact. Shared Safari resource version advanced to 0.1.54.
+- Added a non-signing local acceptance fixture and documented the required `stupid-app` native-host
+  build/sign/package/doctor contract in `ChromeExtension/README.md`. No independent signing or
+  release pipeline was introduced.
+
+Verification:
+
+- `swift test --filter ChromeNativeProtocolTests`: five tests passed. An initial test macro nesting
+  error was corrected by requiring the second frame separately before parsing it.
+- `swift test`: all 310 tests in 35 suites passed.
+- `node --test Tests/JavaScript/*.test.mjs`: all 29 tests passed, including profile initialization,
+  spoofed page metadata, incognito/frame rejection, document routing, host absence/version skew,
+  crash/reconnect without mutation replay and Chrome popup worker-only missing-helper rendering.
+- `PrototypeDapp/node_modules/.bin/oxfmt` and `oxlint` on changed JavaScript passed. `node --check`
+  validated the Chrome transport and generated worker/background. Changed Swift passed strict
+  `swift format lint`; `git diff --check` passed.
+- `node ChromeExtension/build.mjs` produced `.build/chrome-extension` with the fixed public identity.
+- `stupid-app doctor`: version 0.0.16, zero failures and warnings.
+- `stupid-app build`: built the app and Safari extension for arm64 iOS 17 with SDK 26.5.
+- `stupid-app run --simulator --udid <preferred-simulator>`: rebuilt, installed and launched.
+- Arc Browser Control connected successfully and reported Chromium 152. Navigating its attached
+  page to `chrome://extensions` detached the debugger. Native UI reached Load unpacked, but its Go
+  To Folder sheet repeatedly reset the resolved artifact path to `/` on confirmation. The owner then
+  loaded the artifact. A fresh Arc fixture tab passed EIP-6963 discovery, `eth_sign` rejection with
+  4200, and fail-closed native reads without a helper. Computer Use opened the actual toolbar popup
+  and verified the rendered “Wallet helper unavailable” install/repair message. The owner requested
+  that Browser Control no longer be used; subsequent acceptance used native Arc Computer Use only,
+  including reopening the fixture checks after closing the popup.
+  Signed-host lifecycle and authentication acceptance remain unproven.
+
+Limitations and next gates:
+
+- The local signing keychain has no Developer ID Application identity. The selected helper-only
+  package cannot be signed yet; Apple Development is not substituted for the chosen packaging model.
+- `stupid-app` 0.0.16 does not support a native-host build/sign/package target. Its required contract
+  is defined, but implementation in the tooling project remains before a native helper installation.
+- Gate 1 is not closed. Real native-port lifecycle, popup destruction, worker/browser restart and
+  durable native operation recovery remain unproven. The proof host has no durable operation runner.
+- Gates 2 through 6 remain: shared Apple stores, explicit production keychain group, native review and
+  fresh authentication, canonical signing/transaction acceptance, and signed/notarized distribution.
+  Browser routing tests alone do not establish native approval safety after navigation or lifecycle
+  loss. Keep wallet access disabled until those boundaries have real proof.
+- Updated the debugging skill and a public-safe Browser Control follow-up with the observed relay and
+  internal-page/file-picker failures. No wallet key material, migration state or production data was
+  touched by the Chrome host.
+
+
+## 2026-09-05 — Apple Development local Chrome host signing proof
+
+The owner requested reuse of existing signing credentials and explicitly prohibited modifications to
+`stupid-app`. Corrected the earlier overbroad Developer ID prerequisite: Apple Development can sign
+a local macOS executable; Developer ID remains required for the selected independent release.
+Apple documents unified development certificates in its certificates overview and Mac development
+signing guidance. The existing development certificate has a matching keychain identity, so no
+private key export or import was necessary. No sibling tooling files were changed by this work.
+
+As an explicit local exception, copied the SwiftPM-built proof host to
+`.build/chrome-native-proof/StupidWalletChromeHost` and invoked
+`codesign --force --sign <existing-development-identity> --identifier net.stupidtech.stupid_wallet
+--timestamp=none <proof-host>`. `codesign --verify --strict <proof-host>` passed. Direct subprocess
+execution received exactly two framed responses: hello advertised protocol version 1 and disabled
+wallet access; list returned 4900. stderr was empty. No production stores were opened.
+
+Registered only the exact development extension origin in the Arc user-level
+`NativeMessagingHosts/net.stupidtech.stupid_wallet.json` manifest. Native Computer Use reopened the
+Arc toolbar popup; it still displayed the install/repair error. A temporary diagnostic launcher
+produced no launch marker and was removed from the registration, restoring the signed executable.
+Automatic approval review rejected adding a Google Chrome-directory registration because it would
+expand browser access beyond Arc. No Chrome registration was written. Browser launch, full lifecycle,
+shared-store access, authentication and distribution remain unproven.
+
+
+## 2026-09-05 — Google Chrome signed-host acceptance
+
+The owner explicitly switched testing to the Google Chrome app, authorizing the previously blocked
+Chrome registration. Registered the same signed executable and exact extension allowlist in Chrome's
+user-level NativeMessagingHosts directory; no broader origins or wallet access were enabled.
+Native Computer Use opened the already-loaded extension's real toolbar popup. It displayed the
+host-generated disabled-wallet response, proving that Chrome launched the Apple Development-signed
+helper and completed its versioned handshake. Dismissing and reopening the popup produced the same
+host response. The loopback fixture passed EIP-6963 discovery, denied `eth_sign` with 4200, and native
+read failure with -32603. That latter result does not establish end-to-end preservation of the host's
+4900 code. Full worker/browser restart, durable recovery, shared-store access, authentication and
+release remain separate gates. No Browser Control skill or stupid-app modifications were used.
+
+
+## 2026-09-05 — Provisioned macOS shared-storage read proof
+
+Continued the owner-authorized Apple Development proof without modifying stupid-app. Inspected current
+key stores, the installed iOS-on-Mac wallet's exact shared-entitlement matches, SDK SecItem declarations,
+and Apple TN3137. Native macOS SecItem defaults to the file-based keychain; the Chrome path needs
+`kSecUseDataProtectionKeychain=true` as well as the exact production group. Current core defaults
+remain unchanged pending the complete integration proof.
+
+Added the opt-in diagnostic `ChromeExtension/proofs/storage-access.swift` and its procedure. An
+unentitled Apple Development-signed negative control returned -34018 for a random nonexistent item
+in the exact group. No cached macOS profile was present, but a read-only Apple API lookup using the
+existing credentials found one existing MAC_APP_DEVELOPMENT profile. Private inspection confirmed the
+shared group, matching certificate and expiry. Downloaded it only to ignored private proof output;
+no certificate, device, App ID or profile was created or modified in the Apple account.
+
+Bundled the probe with that profile and its authorized identity, signed with the existing certificate,
+and verified strictly. The provisioned negative-item control returned -25300, then the real App Group
+resolved, its registry decoded, and exact registered key/seed-source existence queries succeeded.
+Every query prohibited interaction and requested no data or attributes. Output contained only booleans
+and status codes; exit was zero and stderr empty. No wallet records, key material, installed apps,
+Chrome registration, or migration state were changed.
+
+Verification: `xcrun swiftc -swift-version 6 -module-cache-path <proof-cache>
+ChromeExtension/proofs/storage-access.swift -o <probe>`, strict Swift formatting,
+`codesign --verify --strict <provisioned-proof-bundle>`, and direct bundled execution.
+`stupid-app doctor` (0.0.16) reported zero warnings/failures; `stupid-app build` passed for iOS 17 /
+SDK 26.5 after rerunning with compiler-cache access. Initial sandboxed compiler/build attempts failed
+on the user-level module cache; no product compilation defect was found.
+
+Gate 2 is partial: shared read/existence access is proven for the provisioned diagnostic, not enabled
+in the Chrome host. A minimal app-like helper bundle is required to embed the profile; this preserves
+the no-second-wallet-UI direction. Coordinated writes, process interruptions, canonical native review,
+fresh authenticated key release and recovered-signer verification remain required.
+
+
+## 2026-09-05 — Chrome checkpoint coordination and lifecycle proof
+
+Added a separate SwiftPM diagnostic executable under `ChromeExtension/proofs/LifecycleHost`, reusing
+the strict Chrome framing/session parser. It never constructs wallet services or performs keychain
+operations. A stable NSFileCoordinator claim serializes bounded synthetic checkpoint records and
+atomic replacement. Repeated IDs recover the committed revision only for the same profile; corrupt
+state fails without replacement. CLI fault injection kills only its own process before/after commit.
+
+`python3 ChromeExtension/proofs/test-lifecycle.py <proof-host>` passed 40 concurrent subprocess commits,
+SIGKILL before commit with unchanged state, SIGKILL after commit with idempotent recovery, changed-
+profile rejection and corrupt-state refusal. The initial sandboxed run failed because the coordinator
+service was unavailable; normal user-context execution passed. An initial manifest-edit placement
+error was corrected before the successful proof build.
+
+Signed a minimal bundle using the existing profile/certificate, omitting the explicit keychain group
+claim, and temporarily registered its exact executable for Chrome. Native Computer Use observed
+checkpoint 1 on opening the toolbar, 2 after dismissal/reopening, 3 after SIGKILL of the exact isolated
+helper, and 4 after a full `chrome://restart`. Restored the original signed transport registration and
+reloaded the extension. Only dedicated synthetic App Group proof records were written; production
+wallet records, secrets, and stupid-app source were untouched.
+
+Verification: `swift build --product StupidWalletChromeProofHost`, the subprocess proof above, strict
+Swift formatting, `swift test` (310 tests / 35 suites), JavaScript tests (29 passed), `stupid-app doctor`
+(zero failures/warnings), and `stupid-app build` (iOS 17 / SDK 26.5) passed. Native stdout was protocol
+framing in browser mode; CLI diagnostic mode is separate.
+
+Limits: this is checkpoint persistence, not a durable authenticated signing runner or a power-loss
+proof. Natural worker suspension and mixed installed-app/Safari/host coordination remain unproven.
+Native canonical review, fresh authentication, cancellation/lock handling and independently recovered
+signatures remain required before enabling Chrome wallet operations.
+
+
+## 2026-09-05 — Local Chrome wallet integration and authenticated acceptance
+
+Replaced the disabled transport entry point with a provisioned local helper using the existing ready
+wallet registry, shared WalletService and production App Group. Native key/seed stores explicitly
+select the macOS data-protection keychain only for this host; existing iOS defaults remain unchanged.
+Chrome performs no registry adoption, migration, wallet creation or secret export. Installed through
+`uv run --no-project python ChromeExtension/install-local.py --profile <private-macos-profile>` using
+the existing compatible profile and signing identity. Strict codesign verification passed. No Apple
+account resource or stupid-app source was changed. The unpacked extension is now named stupid wallet.
+
+Protocol 2 adds a nonce-bound original-document challenge after independent native canonical-summary
+review. Chrome's webNavigation permission verifies the top-level document and cancels stale routes.
+Native control responses and cancellation bypass ordinary request saturation; port EOF invalidates
+active authentication. A request-scoped cancellation token attaches only the fresh LAContext, prevents
+new protected loads and checks signature delivery after derivation. No context or unlocked key is
+cached. Chrome profiles cannot inherit old Safari hostname grants. Added deterministic coverage for
+that isolation, strict native control envelopes and cancellation before protected entropy access.
+
+Pinned Zod 4.5.4 and esbuild 0.28.2 with Bun 1.1.29 as a Chrome-only dependency/build exception under
+the owner's Zod requirement. Zod validates privileged popup and native context-check envelopes;
+esbuild bundles that transport. Shared browser resources remain framework-free. Added a local
+message/typed-data fixture using the prototype's viem solely for independent signature recovery.
+
+With explicit owner authorization, native Computer Use in Google Chrome connected the current
+selected account to the loopback fixture and passed chain/block RPC reads. Personal message and
+EIP-712 signatures independently recovered to the connected account after native authentication.
+Toolbar rejection and native-review cancellation both returned 4001. A visibly pending request
+vanished after same-origin page reload. The connection survived extension/helper reload and a full
+Chrome restart. No transfers or token approvals were requested. Broader authentication-failure,
+lock/sleep, multi-profile and in-flight-signing interruption acceptance remain separate release gates.
+
+Verification:
+
+- `swift test`: 314 tests / 36 suites passed.
+- `swift build --product StupidWalletChromeHost`: passed.
+- `node --test Tests/JavaScript/*.test.mjs`: 31 passed.
+- `swift format --in-place <changed-swift-files>` and configured prototype `oxfmt`/`oxlint` on
+  changed JavaScript passed; `node ChromeExtension/build.mjs` generated the unpacked artifact.
+- `stupid-app doctor`: zero warnings/failures; `stupid-app build`: passed.
+- `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and launched after shared
+  signing changes. `git diff --check` passed.
+
+Updated the handover, feasibility status, local installation README and debugging skill to distinguish
+working local signing from distribution readiness. The installed helper is Apple Development-signed;
+Developer ID, notarization, clean-machine packaging and Web Store identity/review remain release work.
+Actual Chrome transaction/batch network acceptance still requires a separately authorized request.
+
+Final installed-helper acceptance also passed a fresh authenticated message signature after full
+Chrome restart; the fixture independently recovered it to the connected account.
+
+
+## 2026-09-05 — Automatic Chrome toolbar review
+
+Chrome artifact 0.0.3 invokes action.openPopup after persisting a newly prepared request's routing
+record. Rechecks the exact current document, active tab and focused window; repeated route registration
+and background requests do not reopen it. Chrome's official API supports ordinary extensions from
+127 onward. Existing minimum-111 manual toolbar behavior remains; missing/refused presentation does
+not reject or discard a durable request. Safari and native signing code are unchanged.
+
+Verified using native Computer Use in Google Chrome: clicking the authorized local fixture's message
+button automatically opened the actual toolbar popup without a toolbar click. Rejected that request;
+no authentication or signature was needed. The first attempt was still running extension 0.0.2 because
+user interaction interrupted reloading; confirmed the loaded version and reloaded before the passing
+check. No external dapp approval or transaction was performed.
+
+`node --test Tests/JavaScript/*.test.mjs`: 32 passed, including foreground-only opening, no duplicate
+reopening, stale-document refusal and route retention if Chrome refuses the popup. Configured oxfmt,
+oxlint, node syntax checks and `node ChromeExtension/build.mjs` passed. Updated installation guidance
+and handover. Reference: https://developer.chrome.com/docs/extensions/reference/api/action#method-openPopup.
+
+
+## 2026-09-05 — One-time Chrome pairing and authenticated approval proofs
+
+The owner accepted a browser-profile trust boundary to remove duplicate per-request native review.
+Implemented protocol 3 and extension/helper 0.0.4: pairing enrolls an independent P-256 browser signing
+key, persisted as a non-exportable CryptoKey in extension-origin IndexedDB. Native stores only the
+public key in a dedicated entitled data-protection keychain service with device-only accessibility.
+Ethereum key storage, native cryptographic operations and fresh user-presence authentication remain
+unchanged. The browser credential is not a wallet key. Non-exportability limits browser APIs; it does
+not establish hardware protection or prevent malware controlling Chrome/profile storage.
+
+Setup runs in an extension-owned tab opened from Manage Chrome pairing. A two-minute native nonce,
+profile and public key form a domain-separated pairing transcript. The browser proves possession and
+both surfaces display its 48-bit SHA-256 comparison code; native confirms before persisting trust.
+The pairing nonce is removed before confirmation, preventing replay. Native-confirmed unpairing
+removes only the public pairing credential and cancels active operations in that helper; wallet keys
+and connected-site grants remain. Lost browser storage requires pairing again. Native records are
+loaded for every approval rather than cached as trust across processes.
+
+Canonical summaries now expose their binding digest. Chrome's popup retains the digest associated
+with its displayed ID/revision, and its adapter submits that exact binding on approval. Native
+compares it with the persisted summary, issues a ten-second nonce, and verifies a one-use raw P-256
+ECDSA/SHA-256 proof over the domain, profile, nonce, request ID, revision and digest. The worker signs
+only for its matching outstanding popup approval and current original top-level document. Native
+rechecks pairing at challenge consumption; existing WalletService canonical/replay/expiry checks
+still govern signing. Older protocol versions are rejected; no second-review compatibility path
+was retained. Shared-resource build transforms now fail if their expected source marker changes.
+
+Verification:
+
+- `swift test`: 317 tests / 37 suites passed, including an independent Node Web Crypto public-only
+  signature vector checked by CryptoKit, changed profile/nonce/request/revision/digest rejection,
+  wrong key, expired challenge and replay refusal, and pairing proof of possession.
+- `node --test Tests/JavaScript/*.test.mjs`: 33 passed. The new test loads a non-exportable credential,
+  verifies the signed native challenge independently and refuses a mutated reviewed binding.
+- Configured `oxfmt`/`oxlint`, Swift formatting, JavaScript syntax checks, generated browser artifact
+  and `git diff --check` passed. Test-only initial failures were Swift Testing's immutable macro
+  capture of a mutating struct method and Node's absent webcrypto.CryptoKey export; corrected the
+  harnesses to store the result and use global CryptoKey. No weakened product checks were needed.
+- `swift build --product StupidWalletChromeHost`, `stupid-app doctor` (zero warnings/failures),
+  `stupid-app build`, and `stupid-app run --simulator --udid <preferred-simulator>` passed.
+- Local helper installed with `uv run --no-project python ChromeExtension/install-local.py --profile
+  <private-macos-profile>` and strict signature verification. No stupid-app or Apple account changes.
+
+Native Computer Use in Google Chrome verified matching setup codes and successful pairing. The owner
+confirmed the message-signing UX contained only normal macOS authentication after extension approval;
+viem independently recovered the signature to the connected wallet. Automatic approval review first
+blocked temporary unpairing; after explicit owner authorization the live test removed approval
+controls, then re-pairing restored readiness. A full Chrome restart retained pairing; a subsequent
+EIP-712 signature independently recovered correctly. No transfer or token approval was requested.
+The installed profile is left paired and ready. Updated handover, feasibility, installation guidance
+and debugging skill. Distribution and broader transaction/lock/sleep/multi-profile gates remain open.
+
+
+## 2026-09-05 — Light Chrome toolbar icon
+
+Added Chrome-only #f2f2f2 arrow variants at 16/19/32/38 pixels, preserving the existing transparent
+shape and edge alpha. Generated with ImageMagick from the corresponding original toolbar PNGs using
+`-channel RGB -fill '#f2f2f2' -colorize 100 +channel`. Chrome artifact 0.0.5 maps action.default_icon
+to these files. General app/discovery and Safari icons are unchanged; native helper remains 0.0.4
+and protocol 3. This is a static light variant for dark browser themes.
+
+Verification: inspected the original and light assets on contrasting backgrounds, checked alpha-mask
+preservation, ran configured oxfmt/oxlint and node syntax checks on build.mjs, and generated the artifact
+with `node ChromeExtension/build.mjs`. Reloaded the extension in Google Chrome and visually confirmed
+the light arrow in the actual dark toolbar on the local fixture. `git diff --check` passed.
+
+
+## 2026-09-05 — Chrome review without an in-page banner
+
+Chrome artifact 0.0.6 removes the shared Safari notice implementation during the checked build
+adaptation, retaining no-op notice hooks so pending polling and completion stay unchanged. The
+existing active-document, focused-window automatic toolbar opening remains the review entry point.
+Browser refusal still leaves the pending badge and manual toolbar access. Safari is unchanged.
+
+Added a generated-Chrome-bridge regression test that rejects any DOM creation, exercises a pending
+poll and verifies rejection completion. Verification: repository oxfmt and oxlint passed;
+`node --test Tests/JavaScript/*.test.mjs` passed all 34 tests; `node ChromeExtension/build.mjs` passed.
+Live Google Chrome acceptance confirmed automatic popup opening for a local message request, no
+in-page banner after closing the popup while still pending, and manual reopening for rejection.
+No signature or transaction was needed for this presentation check.
+
+Also restored this append-only log after the preceding icon documentation update accidentally
+overwrote it with README content. Recovery used the committed baseline and the exact earlier
+recorded note additions/edits from this task. The baseline is preserved and prior Chrome foundation,
+local installation, storage/lifecycle, acceptance, automatic popup, pairing and icon entries are
+restored. The restored diff contains additions only.
+
+
+## 2026-09-05 — Developer ID Chrome beta distribution
+
+The owner requested a signed helper and packaged Chrome extension on GitHub while the containing
+app remains in TestFlight, authorizing repository-local beta release tooling without changes to
+stupid-app. Explicit approval covered creation of a Developer ID Application certificate through
+Xcode and a MAC_APP_DIRECT profile for the existing helper identity and existing App Group/keychain
+capabilities. The profile creation initially stopped at automatic approval review; after explicit
+owner approval the API operation succeeded. Existing Apple resources and protected wallet data were
+not replaced. Apple's API cannot create Developer ID certificates, but can create their profiles.
+
+Added package-release.py to reject development/device-limited or mismatched profiles and require
+the exact Developer ID identity, then assemble an optimized Apple Silicon helper with hardened
+runtime and secure timestamp. Apple accepted notarization; finalize-release.py staples and validates
+the ticket, requires Gatekeeper acceptance, and packages only the signed app, per-user installer
+and public guide. Extension 0.0.6 and helper 0.0.4 retain protocol 3 and the existing fixed Chrome ID.
+Release ZIPs include runtime license notices and SHA-256 checksums. Private credentials, API responses,
+profile source files and staging metadata remain excluded from Git. The distribution app embeds its
+required direct-distribution profile, which is not a development/device profile.
+
+The installer checks the expected Apple Developer ID signature and Gatekeeper before installing,
+retains a previous helper bundle, and registers only the exact Chrome host origin at user scope.
+It does not modify the wallet app, Safari installation, shared wallet data, or pairing. Tested
+installation from the actual helper ZIP and reloaded Chrome against the distribution-signed helper.
+
+Verification: `swift build -c release --product StupidWalletChromeHost` passed; `stupid-app doctor`
+reported zero failures/warnings; `node ChromeExtension/build.mjs` passed; 34 JavaScript tests and
+317 Swift tests / 37 suites passed. Python compilation and shell syntax checks passed. Apple
+notarization, staple validation, strict codesign verification and Gatekeeper assessment passed.
+This is a prerelease: clean-machine, broader transaction/batch, interruption, lock/sleep, multiple
+physical profiles and mixed-process acceptance remain open.
+
+Live Chrome acceptance of the installed distribution artifact also passed an authenticated local
+message signature independently recovered to the connected wallet. The existing profile remained
+paired across the Apple Development → Developer ID helper replacement. No transfer was requested.

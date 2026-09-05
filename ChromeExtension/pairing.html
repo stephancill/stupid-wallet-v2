@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Pair Stupid Wallet</title></head>
+<body><main><h1>Pair Stupid Wallet with Chrome</h1>
+<p>Pair once to approve requests in the wallet extension, followed by macOS authentication. Wallet keys stay native.</p>
+<p id="status" role="status">Checking pairing…</p>
+<p id="code"></p>
+<button id="begin">Start pairing</button>
+<button id="confirm" hidden>Compare code in native helper</button>
+<button id="revoke" hidden>Unpair this profile</button>
+<p>Pairing trusts this Chrome profile. It does not protect against software that controls Chrome or steals its pairing credential.</p>
+</main><script src="pairing-page.js"></script></body></html>

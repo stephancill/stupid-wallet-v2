@@ -63,6 +63,26 @@ struct ConnectedSitesTests {
         origin: "http://legacy.example:8080", address: account, profileID: "profile-a"))
   }
 
+  @Test("Chrome never inherits legacy Safari hostname grants")
+  func chromeGrantIsolation() async throws {
+    let store = ConnectedSitesStore(suiteName: "grants-\(UUID().uuidString)")
+    let account = try address(secret: 1)
+    let profile = "chrome:" + UUID().uuidString
+    try await store.connect(site: ConnectedSite(domain: "legacy.example", address: account))
+    #expect(
+      try await store.visibleAccount(origin: "https://legacy.example", profileID: profile) == nil)
+    try await store.connect(
+      site: ConnectedSite(
+        domain: "legacy.example", address: account,
+        origin: "https://legacy.example", profileID: profile))
+    #expect(
+      try await store.visibleAccount(origin: "https://legacy.example", profileID: profile)
+        == account)
+    #expect(
+      try await store.visibleAccount(
+        origin: "https://legacy.example", profileID: "chrome:" + UUID().uuidString) == nil)
+  }
+
   @Test("visible account is resolved from one origin and profile snapshot")
   func visibleAccountSnapshot() async throws {
     let store = ConnectedSitesStore(suiteName: "grants-\(UUID().uuidString)")

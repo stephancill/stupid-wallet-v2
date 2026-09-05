@@ -50,7 +50,7 @@
   }
 
   async function native(action, payload) {
-    const direct = await directNative(action, payload);
+    const direct = globalThis.walletChromePopup ? null : await directNative(action, payload);
     if (direct !== null) return direct;
 
     // Direct popup-to-native messaging is reliable on macOS Safari. Retain the worker
@@ -582,6 +582,17 @@
     // The review surface talks to native directly. Page status polling may keep the
     // background worker busy, but it must never delay listing or deciding a request.
     const reply = await native("list");
+    if (globalThis.walletChromePopup && (!reply || reply.ok === false || reply.error)) {
+      tray.textContent = "";
+      const title = document.createElement("strong");
+      title.textContent = "Wallet helper unavailable";
+      const detail = document.createElement("p");
+      detail.textContent = reply
+        ? errorMessage(reply)
+        : "Install the macOS helper package, then reopen this popup.";
+      tray.append(title, detail);
+      return;
+    }
     const pending = Array.isArray(reply)
       ? reply
       : reply && reply.ok && reply.data

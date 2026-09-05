@@ -465,3 +465,79 @@ stupid-app run --simulator --udid 6552DF1D-95CE-48E3-801F-8F80F0AA8D29
    public-safe entry to `docs/implementation-notes.md`.
 10. Update this skill when the investigation reveals a reusable command, simulator
     interaction, failure signature, stack boundary, or safety rule.
+
+
+## Chrome / Arc Proof Boundaries
+
+- `ChromeExtension/README.md` records the proof artifact and current native-host tooling prerequisites.
+  A successful protocol handshake is not wallet readiness. The current protocol-3 host requires a ready
+  registry; prove protected signing with independent recovery, not only a successful hello. Do not bypass that gate with default
+  macOS keychain access or a filesystem-path fallback to an App Group.
+- Use the worker-owned port for Chrome popup actions. A host disconnect must settle outstanding calls
+  without automatically replaying approval, sending, or other mutations. Recover native status before
+  deciding whether a new user operation is appropriate.
+- Chrome native stdout is framed protocol only. Bound input before JSON decoding and reject unknown
+  approval fields. Caller extension origin is defense in depth, not dapp origin or local-process
+  authorization.
+- Browser Control 0.6.0 may detach with `Page.navigate: Detached while handling command` on
+  `chrome://extensions` in Arc. Use Arc's native extension manager UI for load/reload; retain the
+  Browser Control session for ordinary fixture tabs. A relay-unreachable diagnostic inside a
+  filesystem sandbox can be a relay-start permission issue: a scoped approved relay command restored
+  connectivity in this investigation without reinstalling Browser Control.
+
+- Developer ID is a release prerequisite, not a prerequisite for every local executable test. An
+  owner-authorized isolated Apple Development host can validate signing and framed stdio without
+  opening production stores. Verify both `codesign --verify --strict` and execution; neither proves
+  browser launch, App Group/keychain access, or notarization. Reuse an existing matching keychain
+  identity without exporting private keys. Arc registration alone is not launch evidence: inspect
+  the real popup result and keep any other-browser registration separately authorized.
+
+- On the tested Mac, Arc's user-level registration did not launch the proof host. After an explicit
+  switch to Google Chrome and its user-level registration, the same signed executable and extension
+  completed the handshake. Do not infer a signing defect solely from Arc's generic unavailable
+  message, or silently register a host for another browser. A toolbar displaying the native proof
+  rejection establishes a completed transport handshake, not wallet authentication.
+
+- Native macOS `SecItem` calls default to the file-based keychain. For an iOS-on-Mac wallet's exact
+  keychain access group, explicitly set `kSecUseDataProtectionKeychain=true`. A signed nonexistent-item
+  query returned -34018 without entitlements and -25300 with a matching embedded macOS profile.
+  `ChromeExtension/proofs/storage-access.swift` then proved App Group registry reads and exact protected
+  source existence with fresh noninteractive contexts and no secret bytes. A bare executable needs
+  a minimal app-like bundle to embed the profile; no second wallet UI is needed. Keep this diagnostic
+  separate from the Chrome host because its output is not native-messaging framing.
+- Absence from local profile caches does not establish absence from the Apple account. A read-only
+  MAC_APP_DEVELOPMENT profile lookup found an existing suitable profile despite empty local macOS
+  caches. Inspect compatibility privately; never print profile contents or identity/device values.
+- Current `codesign -d --entitlements -` can render a `[Dict]` text description rather than an XML
+  plist. A plist decode failure is not evidence of missing entitlements. Check the actual format and
+  emit only exact entitlement-match booleans for credentialed app inspections.
+
+- Use `ChromeExtension/proofs/test-lifecycle.py <proof-host>` for real concurrent file-coordination
+  and before/after-commit SIGKILL tests. A restrictive tool sandbox can block the coordinator service;
+  rerun in normal user context before treating that as a product locking defect. Keep synthetic
+  checkpoints in the dedicated proof subdirectory, and restore browser registration after testing.
+  A recovered checkpoint after Chrome restart does not establish in-flight authentication recovery.
+
+- The integrated helper requires a minimal provisioned app bundle and explicit data-protection keychain
+  queries. A waiting `Confirming…` popup can be a legitimate macOS user-authentication prompt; ask the
+  owner to complete it before diagnosing a hang. Native review cancellation returns 4001; allow the
+  worker completion route to settle even if the popup has closed. Test native confirmation separately
+  from toolbar rejection. After replacing the helper, reload the extension and fixture tab.
+- Protocol 2 native review challenges the worker with a nonce before protected access. Verify exact
+  `webNavigation.getFrame` documentId, origin and profile, including same-origin reloads. Keep control
+  responses and cancellation ahead of ordinary request saturation checks; cancel active LAContexts
+  on native-port EOF and reject cancelled signature delivery after derivation.
+
+- Chrome protocol 3 replaces recurring native review with one-time pairing. Inspect Manage Chrome
+  pairing first when an approval is blocked. The extension uses a non-exportable P-256 CryptoKey in
+  its own IndexedDB, while native stores the public credential in the entitled data-protection
+  keychain. Never print/export that browser credential or confuse it with Ethereum key material.
+- Pairing comparison codes cover the profile, fresh native nonce and browser public key; setup lasts
+  two minutes and native confirms before saving. Approval proofs cover the request ID, reviewed
+  revision and binding digest plus profile and a ten-second native nonce. Web Crypto ECDSA uses raw
+  r||s signatures compatible with CryptoKit rawRepresentation, not DER. Cross-check with an independent
+  public-only vector. Consume the challenge once, including on invalid proofs, and recheck pairing.
+- Browser CryptoKey can be persisted through IndexedDB structured cloning. In Node tests, use the
+  global CryptoKey constructor; webcrypto.CryptoKey is undefined. Swift Testing macros cannot directly
+  invoke a mutating struct method through their immutable captured argument; store its result before
+  #expect. These are test-harness failures, not evidence of a product cryptographic failure.

@@ -33,6 +33,85 @@ and authenticated Dawn key proof writes no rebuild registration artifact before 
 The outer adoption claim uses `NSFileCoordinator` on a stable App Group URL rather than retaining an
 App Group advisory lock while either process may be suspended.
 
+Chrome on macOS is implemented for owner-authorized local use with the existing iOS-on-Mac wallet.
+The unpacked Chrome extension uses the shared provider, popup and `NativeWalletDispatcher`; the
+provisioned `StupidWalletChromeHost.app` opens the existing App Group and explicit data-protection
+keychain group. It requires a ready registry and never runs migration or creates wallet material.
+Production app, Safari, App Group and keychain identities are unchanged. Google Chrome is the selected
+acceptance browser; Arc's native-host launch remains unproven.
+
+The local installer uses an existing compatible macOS development profile and Apple Development
+identity, under the owner's direct-codesign exception. It installs only a helper bundle and exact
+Chrome user-level registration. No stupid-app source or Apple account resources are modified.
+`stupid-app` 0.0.16 remains the iOS build authority. The owner authorized repository-local Chrome
+beta packaging and GitHub prerelease distribution without modifying stupid-app. The helper now has
+an approved Developer ID Application certificate and MAC_APP_DIRECT profile for the existing helper
+bundle identity and shared stores. Optimized arm64 helper 0.0.4 is signed with hardened runtime and
+secure timestamp; Apple accepted notarization and the stapled app passes Gatekeeper. Chrome 0.0.6 is
+packaged as a fixed-ID unpacked ZIP. A per-user installer verifies identity and Gatekeeper acceptance,
+retains the prior helper, and writes only the Chrome host registration and helper installation.
+Installation from the release ZIP and an independently recovered authenticated message signature
+passed in Chrome with existing pairing retained. Clean-machine acceptance and a reserved Web Store
+identity remain general-distribution requirements.
+
+Chrome artifact 0.0.5 uses a light #f2f2f2 toolbar arrow at 16/19/32/38 pixels for dark browser
+chrome. Chrome-only assets preserve the original alpha masks; general app/discovery and Safari icons
+retain their existing appearance. The icon variant is static rather than automatic theme detection.
+
+Chrome artifact 0.0.3 automatically opens the real toolbar popup once after a new canonical request's
+route is persisted, only for the current document in the active tab of a focused window. Chrome 127+
+supports this API for ordinary extensions. Older supported Chrome builds and browser refusal retain
+the existing toolbar badge/manual review flow; presentation failure never drops a pending request.
+Chrome artifact 0.0.6 omits the Safari in-page pending banner while preserving durable polling and
+completion. Safari retains its existing notice. Background tabs and duplicate route registration do not reopen the popup. Physical Chrome acceptance
+confirmed automatic message review opening without a toolbar click, followed by rejection.
+
+Protocol version 3 requires one-time Chrome-profile pairing before native approval. The extension
+stores a non-exportable P-256 signing CryptoKey in its origin-owned IndexedDB; the helper stores only
+the paired public key in an entitled data-protection keychain item. These credentials are distinct
+from Ethereum wallet keys. Setup uses proof of possession and a two-minute nonce-bound transcript;
+the extension and native helper display the same 48-bit comparison code before native confirmation
+persists trust. Pairing changes and revocation require a native confirmation, not wallet authentication.
+The owner explicitly accepted the browser-profile-compromise tradeoff: Web Crypto non-exportability
+is an API restriction, not a hardware-backed guarantee against local profile theft or browser control.
+
+Normal approvals now follow toolbar review → fresh macOS authentication, with no second native review.
+The popup submits its displayed request ID, revision and canonical binding digest. Native code compares
+these with the persisted summary, creates a ten-second one-use challenge, and verifies the paired
+P-256/SHA-256 proof over domain, profile, nonce, request, revision and digest before protected access.
+The worker signs only a challenge matching that outstanding popup approval and verifies the original
+top-level document before and after creating the proof. Native checks the key remains paired when
+consuming the challenge. Replays, wrong keys, expiry and changed bindings fail closed. Existing core
+origin/account/chain/digest/expiry/one-time request checks and fresh LAContext protection remain.
+
+The service worker owns the native port and does not replay mutations after disconnect. Navigation,
+closed tabs and port EOF invalidate active protected operations. Chrome profiles cannot inherit old
+Safari hostname grants. Manage Chrome pairing opens an extension-owned setup tab; unpaired profiles
+show setup guidance instead of approval controls. Unpairing leaves wallet keys and site grants intact.
+Extension storage survives normal restarts; clearing it requires setup again. Extension 0.0.6 and
+helper 0.0.4 use protocol 3 and must be updated together; older protocol versions are rejected.
+
+Protocol-3 physical Chrome acceptance passed matching-code pairing, independently recovered message
+signing with owner-confirmed authentication-only UX, explicit unpairing with approval controls removed,
+restored pairing, full browser restart persistence and independently recovered EIP-712 signing after
+restart. The profile is left paired. Tests pass: 317 Swift / 34 JavaScript.
+
+The Chrome transport bundles pinned Zod 4.5.4 for strict privileged message validation and esbuild
+0.28.2, satisfying the owner's Zod requirement. These are an explicit Chrome-only exception to the
+no-dependency/no-build preference; Safari resources remain framework-free. Chrome adds webNavigation
+permission solely to verify the original document and revoke stale requests. Minimum Chrome is 111;
+minimum macOS helper target is 14.
+
+Physical-Mac acceptance on 2026-09-05 passed connection to an existing selected account, chain/block
+RPC reads, authenticated personal_sign and EIP-712 signatures independently recovered by viem to the
+connected account, toolbar rejection and native-review cancellation (4001). Same-origin navigation revoked a visible
+pending request; a fresh independently recovered signature passed after full Chrome restart. Synthetic checkpoint
+proofs additionally passed 40 concurrent commits and recovery across helper SIGKILL and Chrome restart.
+These results establish local signing usability, not all release gates: actual transaction/batch
+broadcast, multiple physical Chrome profiles, lock/sleep/authentication failure, in-flight signing
+interruption and mixed app/Safari/Chrome persistence acceptance remain unproven. No transaction or
+token approval was requested during local acceptance.
+
 The shared core contains the wallet-registry foundation: versioned group/account/home value types, strict
 snapshot and monotonic-transition validation, a dedicated cross-process advisory lock, durable atomic
 file replacement/removal, a `.migrating` readiness barrier, and projection-first commit-forward
@@ -473,7 +552,7 @@ origin/profile rather than falling back to the hostname entry.
 - EIP-6963 discovery follows the full request/announce handshake: the MAIN-world provider
   announces during initialization and re-announces whenever a dapp dispatches
   `eip6963:requestProvider`. Each page session uses a UUIDv4 provider identifier and frozen
-  provider metadata. The current manifest is `0.1.53`; the EIP-6963 reannounce behavior introduced
+  provider metadata. The current manifest is `0.1.54`; the EIP-6963 reannounce behavior introduced
   in `0.1.20` invalidated the earlier one-shot discovery script, which could be missed when an MIPD
   consumer initialized after the wallet. Provider session UUID generation uses
   `crypto.getRandomValues` when secure-context-only `crypto.randomUUID` is unavailable, preserving
@@ -720,6 +799,27 @@ The first usable milestone includes:
 - Stupidtech default RPC resolution and validated per-chain user overrides.
 - SQLite-backed transaction and signature activity.
 - Receipt polling for submitted transactions.
+
+### Chrome On macOS
+
+Approved, proof-gated implementation scope:
+
+- Reuse the EIP-1193/EIP-6963 provider, isolated bridge, canonical toolbar popup, wallet-owned method
+  policy, and `StupidWalletCore` rather than creating a separate wallet implementation.
+- Keep the current iOS-on-Mac wallet app. Ship a minimal Developer-ID-signed and notarized macOS
+  native-messaging helper package and Chrome extension with no second wallet UI.
+- Keep all key access, canonical pending authority, LocalAuthentication, signing, RPC policy, and
+  activity persistence native. No private-key operation enters JavaScript or WebAssembly.
+- Derive dapp origin from trusted Chrome sender context, generate an extension-owned profile identity,
+  reject incognito initially, and bind canonical requests to origin, profile, account, chain, method,
+  payload digest, revision, expiry, and unconsumed state.
+- Route popup decisions through the service worker's `connectNative()` port while retaining native
+  persistence as authority across popup, worker, browser, and host lifecycles.
+- Extend `stupid-app` as the build, signing, packaging, and release authority. Do not add an Xcode
+  project or independent release path.
+- Complete the ordered transport, shared-store, authority/profile, physical-Mac authentication,
+  end-to-end wallet, and release gates in `docs/chrome-extension-feasibility.md` before claiming
+  production readiness.
 
 ### Multiple Wallet Groups And Accounts
 
@@ -1382,7 +1482,7 @@ hover metadata.
 The popup now sends `list`, `approve`, and `reject` directly to native on macOS so status polling in
 the background worker cannot delay the review surface, while retaining the background route as a
 transport fallback for Safari environments where direct native messaging is unavailable. Manifest
-`0.1.53` contains the dedicated monochrome toolbar action icons, current request-review layout,
+`0.1.54` contains the dedicated monochrome toolbar action icons, current request-review layout,
 the viewport-bounded account picker, and the direct-popup synchronization introduced in `0.1.23`:
 after a successful decision it notifies the worker before the popup closes,
 and an empty worker request set clears the badge with an empty string rather than displaying `0`.
@@ -1451,6 +1551,38 @@ Record exact verification commands and public-safe outcomes in implementation no
 Never record wallet secrets, seed phrases, private keys, addresses tied to a person,
 device identifiers, or sensitive signing payloads.
 
+## Chrome On macOS (Approved, Proof-Gated)
+
+The 2026-09-05 architecture investigation in `docs/chrome-extension-feasibility.md` concludes that a
+secure Google Chrome extension on macOS is feasible only with an installed, signed, and notarized
+native messaging host. The host can be bundled as a narrow helper inside a desktop Stupid Wallet app,
+so it need not be a separate user-facing product. The current iOS-on-Mac/TestFlight app and Safari
+extension cannot provide Chrome's registered stdio endpoint unchanged, and Apple does not permit an
+arbitrary standalone macOS helper inside the existing iOS/iPadOS package. A Catalyst or native Mac
+version can share source and App Store identity but is a separate macOS binary/archive; alternatively,
+a helper-only macOS package can coexist with the current app. An extension-only wallet is rejected
+because private-key operations must remain native and every protected operation must retain fresh
+device-owner authentication.
+
+The product owner selected the helper-only packaging direction for the approved implementation:
+keep the current iOS-on-Mac wallet app, install a narrow Developer-ID-signed macOS host and Chrome
+manifest alongside it, share the existing protected stores only after the physical proof gate, and do
+not add a second wallet UI or desktop wallet app solely for Chrome integration.
+
+Most provider, bridge, popup, canonical request, RPC, Ethereum, persistence, and signing behavior is
+reusable. New work includes a valid Chrome native host and framed-JSON adapter, a transport-neutral
+native dispatcher, service-worker-owned native-port routing, extension-owned Chrome profile binding,
+explicit macOS keychain access-group configuration, companion installation, independent protocol
+versioning, and release-tooling support. Chrome supplies only the extension origin to its native
+host, so trusted dapp origin remains derived in the service worker from `MessageSender.origin`; page
+origin or profile metadata is never authoritative.
+
+Chrome is approved product scope with the helper-only packaging direction. Repository-local Chrome
+beta packaging is the owner-authorized exception recorded above; stupid-app remains the iOS build
+and release authority. The owner subsequently prioritized this implementation and
+selected Arc for acceptance. The ordered physical-Mac proof gates remain required before production claims. Incognito, Windows,
+and Linux are excluded from the scope.
+
 ## Risks And Open Decisions
 
 - **Toolbar discoverability:** Safari cannot open the extension popup programmatically.
@@ -1510,11 +1642,16 @@ investigation history in implementation notes.
    optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
    inside Gate 6.
 5. Gate 7 and later per the implementation gates.
+6. Complete the remaining Chrome release gates in `docs/chrome-extension-feasibility.md`: real
+   transaction/batch acceptance with explicit authorization, physical profile isolation, interruption
+   and mixed-process checks, then Developer ID/notarized packaging. Local connection and authenticated
+   message/typed-data signing are installed and proven. Do not modify `stupid-app` without a new request.
 
 ## Reference Sources
 
 - Existing app and migration source: `../ios-wallet`.
 - Approved multiple-account design: `docs/multi-account-implementation-plan.md`.
+- Approved Chrome-on-macOS design and proof gates: `docs/chrome-extension-feasibility.md`.
 - Repository debugging workflow: `skills/stupid-wallet-debugging/SKILL.md`.
 - `stupid-app` source and extension packaging behavior: `../stupid-ios-dev`.
 - Maintained CLI extension scope:

@@ -33,13 +33,19 @@ public final class KeychainKeyStore: Sendable {
 
   public let service: String
   public let accessGroup: String?
+  public let dataProtectionKeychain: Bool
+  private let cancellation: ProtectedOperationCancellation?
 
   public init(
     service: String = "co.za.stephancill.stupid-wallet.keys",
-    accessGroup: String? = KeychainKeyStore.defaultAccessGroup
+    accessGroup: String? = KeychainKeyStore.defaultAccessGroup,
+    dataProtectionKeychain: Bool = false,
+    cancellation: ProtectedOperationCancellation? = nil
   ) {
     self.service = service
     self.accessGroup = accessGroup
+    self.dataProtectionKeychain = dataProtectionKeychain
+    self.cancellation = cancellation
   }
 
   /// Saves a new key for `account`. The access-control policy is not revocable later.
@@ -63,6 +69,7 @@ public final class KeychainKeyStore: Sendable {
       kSecValueData as String: Data(key),
     ]
     query[kSecAttrAccessGroup as String] = accessGroup
+    if dataProtectionKeychain { query[kSecUseDataProtectionKeychain as String] = true }
 
     let status = SecItemAdd(query as CFDictionary, nil)
     guard status == errSecSuccess else { throw StorageError.saveFailed(status) }
@@ -76,6 +83,11 @@ public final class KeychainKeyStore: Sendable {
     reason: String = "Unlock your wallet to sign"
   ) throws -> [UInt8] {
     let context = LAContext()
+    guard cancellation?.attach(context) != false else { throw StorageError.notFound }
+    defer {
+      cancellation?.detach()
+      context.invalidate()
+    }
     context.localizedReason = reason
     context.touchIDAuthenticationAllowableReuseDuration = 0
     var query: [String: Any] = [
@@ -88,11 +100,13 @@ public final class KeychainKeyStore: Sendable {
       kSecUseAuthenticationUI as String: kSecUseAuthenticationUIAllow,
     ]
     query[kSecAttrAccessGroup as String] = accessGroup
+    if dataProtectionKeychain { query[kSecUseDataProtectionKeychain as String] = true }
 
     var item: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &item)
     context.invalidate()
-    guard status == errSecSuccess, let data = item as? Data else {
+    guard cancellation?.isCancelled != true, status == errSecSuccess, let data = item as? Data
+    else {
       throw storageError(status)
     }
     let key = [UInt8](data)
@@ -114,6 +128,7 @@ public final class KeychainKeyStore: Sendable {
       kSecUseAuthenticationContext as String: context,
     ]
     query[kSecAttrAccessGroup as String] = accessGroup
+    if dataProtectionKeychain { query[kSecUseDataProtectionKeychain as String] = true }
     let status = SecItemCopyMatching(query as CFDictionary, nil)
     context.invalidate()
     return Self.existenceStatusIndicatesPresent(status)
@@ -134,6 +149,7 @@ public final class KeychainKeyStore: Sendable {
       kSecMatchLimit as String: kSecMatchLimitAll,
     ]
     query[kSecAttrAccessGroup as String] = accessGroup
+    if dataProtectionKeychain { query[kSecUseDataProtectionKeychain as String] = true }
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
     guard status == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
@@ -147,6 +163,7 @@ public final class KeychainKeyStore: Sendable {
       kSecAttrAccount as String: account,
     ]
     query[kSecAttrAccessGroup as String] = accessGroup
+    if dataProtectionKeychain { query[kSecUseDataProtectionKeychain as String] = true }
     let status = SecItemDelete(query as CFDictionary)
     guard status == errSecSuccess || status == errSecItemNotFound else {
       throw StorageError.deleteFailed

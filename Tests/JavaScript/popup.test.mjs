@@ -536,3 +536,45 @@ class TestElement {
     return matches;
   }
 }
+
+test("Chrome popup uses only the worker and displays an unavailable helper instead of empty state", async () => {
+  const nodes = [];
+  let finish;
+  const rendered = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const document = {
+    getElementById() {
+      return {
+        textContent: "",
+        append(...items) {
+          nodes.push(...items);
+          finish();
+        },
+      };
+    },
+    createElement() {
+      return { textContent: "" };
+    },
+  };
+  const messages = [];
+  const browser = {
+    runtime: {
+      sendNativeMessage() {
+        throw new Error("Chrome popup must never open a native host");
+      },
+      async sendMessage(message) {
+        messages.push(message);
+        return {
+          ok: false,
+          error: { code: 4900, message: "Install or repair the macOS helper package." },
+        };
+      },
+    },
+  };
+  vm.runInNewContext(popupSource, { browser, document, walletChromePopup: true, window: {} });
+  await rendered;
+  assert.equal(messages[0].type, "popup.list");
+  assert.equal(nodes[0].textContent, "Wallet helper unavailable");
+  assert.match(nodes[1].textContent, /Install or repair/);
+});

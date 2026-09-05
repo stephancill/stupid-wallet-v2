@@ -51,6 +51,7 @@
     if (chainId !== undefined) message.chainId = chainId;
     if (requestKey !== undefined) message.requestKey = requestKey;
     if (payload !== undefined) message.payload = payload;
+    if (globalThis.walletNativeTransport) return globalThis.walletNativeTransport(message);
     return new Promise((resolve) => {
       browser.runtime.sendNativeMessage(NATIVE_APP_ID, message, (response) => {
         if (browser.runtime.lastError) {
@@ -131,6 +132,8 @@
 
   async function handle(message, sender, sendResponse) {
     try {
+      if (globalThis.walletChromeContext)
+        await globalThis.walletChromeContext.validate(message, sender);
       switch (message.type) {
         case "ethereum.request":
           return await route(message, sender, sendResponse);
@@ -149,7 +152,13 @@
         case "popup.list":
           // Read the durable native store (survives worker suspension).
           const nativeList = await native({ action: "list" });
-          sendResponse(nativeList.ok && nativeList.data ? nativeList.data.pending : []);
+          sendResponse(
+            globalThis.walletChromeContext
+              ? nativeList
+              : nativeList.ok && nativeList.data
+                ? nativeList.data.pending
+                : [],
+          );
           return;
         case "popup.approve":
           const approved = await native({
@@ -208,7 +217,14 @@
           sendResponse({ error: { code: -32601, message: "Unknown background message" } });
       }
     } catch (error) {
-      sendResponse({ error: { code: -32603, message: String(error) } });
+      const detail = { code: -32603, message: String(error) };
+      if (globalThis.walletChromeContext && message?.type === "ethereum.request") {
+        envelope(sendResponse, { ok: false, error: detail });
+      } else if (globalThis.walletChromeContext && message?.type === "ethereum.status") {
+        sendResponse({ __error: detail.message, code: detail.code });
+      } else {
+        sendResponse({ error: detail });
+      }
     }
   }
 
@@ -377,6 +393,8 @@
         return;
       }
       const requestId = prepared.data.requestId;
+      if (globalThis.walletChromeContext)
+        await globalThis.walletChromeContext.remember(requestId, sender);
       pending.add(requestId);
       updateBadge();
       // Hand the requestId to the bridge immediately; the bridge then polls the
@@ -420,12 +438,25 @@
   // Polled by the bridge: mirrors the persisted native status. This is a stateless
   // read on each poll, so a suspending service worker never loses the answer.
   async function status(message, sender, sendResponse) {
+    if (
+      globalThis.walletChromeContext &&
+      !(await globalThis.walletChromeContext.owns(message.id, sender))
+    ) {
+      sendResponse({ __error: "Request does not belong to this page", code: 4100 });
+      return;
+    }
     const res = await native({ action: "get", payload: { requestId: message.id } });
     if (!res.ok || !res.data) {
       pending.delete(message.id);
       updateBadge();
       sendResponse({ __missing: true });
       return;
+    }
+    if (
+      ["consumed", "rejected", "failed", "expired"].includes(res.data.status) &&
+      globalThis.walletChromeContext
+    ) {
+      await globalThis.walletChromeContext.forget(message.id);
     }
     if (res.data.status === "consumed" || res.data.status === "rejected") {
       pending.delete(message.id);
