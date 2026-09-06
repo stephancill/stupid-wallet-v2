@@ -7839,3 +7839,21 @@ Rendered a legacy before/after simulator run to confirm clear signing in the Saf
 
 - Production Worker deployment and physical notification presentation remain unperformed for this
   change. No transaction, production push, or release upload was initiated.
+
+## 2026-09-06 — TestFlight: external 1.0.0 (102) main + internal 1.0.0 (103) notifications
+
+- Rebased `feat/wallet-notifications-mvp-plan` onto the updated `main` (which carried the
+  clear-signing popup/blockie and reject-error fixes). Resolved doc collisions in
+  `docs/implementation-notes.md` and `skills/stupid-wallet-debugging/SKILL.md` by retaining
+  both the main and feature entries; no code conflicts.
+- `stupid-app release upload --wait` accepted main build 1.0.0 (102): processing VALID,
+  internal IN_BETA_TESTING. `release external-beta` added build 102 to the External Testers
+  group and created an external review submission; App Store Connect reports external
+  BETA_APPROVED (the final IN_BETA_TESTING flip is Apple's and was still pending at record time).
+  `release beta-notes` set a public "What to Test" note; a second external submission hit
+  `ENTITY_UNPROCESSABLE.INVALID_QC_STATE` (already reviewed), confirming the first stood.
+- For the notifications feature, bumped the three Apple bundles in lockstep to 1.0.0 (103)
+  (`release bump --build-number 103`), `release archive` signed the app plus the Safari and
+  Notification Service extensions, and `release upload --wait` accepted build 1.0.0 (103)
+  with `processing=VALID internal=IN_BETA_TESTING` — now on internal TestFlight.
+- No gateway-flow or wallet storage identity changed; only TestFlight distribution/versioning.
