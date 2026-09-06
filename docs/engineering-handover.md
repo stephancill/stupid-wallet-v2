@@ -170,7 +170,7 @@ removes an effective same-account Dawn hostname fallback, while exact-row deleti
 persisted hostname grants. Account-scoped activity queries and connected-app details cannot mix rows, repeated
 deterministic signatures persist as separate request events, and group deletion removes only the
 deleted accounts' connection state through the recoverable lifecycle. SQLite migration is serialized,
-supports Dawn versions 1/2 and shipped rebuild versions 3/4/6/7/8/9, and validates known table,
+supports Dawn versions 1/2 and shipped rebuild versions 3/4/6/7/8/9/10, and validates known table,
 column, foreign-key, uniqueness, and current-index shapes before mutation. A child-process test proves
 an external grant update is retained by the next mutation. `wallet_disconnect` now rejects with the
 native structured error when durable revocation fails instead of resolving a false success. The locked
@@ -313,18 +313,24 @@ standard-params work:
   at the bottom while details scroll and includes the blockie-prefixed signing account to the left
   of the actions; there is no duplicate wallet-brand header inside the
   Safari-owned popup. Typed-data summaries include primary type, domain fields, and ordered
-  root message fields. Transaction details remain raw canonical destination, value,
-  display-only estimated network fee, and full calldata. Calldata is initially clamped to three
+  root message fields. Transaction details show canonical destination, value, display-only
+  estimated network fee, and full calldata. Where an ERC-7730 clear-signing descriptor is
+  cached for the destination contract, the calldata is decoded and rendered as labelled
+  fields with the descriptor's intent (for example ERC-20 `Send`/`Approve` with a scaled
+  `Amount`); the raw calldata row remains as the expandable fallback and is always shown when
+  no descriptor matches. Calldata is initially clamped to three
   lines and expands in place when selected. Exact 20-byte address values throughout the review use
   a `blo` 2.0-compatible deterministic squircle blockie plus `0x1234...abcd` text, while retaining
   the full address as hover metadata. Native-value quantities are formatted in the network currency
   rather than shown as
   hexadecimal, and explicit add-network Chain IDs are decimal; nonce, gas limit, and raw
-  fee fields are not exposed in the popup, while simulation and calldata decoding remain
-  deferred. Generic chain rows resolve through the shared `NetworkStore` and display the
+  fee fields are not exposed in the popup, while simulation remains deferred.
+  Clear-signing descriptors are fetched+cached from the public `ethereum/clear-signing-erc7730-registry`
+  and applied by selector only when the descriptor's binding matches the chain/destination. Generic chain rows resolve through the shared `NetworkStore` and display the
   persisted network name, falling back to `Chain N` for unknown metadata; explicit add-network
   Chain ID fields remain numeric. Atomic batches use the same bordered per-call detail table as
-  single transactions, without ABI decoding, while retaining canonical target, formatted value,
+  single transactions, rendering each call's ERC-7730-decoded fields when a matching descriptor
+  is cached, while retaining canonical target, formatted value,
   and raw calldata. The batch summary omits redundant Execution and Authorization rows. Each table
   stacks a compact To field plus Value and Data only when they are non-zero/non-empty, with labels
   above their values
@@ -444,7 +450,9 @@ ordered by descending full-width wei balance and render as compact left-aligned 
 rows without a separator bullet.
 Zero and unavailable balances are omitted; when no non-zero rows exist, the expansion
 affordance is hidden and disabled. Activity details show persisted transaction calldata and signed
-message content as multiline text. Existing stored content remains readable; migration does not use
+message content as multiline text; when a matching ERC-7730 clear-signing descriptor is cached,
+the transaction's decoded fields render in a dedicated "Clear signing" section above the raw data.
+Existing stored content remains readable; migration does not use
 unsupported current-rebuild pending records to fill missing activity fields. EIP-712 activity follows
 the old app's readable hierarchy: known Domain fields in fixed
 order and alphabetized root Message fields, with nested objects and arrays pretty-printed. Invalid

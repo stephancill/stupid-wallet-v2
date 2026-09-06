@@ -70,6 +70,7 @@ import SwiftUI
     let item: ActivityRecord
     @State private var connectedSite: ConnectedSite?
     @State private var connectionError = false
+    @State private var clearDisplay: ClearSigningDisplay?
 
     init(item: ActivityRecord, connectedSite: ConnectedSite? = nil) {
       self.item = item
@@ -109,6 +110,9 @@ import SwiftUI
             }
           }
           if let transactionData = item.transactionData {
+            if let clear = clearDisplay, !clear.fields.isEmpty || clear.intent != nil {
+              clearSigningSection(clear)
+            }
             activityContentSection(title: "Data", content: transactionData)
           }
         } else {
@@ -135,6 +139,44 @@ import SwiftUI
       .navigationBarTitleDisplayMode(.inline)
       .task {
         if connectedSite == nil { await loadConnectedSite() }
+        await loadClearSigning()
+      }
+    }
+
+    private func loadClearSigning() async {
+      guard item.kind == .transaction, clearDisplay == nil,
+        let data = item.transactionData, let to = item.transactionTo
+      else { return }
+      let service = ClearSigningService(tokenResolver: RPCTokenResolver())
+      clearDisplay = await service.display(chainId: item.chainID, to: to, data: data)
+    }
+
+    @ViewBuilder
+    private func clearSigningSection(_ clear: ClearSigningDisplay) -> some View {
+      Section {
+        if let intent = clear.intent, !intent.isEmpty {
+          HStack {
+            Text("Action").foregroundStyle(.secondary)
+            Spacer()
+            Text(intent).foregroundStyle(.primary)
+          }
+        }
+        if let contract = clear.contractName ?? clear.owner, !contract.isEmpty {
+          HStack {
+            Text("Contract")
+            Spacer()
+            Text(contract).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+          }
+        }
+        ForEach(clear.fields, id: \.label) { field in
+          HStack(alignment: .top) {
+            Text(field.label).foregroundStyle(.secondary)
+            Spacer()
+            Text(field.value).multilineTextAlignment(.trailing)
+          }
+        }
+      } header: {
+        Text("Clear signing")
       }
     }
 

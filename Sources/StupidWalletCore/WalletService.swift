@@ -746,6 +746,12 @@ public actor WalletService {
     if record.kind == .send || record.kind == .batch {
       rows.append(("Network Fee", await estimatedNetworkFee(for: record)))
     }
+    let clearRows = await decodedClearRows(for: record)
+    if let feeIndex = rows.firstIndex(where: { $0.0 == "Network Fee" }) {
+      if !clearRows.isEmpty { rows.insert(contentsOf: clearRows, at: feeIndex) }
+    } else {
+      rows.append(contentsOf: clearRows)
+    }
     return Summary(
       bindingDigest: record.payloadDigest,
       id: record.id.uuidString,
@@ -762,7 +768,58 @@ public actor WalletService {
     )
   }
 
-  /// The current editable display label for an account, or nil when the registry
+  /// Decodes clear-signing (ERC-7730) fields for a send or batch request's calldata and returns
+/// them as labelled review rows. Returns empty when no descriptor matches or formatting fails,
+/// leaving the raw calldata rows as the fail-safe fallback.
+private func decodedClearRows(for record: WalletPendingRequest) async -> [(String, String)] {
+  guard record.kind == .send || record.kind == .batch else { return [] }
+  let service = ClearSigningService(
+    tokenResolver: RPCTokenResolver(client: rpcClient, resolver: resolver))
+  var result: [(String, String)] = []
+
+  if record.kind == .send {
+    guard case .array(let items) = record.params, items.count == 1,
+      case .object(let transaction) = items[0],
+      let to = transaction["to"]?.stringValue,
+      let data = Self.calldata(of: transaction)
+    else { return [] }
+    guard let display = await service.display(chainId: record.chainId, to: to, data: data) else {
+      return []
+    }
+    if let intent = display.intent, !intent.isEmpty {
+      result.append(("Intent", intent))
+    }
+    result.append(contentsOf: display.fields.map { ($0.label, $0.value) })
+    return result
+  }
+
+  guard case .object(let object) = record.params, case .array(let calls)? = object["calls"] else {
+    return []
+  }
+  for (index, callValue) in calls.enumerated() {
+    guard case .object(let call) = callValue,
+      let to = call["to"]?.stringValue,
+      let data = Self.calldata(of: call),
+      let display = await service.display(chainId: record.chainId, to: to, data: data)
+    else { continue }
+    if let intent = display.intent, !intent.isEmpty {
+      result.append(("Call \(index + 1) Intent", intent))
+    }
+    result.append(contentsOf: display.fields.map {
+      ("Call \(index + 1) \($0.label)", $0.value)
+    })
+  }
+  return result
+}
+
+private static func calldata(of transaction: [String: JSONValue]) -> String? {
+  guard let data = transaction["data"]?.stringValue, data != "0x", !data.isEmpty else {
+    return transaction["input"]?.stringValue
+  }
+  return data
+}
+
+/// The current editable display label for an account, or nil when the registry
   /// does not resolve it. Labels are non-authoritative review metadata and never
   /// enter canonical request identity.
   private func accountLabel(for address: String) -> String? {

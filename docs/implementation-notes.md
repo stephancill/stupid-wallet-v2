@@ -50,6 +50,1003 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-06 - ERC-7730 Clear Signing For Calldata Review
+
+### Summary
+
+- Added native, dependency-free ERC-7730 (clear signing) calldata decoding to `StupidWalletCore`
+  and wired it into the two review surfaces: the transaction (send/batch) approval summary that
+  feeds the Safari popup, and the containing app's Activity detail screen.
+- Added `ABI` (project-owned Solidity ABI decoder): parses human-readable signatures
+  (`transfer(address to,uint256 value)`, nested tuples, arrays), computes keccak function
+  selectors, and decodes calldata (elementary types, `bytesN`/`bytes`, `string`, tuples,
+  dynamic/fixed arrays) into a value tree. The decoder strips the selector only when present and
+  is cross-checked against hand-encoded ANSI vectors including nested dynamic tuples.
+- Added `ClearSigningDescriptor` (lenient JSON parse of ERC-7730 calldata descriptors, including
+  deployment bindings, metadata token, and field formats), `ClearSigningFormatter` (renders
+  labelled readable fields, short addresses, `tokenAmount` scaled with token decimals), and
+  `ClearSigningRegistry` an actor that fetches+caches the public
+  `ethereum/clear-signing-erc7730-registry` index and descriptors in the shared App Group and
+  only applies a descriptor when its declared deployments match the transaction's chain/contract.
+- Added `ClearSigningService` orchestrating descriptor resolution → selector match → ABI decode →
+  format. A no-op token resolver keeps formatting deterministic; the production path uses an
+  `RPCTokenResolver` that reads ERC-20 `symbol()`/`decimals()` for `tokenAmount` fields.
+- Wired decoded rows into `WalletService`'s native summary for `.send` (a single transfer
+  showing e.g. `Intent: Send`, `Amount: 1 USDT`, `To: 0x1111…1111`) and each `.batch` call; the
+  raw `Data` calldata row remains as the expandable fail-safe when no descriptor matches.
+- Extended `ActivityStore` with an additive `transaction_to` column (schema version 9 → 10) so
+  activity records retain the destination, and rendered decoded fields in `ActivityDetailView`'s
+  new "Clear signing" section above the raw calldata.
+- Updated `popup.js` batch rendering to show decoded per-call fields rather than only raw
+  Target/Value/Data.
+
+### Why
+
+- Reviewing raw calldata does not protect users from misreading contract intents; ERC-7730
+  descriptors let the wallet show intent + formatted labelled fields (e.g. `Approve … USDT
+  Spender …`) using the curated public registry. Doing it once inside `WalletCore` makes the
+  same decoding drive both the popup and the Activity screen.
+
+### Verification
+
+- `swift test`: 320 tests / 37 suites pass (9 new `ABIDecoderTests`, 5 new `ClearSigningTests`
+  including an offline registry→decode→format integration test seeded from warm cache).
+  The programmatic-name `xctest` rerun confirms final counts.
+- `xcrun swift-format lint --strict` is clean on the new files; `git diff --check` passes.
+- `node --check SafariExtension/Resources/popup.js` passes.
+
+### Follow-Up
+
+- Physical-device / simulator review of the popup and Activity renders; `stupid-app build` and
+  the signed install run require the physical iPhone. The live registry fetch caches the index
+  (15 min) and descriptors (24 h); the first cold decode requires network and falls back to raw
+  calldata. EIP-712 typed-message clear signing and `trustedTokens` ERC-20/721 template
+  rendering are out of scope for now.
+
+## 2026-09-04 - Physical Network Pairing Repair And Staging Diagnosis
+
+### Summary
+
+- Replaced and verified the selected physical iPhone's native lockdown and CoreDevice remote-pairing
+  records over USB. Wireless Pair-Verify, TCP tunnel establishment, RSD identity resolution, and a
+  bounded crash-report AFC probe all succeed with the phone physically unplugged.
+- Wireless deployment of the corrected action-only notification build reaches native AFC staging, then
+  stalls during the multi-megabyte IPA upload. Packet diagnostics show the device acknowledging upload
+  data and retransmitting the next AFC status response until the inner connection resets; replacing
+  pairing records again does not address this separate data-path failure. The same corrected build was
+  subsequently installed and launched successfully over USB without replacing app data.
+- Stopped only the stale privileged helper processes left by interrupted network-run attempts. Temporary
+  transfer-size and TCP-coalescing experiments were reverted after they did not change the failure.
+
+### Verification
+
+- `stupid-app device pair --usb --replace-lockdown-record` completed native lockdown pairing, verified
+  wireless lockdown, and stored a fresh CoreDevice record.
+- A bounded `stupid-app device crash --network ... --filter <nonexistent>` run established the wireless
+  tunnel, resolved RSD, connected to the crash-report service, and failed only because the intentionally
+  nonexistent report filter matched no file. This proves the repaired network pairing independently of
+  large-IPA installation.
+- `stupid-app run --usb --udid <device> --sudo /usr/bin/sudo` rebuilt and signed the app plus both nested
+  extensions, staged and installed the IPA, verified the installed bundle identifier, and launched the
+  containing app.
+- `stupid-app doctor` completed with zero failures and zero warnings. No diagnostic source changes remain
+  in the CLI worktree.
+
+### Follow-Up
+
+- Verify action-only notification presentation on the physical phone. Fix the separate macOS large-IPA
+  tunnel staging issue before relying on wireless deployment for similarly sized builds.
+
+## 2026-09-04 - Action-Only Notification Titles
+
+### Summary
+
+- Removed the locally resolved account-label prefix from enriched notification titles. The title now
+  contains only the backend action subject, while the existing `<account label> • <chain>` message line
+  continues to provide account context without duplication.
+- Kept malformed, absent, and oversized subject fallback behavior unchanged.
+
+### Why
+
+- Communication Notification presentation already shows the account label in its message line. Repeating
+  it in the title was redundant and made the action harder to scan.
+
+### Verification
+
+- Added a source-level regression assertion that the Notification Service Extension does not pass the
+  local account label into subject construction.
+- A corrected development build still requires physical-device reinstall and notification presentation
+  proof.
+
+## 2026-09-04 - Enriched Notification Subjects Production Deployment
+
+### Summary
+
+- Applied the additive token-cache migration to the production D1 database before deploying the updated
+  Worker at the existing production custom domain.
+- Deployed webhook subject enrichment and APNs subject propagation with all existing D1, queue, cron,
+  domain, and environment bindings retained.
+- This deploy changes only the backend. Shipping the matching Notification Service Extension remains a
+  separate iOS release step.
+- Updated the in-app notification privacy copy to disclose that alerts may include a rounded USD amount
+  and asset symbol while account labels and blockies are added locally.
+
+### Verification
+
+- `wrangler d1 migrations list stupid-wallet-backend --remote` reported only
+  `0002_token_cache.sql` before migration and no pending migrations afterward.
+- A remote schema query confirmed the `token_cache` composite key and metadata, price, and timestamp
+  columns. The table was initially empty as expected and will populate from verified webhook activity.
+- `wrangler deploy` uploaded the Worker and activated the custom domain, scheduled trigger, upstream
+  queue bindings, APNs queue bindings, and production D1 binding. The deployment list confirmed the new
+  version receives 100% of traffic.
+- HTTPS requests to the production custom domain returned the expected root `404 Not Found` response and
+  a `204` CORS preflight response for the public challenge route.
+- A development-signed physical-iPhone USB install completed, including both nested extensions, and the
+  installer verified the installed bundle identifier. Automatic launch first failed at privileged TUN
+  creation; the phone disconnected from USB before the privileged retry, so launch and enriched push
+  presentation still require manual confirmation on the phone.
+
+### Follow-Up
+
+- Ship the matching iOS build, then prove one priced transfer and one swap notification on a physical
+  lock screen without initiating an unapproved financial transaction.
+
+## 2026-09-04 - Enriched Notification Subjects
+
+### Summary
+
+- Added webhook-time notification-subject enrichment modeled on the wallet email notification service.
+  Successful fungible activity resolves token/native symbol, decimals, and USD price through DeFiLlama;
+  metadata is cached in D1 for 10 minutes by a new additive migration.
+- A priced incoming/outgoing pair produces a bounded swap subject. Another priced leg produces
+  `Received/Sent <$value> of <symbol>`. Reorgs, transaction failures, unsupported chains, malformed
+  metadata, and unavailable pricing retain the existing categorical title.
+- The APNs queue and payload now carry the bounded subject and use it as the base alert title. Older
+  queued messages without a subject retain categorical fallback behavior.
+- The Notification Service Extension validates the subject and uses it for the Communication
+  Notification sender/title. When local display state is available, it prepends the account label only
+  to an enriched subject; the existing account/chain message line and local blockie remain unchanged.
+- This intentionally expands APNs/lock-screen disclosure for successful fungible activity to a rounded
+  USD amount and bounded asset symbol. Account labels, full addresses, token contracts, counterparties,
+  and credentials remain absent from the base payload.
+
+### Why
+
+- Categorical titles such as `Token received` omit the useful value and asset context already available
+  from the signed webhook. The email implementation provided a proven enrichment and formatting model,
+  while this wallet keeps its stricter local-only account identity boundary.
+
+### Verification
+
+- In `server/`, `bun run format:check`, `bun run lint`, `bun run typecheck`, and `bun run test` pass: 30
+  tests / 7 files. Coverage includes native USD subjects, two-sided swap subjects, unavailable-price and
+  reorg fallbacks, APNs subject propagation, and old queue-message fallback.
+- `swift test` passes: 306 tests / 34 suites. The focused notification suite passes 16 tests, including
+  the service-extension subject wiring assertions.
+- `xcrun swift-format lint` is clean for the changed Swift files. `stupid-app 0.0.15 doctor` passes with
+  0 failures and 0 warnings, and `stupid-app build` succeeds against the iOS 26.5 SDK.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, installed, and launched the app on
+  the preferred iOS 26.3 simulator. Accessibility inspection confirmed the retained wallet home is
+  running.
+- `git diff --check` passes.
+
+### Follow-Up
+
+- The D1 migration and Worker deployment are complete. Install the matching iOS build before expecting
+  the new locally prefixed title presentation, then prove one priced transfer and one swap on a physical
+  lock screen without initiating an unapproved financial transaction.
+
+## 2026-09-04 - Notification Display-Map Migration Repair
+
+### Summary
+
+- The corrected communication body rendered `Ethereum`, proving the body mapping, but omitted the account label
+  and used a blockie that did not match the active account.
+- The server and iOS opaque registration-ID algorithms match. Read-only device inspection found no
+  `notificationDisplay.json` in the shared App Group.
+- Reconciliation now copies installation metadata from an existing notification-only Keychain identity into
+  persisted notification state on every successful pass, rather than only when creating a new installation.
+  This lets upgraded installations derive and write the backend-compatible registration-ID alias map.
+- Local account-alias refresh now performs the same repair and writes the display map before remote
+  reconciliation, preventing the observed transient enrollment error from blocking local presentation metadata.
+- The display store now uses the shared App Group `UserDefaults` suite instead of caching either a file-container
+  URL or a temporary-directory fallback during early coordinator initialization. Notification settings also
+  explicitly refreshes the active address and label before loading enrollment state.
+- Added regression coverage for an older decoded notification state with account labels but no installation ID.
+
+### Why
+
+- Existing installations can already have a valid installation ID in Keychain while their older persisted state
+  predates the mirrored metadata fields. The prior branch reused the identity for backend calls but left
+  `state.installationId` nil, causing display-map writing to return without creating a file. In addition, display
+  writing was ordered after remote enrollment, unnecessarily coupling local presentation to service availability.
+  A cached temporary fallback could also isolate the app's map from the extension for the process lifetime.
+  The extension then correctly fell back to a chain-only label and synthetic blockie seed.
+
+### Verification
+
+- Pre-fix physical proof: left avatar and `Wallet activity` rendered; after the body fix, `Ethereum` rendered as
+  the message line, but the account label and account-derived blockie were absent.
+- `swift test --filter NotificationCoreTests` passes: 16 tests / 0 failures, including the legacy metadata
+  repair regression. `stupid-app build` succeeds.
+- The repaired app and both nested extensions signed and installed on the paired physical iPhone. Opening
+  Notifications updated and enlarged the shared App Group preferences file, proving the local display map was
+  written without inspecting its user-linked contents. The subsequent test push was accepted by APNs.
+- Final visual confirmation of the account label and account-derived blockie remains on the physical lock screen,
+  which iPhone Mirroring does not expose.
+
+### Follow-Up
+
+- Confirm the delivered physical notification shows `Account 1 • Ethereum` and the active account's blockie.
+
+## 2026-09-04 - Communication Notification Message-Line Fix
+
+### Summary
+
+- Physical-device delivery proved the Communication Notifications path and rendered the locally generated
+  blockie in the left avatar position with the categorical `Wallet activity` title.
+- The same test showed that iOS omitted the `<account label> • <chain>` detail when it was assigned only to
+  `UNMutableNotificationContent.subtitle`, despite the intent carrying the same string.
+- The Notification Service Extension now assigns the local context to the mutable notification `body` as
+  well as `INSendMessageIntent.content`, and clears the subtitle. Added a source-level regression assertion
+  because the final communication layout is system-rendered and cannot be deterministically unit-tested.
+
+### Why
+
+- Apple's communication presentation uses the sender for the avatar/title treatment and does not reliably
+  display the ordinary notification subtitle. Keeping the intended message in the body preserves it through
+  `UNNotificationContent.updating(from:)` while retaining the same privacy boundary.
+
+### Verification
+
+- The pre-fix physical notification showed the correct left-side blockie and `Wallet activity` title but no
+  detail line.
+- `swift test --filter NotificationCoreTests` passes: 15 tests / 0 failures, including the body-mapping
+  regression assertion. `stupid-app build` succeeds for the corrected app and notification extension.
+- The corrected build and both nested extensions signed successfully, were installed on the paired physical
+  iPhone, and the final test delivery was accepted by APNs on its first attempt. Because iPhone Mirroring does
+  not expose the physical lock-screen notification, final visual confirmation of the detail line remains open.
+
+### Follow-Up
+
+- Confirm the delivered lock-screen notification includes `Account 1 • Ethereum` below the categorical title.
+
+## 2026-09-04 - Communication Notification Presentation
+
+### Summary
+
+- Replaced the ordinary notification attachment thumbnail with Apple's Communication Notifications
+  presentation. The Notification Service Extension now creates an incoming `INSendMessageIntent`, uses
+  a locally generated blockie as the sender's `INPerson.image`, donates the interaction, and returns
+  `UNNotificationContent.updating(from:)` only after donation succeeds.
+- Mapped the categorical event title to the communication sender title and the local
+  `<account label> • <chain>` context to the message line. The ordinary categorical title/subtitle remain
+  the fail-safe if donation or content updating fails or the extension reaches its time limit.
+- Added `INSendMessageIntent` to the containing app's `NSUserActivityTypes`, added the Siri and
+  Communication Notifications entitlements to the containing app only, enabled both capabilities for
+  the production App ID, and regenerated development and App Store distribution profiles. The
+  Notification Service Extension keeps only App Group access.
+
+### Why
+
+- The product owner explicitly approved Communication Notifications so the account blockie can occupy
+  the system's left-side avatar position. This intentionally adopts Apple's communication presentation
+  and its associated notification-summary/Focus semantics for wallet activity.
+- Apple's current App Store Connect OpenAPI capability enum does not expose Communication Notifications,
+  so the capability requires a Developer portal change; Siri remains declarative in `stupid-app.yml`.
+
+### Verification
+
+- Apple's official Communication Notifications sample was checked for target ownership and API order:
+  the communication/Siri entitlements belong to the containing app, and interaction donation precedes
+  notification-content updating.
+- `swift test --filter NotificationCoreTests` passes: 15 tests / 0 failures, including the new
+  `NSUserActivityTypes` and entitlement regression test.
+- `stupid-app build` succeeds for the iOS app and notification-service extension.
+- The replacement development and App Store distribution profiles were decoded locally and both
+  authorize the Communication Notifications and Siri entitlements.
+- The development app and both nested extensions signed successfully. Physical installation remains
+  pending because CoreDevice lost its wireless tunnel and iPhone Mirroring reported the phone as not
+  found; no presentation claim is made from the signed artifact alone.
+
+### Follow-Up
+
+- Install the signed build on the physical iPhone and send one explicitly approved test notification
+  while collecting the service-extension log. Confirm the left avatar and the two agreed content lines
+  on-device before treating presentation as complete.
+
+## 2026-09-04 - Notification Presentation Fallback And Local Display Map
+
+### Summary
+
+- A newly observed live swap reached the production event store as `tokenReceived`, fanned out to the
+  installation, and was accepted by APNs, but the physical banner retained the generic `Wallet
+  activity` base title and showed no local account presentation. This localizes the remaining defect to
+  notification presentation rather than webhook ingestion, classification, fanout, or APNs transport.
+- Added the previously missing containing-app writer for the non-secret App Group notification display
+  map. The app now derives the same installation-scoped opaque registration ID as the backend and stores
+  only the local account label/address mapping needed by the Notification Service Extension.
+- Changed the APNs base alert from an always-generic title to the already permitted categorical event
+  title. If iOS does not run the extension, token/native/NFT direction and transaction outcome remain
+  useful; labels and full addresses still never enter the APNs payload.
+- Corrected the notification extension point from the plausible but invalid
+  `com.apple.usernotifications.serviceextension` to Apple's exact
+  `com.apple.usernotifications.service`. The invalid value prevented iOS from registering the appex for
+  mutable notification delivery, which explains the unchanged base alert and silent extension log.
+- Added a privacy-safe base alert body and clear it in the extension after enrichment. This uses Apple's
+  conservative documented alert shape while preserving the agreed final title plus local subtitle.
+- Confirmed that the left-side per-sender avatar used by messaging apps is Communication Notifications
+  presentation backed by `INSendMessageIntent`/`INPerson`. Wallet activity is not person-to-person
+  communication, so that capability must not be used merely to obtain its avatar layout. Ordinary wallet
+  alerts can use the fixed app icon and an attachment thumbnail, but public APIs do not expose an arbitrary
+  per-notification replacement for the left icon.
+- Deployed the categorical fallback to the production Worker and installed the updated development app
+  plus notification-service extension on the physical iPhone.
+
+### Why
+
+- The extension reader existed, but the containing app never created `notificationDisplay.json`.
+  Separately, relying on the extension for the categorical title made an extension launch failure erase
+  information that was already present in the privacy-safe `eventKind` payload field.
+
+### Verification
+
+- `swift test` passes: 306 tests / 34 suites. New coverage proves atomic display-map round-trip, exact
+  Swift compatibility with the backend opaque registration-ID derivation, backward-compatible state
+  decoding, and the exact Apple notification-service extension point.
+- `stupid-app doctor` passes with 0 failures and 0 warnings; `stupid-app build` succeeds, and the signed
+  app and both nested extensions install on the paired physical iPhone.
+- Under Node 22, `npm run format:check`, `npm run lint`, `npm run typecheck`, and `npm test` pass: 22 tests
+  / 5 files. The title table is exhaustively checked for every bounded event kind plus unknown fallback.
+- Production Worker deployment completed successfully.
+- The conservative base-alert body update was deployed, and an instrumented corrected appex was installed.
+
+### Follow-Up
+
+- Send one alert with the latest appex installed while collecting the filtered notification-service
+  process log, then prove the local subtitle and decide whether to retain the attachment thumbnail or omit
+  the blockie under the platform's non-communication presentation constraint.
+
+## 2026-09-04 - Live Activity Webhook Timestamp Fix
+
+### Summary
+
+- Corrected webhook replay-window validation to interpret the provider's `webhook-timestamp` as Unix
+  seconds before comparing it with the application's millisecond clock. Malformed and unsafe timestamps
+  now fail explicitly.
+- Corrected categorical swap classification: decimal value `"0"` is no longer treated as native movement,
+  and exact `erc20`/`erc721` effect kinds now map to token/NFT notification categories.
+- Deployed both corrections to the production Worker.
+
+### Why
+
+- Production contained no activity or installation events despite four active upstream subscriptions.
+  The upstream delivery ledger showed two real activity deliveries dead-lettered after one HTTP 401:
+  the earlier delivery hit the obsolete header contract, and the latest hit the seconds/milliseconds
+  replay-window mismatch. APNs was not involved in either failure.
+
+### Verification
+
+- `npm run format`, `npm run lint`, `npm run typecheck`, and `npm test` pass under Node 22: 20 tests / 4
+  files. HTTP coverage now uses Unix seconds, rejects millisecond and malformed timestamps, and verifies
+  a real-shape zero-native-value ERC-20 swap is accepted and classified as `tokenSent`.
+- After deployment, two independent provider-generated, provider-signed `webhook.test` deliveries reached
+  the production receiver with HTTP 202 and no retry. A privacy-safe production database check localized
+  prior failures before ingestion: zero activity events and only the previously proven synthetic APNs
+  delivery.
+
+### Follow-Up
+
+- The customer API cannot replay dead-lettered deliveries. Use the provider's operator-authenticated DLQ
+  replay or create a newly authorized activity event, then verify activity ingestion, installation fanout,
+  APNs acceptance, and the physical banner. Do not initiate a financial transaction without explicit user
+  authorization.
+
+## 2026-09-04 - Notification Delivery Contract And Test Push
+
+### Summary
+
+- Corrected the deployed webhook receiver to the Stupid Webhooks delivery contract: standard
+  `webhook-*` headers, lowercase-hex HMAC-SHA256 over `<timestamp>.<exact-body>`, and the typed outer
+  observed/reverted/test envelope. The receiver now normalizes verified activity into the existing
+  internal event model and accepts provider test pings without activity fanout.
+- Added a signed, installation-scoped, rate-limited test-notification endpoint and an enrolled-account
+  `Send Test Notification` action. It exercises the real APNs queue and token without fabricating an
+  upstream/cursor activity event.
+- Coalesced concurrent containing-app reconciliation triggered by notification toggles, APNs token
+  callbacks, foreground entry, and test sends. Final-account cleanup waits for an in-flight reconciliation,
+  removing the observed transient retry-state race.
+- Deployed the Worker and installed the matching development build on the paired physical iPhone.
+
+### Why
+
+- The previous receiver fixtures encoded a header, signature, and body shape the upstream provider does
+  not emit, so real activity could not reach APNs. The independent test action also makes APNs diagnostics
+  possible without requiring a financial transaction.
+
+### Verification
+
+- `npm run format`, `npm run typecheck`, and `npm test` pass under Node 22: 18 tests / 4 files. Coverage
+  includes the exact upstream observed envelope, invalid HMAC, provider test ping, and signed test-push
+  fanout.
+- `swift test` passes: 306 tests / 34 suites.
+- `stupid-app doctor` passes with 0 failures and 0 warnings, and `stupid-app build` succeeds against the
+  iOS SDK. The signed app and both nested extensions installed on the physical iPhone.
+- Through iPhone Mirroring, notification enrollment reconciled with Ethereum, Optimism, Arbitrum One,
+  and Base all Active. The signed test endpoint returned HTTP 202, the APNs queue consumed one delivery,
+  and the production delivery ledger recorded first-attempt `accepted` from sandbox APNs.
+- The product owner confirmed the resulting alert banner was visible on the physical iPhone, completing
+  sandbox APNs delivery and banner-presentation proof.
+
+### Follow-Up
+
+- Verify the service-extension subtitle and local blockie directly on the physical phone; the banner itself
+  is now proven even though it was not visible inside iPhone Mirroring.
+- Trigger the provider's signed test delivery or a deliberately authorized real activity event to prove
+  the live upstream receiver, then separately prove production-APNs behavior with a production build.
+
+## 2026-09-04 - App Notification Enrollment And Physical Permission Proof
+
+### Summary
+
+- Added a containing-app `NotificationCoordinator`, app-delegate APNs bridge, and per-current-account
+  Notifications settings screen. Opt-in records the desired account, requests native authorization,
+  registers for remote notifications, reconciles complete address/chain snapshots, exposes backend
+  chain stages, retries on foreground entry, and cleans up the final-account installation.
+- Added an app-only, non-synchronizing `ThisDeviceOnly` P-256 installation key store and signed
+  installation client. A distinct constrained key is created in the existing app/Safari keychain group
+  for later popup-liveness renewal; neither key can release or sign with wallet material.
+- Extended registration state with backward-compatible chain stages and a bounded public error, and
+  extended backend create/renew contracts to persist the popup key and return the reconciled stages.
+- Corrected the upstream adapter to the deployed Stupid Webhooks contract: subscription creation now
+  supplies `chainIds` plus the configured webhook ID and parses the returned subscription array; chain
+  discovery now treats HTTP 200 as supported and HTTP 404 as unsupported.
+- Deployed `server/` at the production custom domain with D1, separate upstream-operations and APNs-
+  delivery queues, the initial migration, and one signed upstream webhook destination. Stored the app-
+  data, upstream, webhook-HMAC, and APNs credentials as encrypted Worker secrets; no values were written
+  to repository files or public notes.
+- Explicitly operator-activated Ethereum, Optimism, Arbitrum One, and Base below the normal five-
+  installation threshold. The override used the normal activation outbox, upstream capability checks,
+  effective-registration recomputation, and subscription creation path rather than fabricating eligible
+  installations or directly inserting upstream subscription IDs.
+- Corrected the Wrangler scheduled-trigger configuration from an ignored object shape to the supported
+  cron-string shape and deployed the intended 15-minute reconciliation schedule. A temporary one-minute
+  cadence was used only while draining this activation and then restored.
+- Associated the notification-service App ID with the production App Group and regenerated unique
+  development profiles for the containing app and service extension after capability changes;
+  `stupid-app.yml` now records the containing app's Push/App Group declarations and each extension's
+  App Group declaration explicitly.
+
+### Why
+
+- This closes the next app-enrollment slice without weakening explicit account opt-in, app-only
+  installation identity, complete-snapshot reconciliation, or the rule that APNs is not activity
+  authority.
+
+### Verification
+
+- `bun run format:check`, `bun run lint`, and `bun run typecheck` pass in `server/`.
+- With the repository-compatible Node 22 runtime selected, `bun run test` passes: 17 tests / 4 files,
+  including the signed HTTP create-installation path that persists the popup-liveness key and focused
+  contract coverage for upstream chain discovery and subscription creation.
+  A default Node 26 shell correctly failed to load the Node-22-built `better-sqlite3` native module;
+  this was a local ABI mismatch, not a test failure.
+- `swift test` passes: 306 tests / 34 suites.
+- `../stupid-ios-dev/.build/arm64-apple-macosx/debug/stupid-app doctor` passes with 0 errors and
+  0 warnings; `stupid-app build` passes for the iOS SDK. The installed release CLI currently aborts
+  `doctor` when its adjacent `stupid-app_SigningKit.bundle` is absent, so the matching bundled debug
+  executable was used rather than treating launcher failure as a project diagnostic.
+- `stupid-app run --usb` signed the app and both nested extensions but correctly rejected the network-
+  paired phone as unavailable through usbmuxd. The same signed `stupid-app` artifact installed and
+  launched through the active CoreDevice connection.
+- On a physical iPhone through iPhone Mirroring, Settings → Notifications rendered, Account Activity
+  presented the native permission prompt, Allow succeeded, APNs registration reached reconciliation,
+  and the signed production installation create succeeded without wallet authentication. All four
+  configured networks rendered as staged, matching the global activation threshold, and a read-only D1
+  count confirmed exactly one installation record.
+- A newly published custom domain initially resolved through public DNS while the phone retained a
+  negative lookup. Worker tail plus an unchanged D1 count localized the failure before the Worker; a
+  user-approved Wi-Fi off/on refresh cleared the retry state and enrollment completed.
+- Apple rejected creation of another team-scoped APNs key because the account had reached its key limit.
+  With explicit product-owner approval, production reuses an existing team-scoped, all-topics key. This
+  broad credential authority remains an operational risk; its private material and identifiers were not
+  recorded in the repository.
+- Production aggregate checks after the operator override reported four active chains, four live
+  upstream subscriptions with provider IDs, and zero unfinished outbox operations. The physical iPhone
+  then reconciled and rendered all four networks as Active.
+- The Browser Control Arc relay did not start, so authenticated Cloudflare queue dispatch used direct Arc
+  UI control instead. Each JSON message showed Cloudflare's `Message sent` result, and D1 independently
+  proved completion; no credential was entered into browser automation source or output.
+
+### Follow-Up
+
+- Prove signed webhook ingestion, queue processing, sandbox and production APNs delivery, and local
+  service-extension subtitle/blockie rendering end to end.
+- Wire direct account/group/network mutation triggers, Safari popup liveness, and atomic cursor-feed
+  activity persistence.
+
+## 2026-09-04 - App-Enrollment Reconciliation Policy
+
+### Summary
+
+- Added `NotificationPolicy.swift` to `StupidWalletCore`: `NotificationDesiredState` composes the
+  desired enrollment (active wallet accounts x configured chains whose globally webhook-active chains
+  produce effective address-chain pairs), and `NotificationReconciliationPolicy` encodes notification
+  eligibility (authorization + alert + APNs token), liveness-renewal cadence (≤14 days), settings-
+  refresh cadence (≤30 days), popup liveness coalescing (≤24 hours), and full-reconciliation triggers.
+- Added deterministic `NotificationCoreTests` covering desired state, eligibility, and all cadences.
+
+### Why
+
+- These are the pure, testable decision rules the containing app will call from the APNs coordinator
+  and reconciliation scheduler, and they are free of credentials or device state so they can be
+  unit-tested now.
+
+### Verification
+
+- `swift test` passes: 305 tests / 34 suites, 0 failures (17 new notification tests total).
+- `xcrun swift-format` applied and clean on the new files.
+
+### Follow-Up
+
+- Build the SwiftUI `NotificationsView` + app coordinator (APNs registration, settings read, triggers)
+  and wire account/group/networkStore change hooks, then verify on the simulator/device once the
+  development profile and physical device are provisioned.
+
+## 2026-09-04 - Notification Service Extension Scaffolded
+
+### Summary
+
+- Added the `StupidWalletNotificationService` appex product and target (bundle id
+  `co.za.stephancill.stupid-wallet.notification-service` as a compatibility prefix of the containing
+  app) with a `UNNotificationServiceExtension` that resolves the opaque `addressRegistrationId` from
+  shared non-secret App Group display state, renders the deterministic account blockie locally, and
+  produces `<account label> • <chain>` from the bounded event kind. It holds no wallet or backend
+  credential.
+- Added a shared `NotificationBlockie` renderer in `StupidWalletCore` (Core Graphics, platform-neutral)
+  used by both the app and the extension, with a deterministic-PNG regression test.
+- Added `NotificationServiceExtension/Info.plist` (point identifier `...serviceextension`) and
+  `NotificationService.entitlements` (App Group only; no push or keychain sharing).
+- Configured the extension in `stupid-app.yml` and added `aps-environment: development` to
+  `App.entitlements` (the containing app gets Push; the Safari and notification-service extensions do
+  not).
+
+### Why
+
+- This is the Gate 4 notification-rendering target that turns the bounded APNs payload into the local
+  title, blockie attachment, and subtitle without ever putting a label or full address on the payload.
+
+### Verification
+
+- `swift build --target StupidWalletNotificationService` builds on the current host.
+- `swift test` passes: 305 tests / 34 suites, 0 failures (blockie determinism covered).
+- `plutil -lint` on the new Info.plist and both entitlements passes.
+- The extension is not yet packaged/signed by `stupid-app`: that still requires installing the updated
+  tool and provisioning the notification-service profile (Gate 1).
+
+## 2026-09-04 - Swift Notification Core Scaffolding (Gate 4 Foundation)
+
+### Summary
+
+- Added additive, compile-verified `StupidWalletCore` scaffolding matching existing value-type and
+  store patterns:
+  - `NotificationModels.swift`: bounded event kinds + categorical English titles, notification
+    settings observation, chain stage enum, cursor-feed event, versioned `NotificationRegistrationState`,
+    and a separate `ObservedActivity` model for remote observations.
+  - `NotificationSigning.swift`: base64url helpers, canonical `v1` request construction, `SHA-256`
+    body digest, and CryptoKit P-256 import/verify/sign helpers (keychain key material intentionally
+    kept out of scope here).
+  - `NotificationRegistrationStore.swift`: an actor-held, versioned, atomic App Group JSON store for
+    the non-secret desired notification state.
+- Added `NotificationCoreTests.swift` proving the independent P-256 vector in
+  `server/test/fixtures/p256-vector.json` verifies in CryptoKit exactly as it verifies in the backend
+  Web Crypto suite — Gate 0's Swift/TypeScript shared-vector fixture evidence.
+
+### Why
+
+- Foundation value types and the shared request-signing contract belong in `StupidWalletCore` so the
+  containing app, the later Notification Service Extension, and (for compatible reads) other targets
+  share them instead of duplicating.
+- Proving the same cryptographic vector on both sides closes the "both decode the same valid fixtures"
+  Gate 0 exit condition with no credentials or hardware required.
+
+### Verification
+
+- `swift test --filter NotificationCoreTests` passed (6 tests, including the cross-language P-256
+  verify + tamper rejection, canonical request shape, keypair sign/verify, registration-store atomics).
+- Full `swift test` passed: 305 tests / 34 suites, 0 failures (no regression).
+- `xcrun swift-format format -i` applied to the four new files; `xcrun swift-format lint` on the new
+  files is clean. Pre-existing lint warnings in unrelated files were left untouched.
+
+### Follow-Up
+
+- Wire the app entry (notification coordinator, APNs token registration, reconciliation triggers) and
+  the notification settings UI as the credential/tooling gates, and prove deliverability on a physical
+  device.
+
+## 2026-09-04 - Wallet Backend MVP Foundation (Gates 0-3) Implemented
+
+### Summary
+
+- Scafolded the MVP backend under `server/` (renamed from the plan's `WalletBackend/` path by developer
+  decision; the approved plan's `WalletBackend/` label remains conceptually authoritative and this entry
+  records the concrete directory).
+- Implemented TypeScript + Hono + Zod + D1 + Cloudflare Queues + Bun with strict TypeScript, oxlint, and
+  Prettier. Deployed as a separate Worker intended for `wallet-api.stupidtech.net`.
+- Implemented the core MVP scope that is verifiable without credentials or a physical device:
+  installation challenge/create, canonical `v1` P-256 request signatures and replay defense, popup
+  liveness capability, full chain-inventory snapshots, per-installation enrollment quotas, staging at
+  the five-installation threshold, effective address-chain registrations, reference-counted upstream
+  subscriptions and an outbox, signed webhook ingestion with `(webhookId, eventType)` composite
+  deduplication, installation event fan-out, and an authenticated cursor feed. Added a bounded APNs
+  client (token-based ES256 provider JWT, development/production separation) and an injectable upstream
+  Stupid Wallet Webhooks client, plus scheduled reconciliation (liveness expiry, event retention,
+  scratch-prune, outbox re-drive).
+- Provided an independent P-256 ECDSA-SHA256 fixture and HMAC helpers usable by Swift and TypeScript
+  tests, plus canonical-request hashing coverage.
+- Persisted the control plane in D1 with dedicated tables for installations, challenges, replay ids,
+  popup replay ids, configured chains and global chain stages, enrollments, effective registrations,
+  upstream subscriptions/outbox, verified activity events, per-installation cursor events, APNs
+  deliveries, counters, and rate limits.
+
+### Why
+
+- The backend ownership/auth/identity and event/feed contracts were the Frozen Contracts (Gate 0) that
+  every other gate depends on, and they are fully testable hermetically without upstream API keys, APNs
+  credentials, or a physical device.
+- Using a `Database` abstraction over D1 lets the hermetic test suite run the same schema and SQL on
+  in-memory SQLite while the Worker uses the real D1 binding.
+
+### Verification
+
+- `cd server && bun run format:check` passes; `bun run lint` reports 0 warnings/0 errors;
+  `bun run typecheck` passes; `bun run test` passes (13 tests, 3 suites: P-256/activity; chain-staging
+  + effective registrations + upstream refs + sticky deactivation; webhook HMAC route + dedup + fanout
+  delivery).
+- Added a Git-ignored `server/.gitignore` so `node_modules/`, `.wrangler/`, `.dev.vars`, and env files
+  are not committed.
+
+### Follow-Up
+
+- Wire the `stupid-app` per-bundle Push Notifications capability derivation and profile provisioning
+  (Gate 1 prerequisite from the plan).
+- Scaffold the Swift `NotificationRegistrationStore`, installation client, activity cursor store, and
+  Notification Service Extension with a shared blockie renderer, then prove land deliverability and
+  production APNs on a physical device.
+- Deploy dev and production Workers with separate D1/queues/secrets and exercise the kill switches when
+  credentials are available.
+
+## 2026-09-04 - Wallet Notification MVP Scope Approved
+
+### Summary
+
+- Added `docs/wallet-backend-push-notifications-mvp-plan.md` as the approved, ordered first-release scope
+  beneath the broader notification architecture.
+- Selected an in-repository `WalletBackend/` TypeScript Cloudflare Worker deployed independently at
+  `wallet-api.stupidtech.net`, with Hono, Zod, D1, Queues, scheduled reconciliation, Web Crypto, and Bun.
+- Deferred App Attest collection/enforcement and Apple Silicon Mac notification enrollment. The MVP uses
+  P-256 installation authentication, ships notifications on iPhone/iPad, and reserves nullable backend
+  trust state for a later App Attest decision.
+- Locked 30-day installation liveness, 90-day notification-settings freshness, 24-hour popup renewal
+  coalescing, foreground renewal at 14 days remaining, and 30-day backend event retention.
+- Locked per-installation limits of 25 addresses, 25 configured chains, and 250 effective address-chain
+  pairs, with atomic rejection above a limit.
+- Locked categorical notification titles without amounts, assets, or counterparties, plus the local
+  blockie and `<account label> • <chain>` subtitle.
+- Selected `(webhookId, eventType)` as the explicit MVP delivery-deduplication identity so observed and
+  reverted events that share the current upstream webhook ID both apply exactly once.
+- Added concrete repository boundaries, backend/mobile APIs, persistence responsibilities, lifecycle
+  triggers, eight implementation gates, exit conditions, verification commands, and deferred scope.
+- Updated the broader plan and engineering handover to distinguish approved MVP decisions from later
+  notification scope. Moved the durable event cursor into the SQLite activity transaction boundary.
+
+### Why
+
+- The broader design contained production-hardening and future-platform choices that were too wide to
+  execute as one milestone. The MVP retains end-to-end correctness and cleanup while deferring features
+  that do not prove notification value.
+- Keeping the backend in this repository allows shared fixtures and contract vectors while retaining an
+  independent Worker deployment and secret boundary.
+- Composite delivery deduplication handles the current external upstream contract without blocking MVP
+  on an upstream identifier change.
+
+### Verification
+
+- Confirmed the current app and Safari extension are both version `1.0.0` build `98`.
+- Confirmed the installed build authority remains `stupid-app 0.0.13`.
+- Re-read the broader notification gates, current SwiftPM products, repository layout, entitlement
+  boundaries, and concurrent documentation changes before defining the MVP file layout and gate order.
+- `git diff --check` and separate whitespace checks of both untracked notification plans passed.
+- Documentation-only planning work; no backend package, dependency, entitlement, profile, keychain item,
+  notification target, or runtime behavior changed.
+
+### Follow-Up
+
+- Begin MVP Gate 0 by freezing shared request/event schemas and sanitized Swift/TypeScript fixtures.
+- Before scaffolding `WalletBackend/`, decide whether it needs a narrower nested `AGENTS.md` in addition
+  to the repository rules.
+
+## 2026-09-04 - Safari Popup Liveness Renewal Added
+
+### Summary
+
+- Added user-opened Safari toolbar popup activity as an installation-liveness renewal trigger in
+  `docs/wallet-backend-push-notifications-plan.md` and the maintained engineering handover.
+- Kept the app-only installation P-256 key out of the Safari extension. The containing app instead
+  creates a second non-synchronizable P-256 key in the existing shared app/Safari keychain group and
+  registers its public key as a capability for the liveness route only.
+- Limited popup renewal to extending unchanged state for an already-active installation. It cannot
+  create or revive an installation, refresh notification authorization, update APNs state, mutate
+  accounts/addresses/chains, delete state, or read the event feed.
+- Added a containing-app notification-settings freshness ceiling, popup-session coalescing, backend rate
+  limits, exact signed-request/replay validation, deletion-time key-association removal, implementation
+  gates, tests, and metrics.
+
+### Why
+
+- Opening the wallet's Safari-owned popup proves recent first-party extension use even when the
+  containing app has not foregrounded, so it is a useful positive liveness signal.
+- Popup use does not prove that system notification authorization remains enabled. Capping renewal at
+  the last containing-app settings check preserves eventual cleanup after a dormant Settings change.
+- A separate route-scoped signing key prevents popup liveness from expanding the Safari extension into
+  broad backend authentication or exposing the installation identity key.
+
+### Verification
+
+- Re-read the plan's trust boundaries, authentication routes, local-state boundary, reconciliation
+  triggers, gates, and tests, plus the corresponding notification section in the engineering handover.
+- Confirmed the design treats only a user-opened toolbar popup as the trigger; page JavaScript, provider
+  traffic, background-worker startup, and popup status polling do not renew liveness.
+- `git diff --check` and a separate whitespace check of the untracked notification plan passed.
+- Documentation-only planning work; no keychain key, backend route, Safari message, entitlement, or
+  deployed behavior changed.
+
+### Follow-Up
+
+- Select the liveness duration, notification-settings freshness ceiling, popup coalescing interval, and
+  containing-app renewal cadence before implementation.
+
+## 2026-09-04 - Notification Lifecycle, Content, Identity, And Chain Staging Decisions
+
+### Summary
+
+- Revised `docs/wallet-backend-push-notifications-plan.md` from product-owner review.
+- Made client-observed notification settings and permanent APNs token failures primary cleanup signals,
+  while retaining a renewable installation liveness window only as the fallback when a deleted or
+  dormant app cannot report state and no activity produces an APNs failure.
+- Required complete server installation deletion after explicit disablement, client-observed loss of
+  authorization, permanent invalidation of the current token, or liveness expiry. No dormant backend
+  credential remains after cleanup; a retained local key is not server tracking.
+- Specified the desired notification presentation: a locally generated account blockie attachment,
+  event title describing what happened, and `<account label> • <chain>` subtitle. Added a bundled
+  Notification Service Extension boundary so labels and full addresses remain off the APNs payload;
+  exact event vocabulary and disclosure remain a separate content specification.
+- Retained remote observations in a separate `observed_activity` table rather than upserting into the
+  shipped sender-centric `transactions` table.
+- Selected the non-synchronizable `ThisDeviceOnly` P-256 installation key plus backend installation ID as
+  a pseudonymous, best-effort same-device reinstall identity while an active server record exists.
+  Explicitly rejected APNs tokens and `identifierForVendor` as stable device identifiers.
+- Added complete revisioned configured-chain inventories per installation. Only notification-capable
+  installations count; a chain is staged until five distinct installations configure it, then becomes
+  sticky-active unless operator-disabled. Enabling an account covers all configured active chains.
+
+### Why
+
+- Apple does not expose notification authorization to APNs providers. A disabled notification setting
+  does not reliably invalidate the token, APNs success proves only acceptance, and `410` indicates an
+  inactive token rather than app deletion. Delivery responses alone cannot guarantee cleanup.
+- `ActivityStore` schema version 9 has global transaction-hash uniqueness, required dapp origin linkage,
+  and sender-account scoping, so direct remote upsert would require a high-risk table rebuild and would
+  mix network observation state with local submission authority.
+- Complete chain snapshots and sticky threshold activation prevent lost incremental mutations and
+  five-installation threshold flapping.
+- Deleting inactive server records matches the requirement that only notification-enabled installations
+  are tracked; same-installation recovery cannot override completed cleanup.
+
+### Verification
+
+- Re-read the current engineering handover, implementation notes, notification plan,
+  `ActivityStore.swift`, its schema-migration tests, `NetworkStore.swift`, app/extension entitlements,
+  `stupid-app.yml`, and the current blockie renderer.
+- Confirmed Apple documents that notification settings may change at any time and must be read through
+  `UNUserNotificationCenter`; APNs `410` means the token is inactive, may be delayed, and is not a
+  reliable disabled-setting or uninstall signal. APNs `200` does not prove device delivery or display.
+- Confirmed Apple documents that `identifierForVendor` changes after all vendor apps are removed and
+  reinstalled, while Keychain survival across uninstall is observed current behavior but not a promised
+  API contract.
+- Confirmed `stupid-app 0.0.13` can package configured app extensions, but signing setup currently derives
+  one union of requested capabilities across app and extensions; per-bundle capability derivation is a
+  prerequisite before adding app-only Push Notifications.
+- Confirmed the current app and Safari extension share the wallet keychain group and there is no proven
+  dedicated containing-app-only path for the installation identity; provisioning that path is a gate.
+- Updated `docs/engineering-handover.md` with the selected notification direction, risks, prerequisites,
+  and recommended next work while preserving the concurrent iCloud recovery changes.
+- `git diff --check` and a separate whitespace check of the untracked notification plan passed.
+- Documentation-only planning work; no app, backend, entitlement, profile, keychain item, or deployed
+  behavior changed.
+
+### Follow-Up
+
+- Approve a separate notification-content specification and choose the remaining liveness, event
+  retention, quota, bundle-identifier, App Attest, Mac-delivery, and upstream event-identity decisions.
+
+## 2026-09-04 - Initial Notification Scope Limited To Wallet Accounts
+
+### Summary
+
+- Narrowed the first implementation in `docs/wallet-backend-push-notifications-plan.md` to notification
+  enrollment for active accounts in the validated `WalletRegistry`.
+- Deferred user-entered watch addresses, no-wallet watch flows, watch labels, and watch-specific UI.
+- Retained an ownership-neutral backend: it stores canonical address/chain registrations, does not ask
+  for an Ethereum ownership signature, and does not treat registration as proof that an installation
+  controls an address.
+- Added a source-aware local enrollment boundary. The first implementation creates only
+  `walletAccount` sources and account deletion queues remote cleanup. A future `watchedAddress` source
+  can share the effective backend registration without being removed by wallet-account deletion.
+- Updated app flows, lifecycle behavior, acceptance gates, tests, metrics, and API terminology from a
+  first-class watchlist product to account notifications with explicit future-watch compatibility.
+
+### Why
+
+- Arbitrary address watching may be useful later, but it is not part of the initial product scope.
+- Keeping backend identity based on installation plus public address avoids an unnecessary migration or
+  authentication redesign if watch-only functionality is later approved.
+
+### Verification
+
+- Re-read the revised plan and searched it for stale no-wallet and arbitrary-watch acceptance criteria.
+- Confirmed arbitrary address entry appears only as a deferred compatibility requirement and a hermetic
+  backend protocol test, not as initial app behavior.
+- `git diff --check` and a separate whitespace check of the untracked plan passed.
+- Documentation-only planning work; no app, backend, entitlement, wallet, or deployed behavior changed.
+
+### Follow-Up
+
+- Review the initial account-notification scope and open backend quota/retention decisions before
+  approving the draft or updating `docs/engineering-handover.md`.
+
+## 2026-09-04 - Password-Encrypted iCloud Keychain Backup Selected
+
+### Summary
+
+- Selected one current password-encrypted whole-wallet snapshot in iCloud Keychain as the version-1
+  recovery direction, superseding the earlier recommendation to use a private iCloud Documents file.
+- Kept operational seed and private-key items unchanged, non-synchronizable, `.userPresence` protected,
+  and `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. Only the separately authenticated backup envelope
+  will use `kSecAttrSynchronizable`.
+- Specified that Stupid Wallet will not save or synchronize the backup password, add a
+  password-independent recovery key, retain backup history, or silently fall back to another cloud
+  transport.
+- Revised the plan's storage model, lifecycle, UI states, provisioning, failure handling, tests, and
+  implementation gates for one exact synchronizable generic-password item.
+- Removed iCloud Documents container provisioning from the selected path. The preferred design instead
+  adds a containing-app-only backup keychain access group, subject to profile and physical-device proof.
+
+### Why
+
+- A password-encrypted Keychain item combines iCloud Keychain's end-to-end encryption with an
+  independent app-level password while preserving the device-bound signing boundary.
+- A single current snapshot avoids the file catalog, retention, and conflict-version requirements that
+  motivated iCloud Documents, and the expected wallet payload is small enough to justify a bounded
+  physical spike.
+- Direct seed/private-key synchronization was rejected because Apple Account/iCloud Keychain recovery
+  would then be sufficient to recover wallet authority.
+
+### Verification
+
+- Compared direct synchronizable wallet sources, password-encrypted iCloud Documents, and a
+  password-encrypted synchronizable Keychain item against recovery authority, encryption layers,
+  sizing, conflict behavior, transfer observability, provisioning, and deletion semantics.
+- Re-checked the current app and Safari extension keychain access groups and recorded that a dedicated
+  containing-app-only backup group must be proven rather than exposing the envelope to the extension.
+- Reconciled `docs/icloud-wallet-backup-plan.md` and `docs/engineering-handover.md` with the selected
+  direction. Documentation-only work; no keychain item, entitlement, profile, cloud data, or app
+  behavior changed.
+- `git diff --check` and a separate whitespace check of the new untracked plan passed.
+
+### Follow-Up
+
+- Complete the two-device synchronizable-Keychain spike before relying on this transport. It must cover
+  maximum item size, delayed synchronization, no-account behavior, reinstall recovery, concurrent
+  updates, deletion propagation, and the absence of a source-device upload receipt.
+- Resolve password strength, local-wallet deletion copy, optional device-bound update key, recovery
+  metadata, and maximum supported wallet-count decisions before implementation.
+
+## 2026-09-04 - Encrypted iCloud Wallet Backup Scoped
+
+### Summary
+
+- Added `docs/icloud-wallet-backup-plan.md`, a draft threat model, architecture, lifecycle,
+  provisioning, and acceptance plan for recovering all active wallet groups from an app-encrypted
+  iCloud snapshot.
+- Kept the existing seed and private-key signing items explicitly non-synchronizable,
+  `.userPresence` protected, and `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. The proposed backup is
+  a separate authenticated export and restore creates newly protected local items without silently
+  replacing existing sources.
+- Recommended a password-only private iCloud Documents backup for the first release, while preserving
+  password-independent iCloud Keychain recovery as a separate product option with a different trust
+  model.
+- Specified a versioned envelope using authenticated encryption and a strong bounded password KDF,
+  strict typed payload validation, immutable cloud generations, authenticated sign-and-recover before
+  registry activation, and journaled crash recovery.
+- Documented Rainbow's audited backup flow and the parts that must not be copied: low-cost PBKDF2,
+  unauthenticated AES-CBC, file-existence-only upload verification, and deprecated Shared Web Credential
+  password synchronization.
+- Updated the engineering handover with the draft recovery direction, tooling prerequisite, risks, and
+  recommended review work. No feature was marked approved or implemented.
+
+### Why
+
+- Directly synchronizing operational keychain items would remove their device-only property and make
+  cloud synchronization part of the signing boundary.
+- iCloud Drive is not end-to-end encrypted under standard data protection, so wallet secrets require
+  application-level authenticated encryption regardless of the user's iCloud settings.
+- Password-only and iCloud Keychain recovery answer different loss and account-compromise threats and
+  must be chosen explicitly rather than hidden behind a convenience setting.
+
+### Verification
+
+- Re-read the current wallet stores, registry, group lifecycle, settings/export flows, project
+  entitlements, Info.plist, and `stupid-app.yml`; also confirmed the existing app has no iCloud backup
+  capability or behavior.
+- Audited Rainbow source at commit `c838187d2d993c0ecff1281923fb8da705cf589d`, including its backup,
+  encryption, keychain/password, cloud-filesystem, entitlements, and restore paths, plus the pinned
+  native cloud and AES dependencies.
+- Checked current Apple keychain synchronization and iCloud data-protection documentation and the iOS
+  26.5 SDK behavior relevant to synchronizable accessibility classes and ubiquitous files.
+- Inspected `stupid-app 0.0.13` source and tests. Authorized iCloud entitlements can pass through and
+  ubiquity KVS tokens are derived, but signing setup auto-enables only App Groups and AutoFill Credential
+  Provider; iCloud container creation/association and profile regeneration remain prerequisites.
+- Documentation-only work; no app, entitlement, profile, cloud container, protected item, or deployed
+  behavior changed.
+
+### Follow-Up
+
+- Resolve the recovery-authority, password policy, snapshot selection, retention, deletion, local
+  update-key, and iCloud Documents versus CloudKit decisions in the draft plan.
+- If approved, complete the tooling/container and cryptographic-format gates before backup UI or
+  protected-source extraction work.
+
+## 2026-09-04 - Push Notifications Changed To Arbitrary Address Watches
+
+### Summary
+
+- Revised `docs/wallet-backend-push-notifications-plan.md` so notifications monitor arbitrary public
+  EVM addresses rather than requiring the user to own or import each address.
+- Removed the proposed EIP-712 ownership challenge, wallet signature, protected-key read, and
+  Face ID/passcode step from notification enrollment. Installation P-256 authentication now protects
+  watchlist mutation, event-feed access, APNs token changes, and backend deletion.
+- Made the watchlist independent of `WalletRegistry`: the flow is available with no wallet configured,
+  a local wallet account is only an address-selection convenience, and deleting a wallet account does
+  not delete a matching watch (or vice versa).
+- Replaced wallet bindings with leased installation watches keyed by `(installationId, address,
+  chainId)`, and added explicit anti-abuse requirements: App Attest where supported, hard per-installation
+  quotas, rate limits, request replay protection, and upstream subscription reference counting.
+- Updated API routes, D1 records, app flows, activity presentation, lifecycle acceptance gates, tests,
+  metrics, and open decisions to match the watch-only authorization model.
+
+### Why
+
+- Supported EVM activity is public data, so receiving a notification for an address should not imply or
+  require control of that address's private key.
+- Wallet ownership proof would unnecessarily prevent users from following public wallets and would tie
+  notification lifecycle to unrelated signing and wallet-deletion boundaries.
+
+### Verification
+
+- Re-read the current engineering handover and implementation notes and inspected the current plan.
+- Confirmed the installed CLI is now `stupid-app 0.0.13` and updated the plan's reference snapshot.
+- Inspected current `stupid-app` entitlement derivation and signing setup. Version `0.0.13` still passes
+  source entitlements through profile authorization but auto-enables only App Groups and AutoFill
+  Credential Provider; Push Notifications and App Attest capability work remains a prerequisite.
+- Documentation-only planning work; no app, backend, entitlement, wallet, or deployed behavior changed.
+
+### Follow-Up
+
+- Review the revised open decisions, especially anonymous-installation quotas and App Attest enforcement,
+  before approving the draft or updating `docs/engineering-handover.md`.
+
 ## 2026-09-01 - Empty-Popup-While-Pending Diagnostic And State Cleanup
 
 ### Summary

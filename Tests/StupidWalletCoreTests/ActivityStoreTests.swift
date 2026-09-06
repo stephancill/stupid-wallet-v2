@@ -243,11 +243,11 @@ struct ActivityStoreTests {
     let url = directory.appendingPathComponent("Activity.sqlite")
     var database: OpaquePointer?
     #expect(sqlite3_open(url.path, &database) == SQLITE_OK)
-    #expect(sqlite3_exec(database, "PRAGMA user_version=10;", nil, nil, nil) == SQLITE_OK)
+    #expect(sqlite3_exec(database, "PRAGMA user_version=11;", nil, nil, nil) == SQLITE_OK)
     sqlite3_close(database)
 
     let store = ActivityStore(databaseURL: url)
-    await #expect(throws: ActivityStoreError.sqlite("Unsupported activity schema version 10")) {
+    await #expect(throws: ActivityStoreError.sqlite("Unsupported activity schema version 11")) {
       try await store.activities(account: account)
     }
   }
@@ -275,7 +275,7 @@ struct ActivityStoreTests {
   }
 
   @Test(
-    "every shipped activity schema migrates to version 9",
+    "every shipped activity schema migrates to version 10",
     arguments: [1, 2, 3, 4, 6, 7, 8, 9])
   func migratesShippedSchemas(version: Int) async throws {
     let url = try makeDatabase(sql: schema(version: version))
@@ -290,7 +290,7 @@ struct ActivityStoreTests {
     #expect(sqlite3_prepare_v2(database, "PRAGMA user_version;", -1, &statement, nil) == SQLITE_OK)
     defer { sqlite3_finalize(statement) }
     #expect(sqlite3_step(statement) == SQLITE_ROW)
-    #expect(sqlite3_column_int(statement, 0) == 9)
+    #expect(sqlite3_column_int(statement, 0) == 10)
   }
 
   @Test("near-valid malformed version 9 activity schemas fail closed")

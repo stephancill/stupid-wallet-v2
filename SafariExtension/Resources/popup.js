@@ -326,17 +326,17 @@
   }
 
   function isBatchCallRow(row) {
-    return /^Call \d+ (Target|Value|Data)$/.test(row.label);
+    return /^Call \d+ .+$/.test(row.label);
   }
 
   function batchCallRows(rows) {
     const calls = [];
     for (const row of rows) {
-      const match = /^Call (\d+) (Target|Value|Data)$/.exec(row.label);
+      const match = /^Call (\d+) (.+)$/.exec(row.label);
       if (!match) continue;
       const index = Number(match[1]) - 1;
-      calls[index] ||= {};
-      calls[index][match[2].toLowerCase()] = row.value;
+      calls[index] ||= [];
+      calls[index].push({ label: match[2], value: row.value });
     }
     return calls.filter(Boolean);
   }
@@ -349,12 +349,15 @@
     const list = document.createElement("div");
     list.className = "call-list";
     for (const call of calls) {
-      const rows = [{ label: "To", value: call.target }];
-      if (call.value && !call.value.startsWith("0 ")) {
-        rows.push({ label: "Value", value: call.value });
-      }
-      if (call.data && call.data !== "0x") {
-        rows.push({ label: "Data", value: call.data });
+      const rows = [];
+      for (const item of call) {
+        const value = item.value == null ? "" : String(item.value);
+        if (value === "") continue;
+        const label = item.label === "Target" ? "To" : item.label;
+        if (label === "Value" && (value === "0x0" || value === "0x" || /^0\b/.test(value)))
+          continue;
+        if (label === "Data" && (value === "0x" || value === "0x0")) continue;
+        rows.push({ label, value });
       }
       list.appendChild(detailTable(rows));
     }

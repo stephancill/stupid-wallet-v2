@@ -42,6 +42,7 @@ public struct ActivityRecord: Sendable, Equatable, Identifiable {
   public let error: String?
   public let profileID: String?
   public let transactionData: String?
+  public let transactionTo: String?
   public let signedMessage: String?
   public let signature: String?
   public let callBundleID: String?
@@ -93,13 +94,15 @@ public actor ActivityStore {
       let sql = """
         INSERT INTO transactions
           (tx_hash, app_id, chain_id_hex, method, from_address, created_at, status,
-           request_id, nonce, updated_at, profile_id, transaction_data, call_bundle_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           request_id, nonce, updated_at, profile_id, transaction_data, transaction_to,
+           call_bundle_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(tx_hash) DO UPDATE SET
           status = excluded.status, request_id = excluded.request_id,
           nonce = excluded.nonce, updated_at = excluded.updated_at,
           profile_id = excluded.profile_id,
           transaction_data = excluded.transaction_data,
+          transaction_to = excluded.transaction_to,
           call_bundle_id = excluded.call_bundle_id;
         """
       try execute(database, sql: sql) { statement in
@@ -116,7 +119,8 @@ public actor ActivityStore {
         bindOptional(request.profileID, to: 11, in: statement)
         bindOptional(
           Self.transactionData(request.resolvedParams ?? request.params), to: 12, in: statement)
-        bindOptional(callBundleID, to: 13, in: statement)
+        bindOptional(Self.transactionTo(request.resolvedParams ?? request.params), to: 13, in: statement)
+        bindOptional(callBundleID, to: 14, in: statement)
       }
     }
   }
@@ -222,7 +226,7 @@ public actor ActivityStore {
                COALESCE(t.method, 'eth_sendTransaction'), COALESCE(t.from_address, ''),
                COALESCE(a.uri, a.domain, ''), t.nonce, t.created_at,
                COALESCE(t.updated_at, t.created_at), t.status, t.block_number, t.error,
-               t.profile_id, t.transaction_data, t.call_bundle_id
+               t.profile_id, t.transaction_data, t.call_bundle_id, t.transaction_to
         FROM transactions t LEFT JOIN apps a ON a.id = t.app_id
         WHERE lower(t.method) = 'wallet_sendcalls'
           AND (lower(t.tx_hash) = lower(?) OR t.call_bundle_id = ?)
@@ -256,6 +260,7 @@ public actor ActivityStore {
         status: ActivityStatus(rawValue: text(statement, 10) ?? "") ?? .pending,
         blockNumber: text(statement, 11), error: text(statement, 12),
         profileID: text(statement, 13), transactionData: text(statement, 14),
+        transactionTo: text(statement, 16),
         signedMessage: nil, signature: nil, callBundleID: text(statement, 15))
     }
   }
@@ -289,7 +294,7 @@ public actor ActivityStore {
                COALESCE(t.from_address, ''), COALESCE(a.uri, a.domain, ''), t.nonce,
                t.created_at, COALESCE(t.updated_at, t.created_at), t.status,
                t.block_number, t.error, t.profile_id, t.transaction_data, NULL, NULL,
-               t.call_bundle_id
+               t.call_bundle_id, t.transaction_to
         FROM transactions t LEFT JOIN apps a ON a.id = t.app_id
         \(filter(recordAlias: "t"))
         UNION ALL
@@ -297,7 +302,7 @@ public actor ActivityStore {
                s.chain_id_hex, s.method, COALESCE(s.from_address, ''),
                 COALESCE(a.uri, a.domain, ''), NULL, s.created_at, s.created_at,
                   'signed', NULL, NULL, s.profile_id, NULL, s.message_content, s.signature_hex,
-                  NULL
+                  NULL, NULL
         FROM signatures s LEFT JOIN apps a ON a.id = s.app_id
         \(filter(recordAlias: "s"))
         ORDER BY 10 DESC, 2 DESC LIMIT ?;
@@ -342,6 +347,7 @@ public actor ActivityStore {
               timeIntervalSince1970: TimeInterval(sqlite3_column_int64(statement, 10))),
             status: status, blockNumber: text(statement, 12), error: text(statement, 13),
             profileID: text(statement, 14), transactionData: text(statement, 15),
+            transactionTo: text(statement, 19),
             signedMessage: text(statement, 16), signature: text(statement, 17),
             callBundleID: text(statement, 18)))
       }
@@ -359,7 +365,7 @@ public actor ActivityStore {
                COALESCE(t.method, 'eth_sendTransaction'), COALESCE(t.from_address, ''),
                COALESCE(a.uri, a.domain, ''), t.nonce, t.created_at,
                COALESCE(t.updated_at, t.created_at), t.status, t.block_number, t.error,
-               t.profile_id, t.transaction_data, t.call_bundle_id
+               t.profile_id, t.transaction_data, t.call_bundle_id, t.transaction_to
         FROM transactions t LEFT JOIN apps a ON a.id = t.app_id
         WHERE t.status IN ('submitted', 'pending') \(accountClause)
         ORDER BY t.created_at DESC, t.id DESC LIMIT ?;
@@ -392,6 +398,7 @@ public actor ActivityStore {
             status: ActivityStatus(rawValue: text(statement, 10) ?? "") ?? .pending,
             blockNumber: text(statement, 11), error: text(statement, 12),
             profileID: text(statement, 13), transactionData: text(statement, 14),
+            transactionTo: text(statement, 16),
             signedMessage: nil, signature: nil, callBundleID: text(statement, 15)))
       }
       return records
@@ -446,6 +453,7 @@ public actor ActivityStore {
       try addColumn(database, table: "transactions", name: "error", type: "TEXT")
       try addColumn(database, table: "transactions", name: "profile_id", type: "TEXT")
       try addColumn(database, table: "transactions", name: "transaction_data", type: "TEXT")
+      try addColumn(database, table: "transactions", name: "transaction_to", type: "TEXT")
       try addColumn(database, table: "transactions", name: "call_bundle_id", type: "TEXT")
       try addColumn(database, table: "signatures", name: "request_id", type: "TEXT")
       try addColumn(database, table: "signatures", name: "profile_id", type: "TEXT")
@@ -465,7 +473,7 @@ public actor ActivityStore {
         ON signatures(created_at DESC, id DESC);
         CREATE UNIQUE INDEX IF NOT EXISTS signatures_request_id
         ON signatures(request_id) WHERE request_id IS NOT NULL;
-        PRAGMA user_version=9;
+        PRAGMA user_version=10;
         COMMIT;
         """)
     } catch {
@@ -484,7 +492,7 @@ public actor ActivityStore {
   }
 
   private func validateSchema(_ database: OpaquePointer, version: Int) throws {
-    let supportedVersions: Set<Int> = [0, 1, 2, 3, 4, 6, 7, 8, 9]
+    let supportedVersions: Set<Int> = [0, 1, 2, 3, 4, 6, 7, 8, 9, 10]
     guard supportedVersions.contains(version) else { throw unsupportedSchema(version) }
 
     let tables = try tableNames(database)
@@ -531,6 +539,7 @@ public actor ActivityStore {
     if version >= 4 { expectedTransactions["profile_id"] = nullableText }
     if version >= 6 { expectedTransactions["transaction_data"] = nullableText }
     if version >= 8 { expectedTransactions["call_bundle_id"] = nullableText }
+    if version >= 10 { expectedTransactions["transaction_to"] = nullableText }
 
     guard try columnDefinitions(database, table: "apps") == expectedApps,
       try columnDefinitions(database, table: "transactions") == expectedTransactions,
@@ -557,7 +566,7 @@ public actor ActivityStore {
       else { throw unsupportedSchema(version) }
       let signatureDefinition = try tableDefinition(database, table: "signatures")
       let digestIsUnique = signatureDefinition.contains("signature_hash text not null unique")
-      guard version == 9 ? !digestIsUnique : digestIsUnique else {
+      guard version <= 8 ? digestIsUnique : !digestIsUnique else {
         throw unsupportedSchema(version)
       }
     }
@@ -806,6 +815,13 @@ public actor ActivityStore {
       return nil
     }
     return transaction["data"]?.stringValue ?? transaction["input"]?.stringValue
+  }
+
+  private static func transactionTo(_ params: JSONValue) -> String? {
+    guard case .array(let values) = params, case .object(let transaction)? = values.first else {
+      return nil
+    }
+    return transaction["to"]?.stringValue
   }
 
   private static func signedMessage(_ request: WalletPendingRequest) -> String {
