@@ -73,6 +73,7 @@ The worker validates the extension-owned popup sender, captures the active tab a
 isolated-bridge token, and refuses stale/reloaded/navigated contexts. Chrome additionally binds its
 trusted documentId. Unsupported pages show an actionable unavailable state rather than another
 page's account. Account selection creates/rebinds a native canonical connect request, verifies its
+ 
 kind/account/origin against the displayed choice, then approves through the existing paired proof
 path. Failed/queued switches reject their own prepared request; existing requests retain queue order.
 No signature or authentication is involved in an ordinary connect. Disconnect atomically checks the

@@ -140,11 +140,16 @@
     if (!Number.isInteger(tab?.id) || tab.incognito || !origin || !/^https?:\/\//.test(origin)) {
       throw new Error("Open a web page to manage its wallet connection.");
     }
-    const document = await browser.tabs.sendMessage(
-      tab.id,
-      { type: "wallet.documentContext" },
-      { frameId: 0 },
-    );
+    let document;
+    try {
+      document = await browser.tabs.sendMessage(
+        tab.id,
+        { type: "wallet.documentContext" },
+        { frameId: 0 },
+      );
+    } catch {
+      throw new Error("Cannot reach this page. Reload the page, then reopen the wallet popup.");
+    }
     if (!/^[0-9a-f]{32}$/.test(document?.token))
       throw new Error("Reload this page to manage its wallet connection.");
     const chromeSender = globalThis.walletChromeContext

@@ -99,7 +99,7 @@ final class ClearSigningTests: XCTestCase {
     XCTAssertEqual(display.fields.first?.label, "Amount")
     XCTAssertEqual(display.fields.first?.value, "1 USDT")
     XCTAssertEqual(display.fields.last?.label, "To")
-    XCTAssertEqual(display.fields.last?.value, "0x1111…1111")
+    XCTAssertEqual(display.fields.last?.value, "0x1111111111111111111111111111111111111111")
   }
 
   func testOfflineRegistryServiceDecodesTransfer() async throws {

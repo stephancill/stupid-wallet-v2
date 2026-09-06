@@ -209,6 +209,70 @@ struct ApprovalTests {
     #expect(status?.result == nil)
   }
 
+  @Test("dispatcher reject of an expired request returns a structured expired error")
+  func dispatcherRejectExpired() async throws {
+    let store = Self.tmpStore()
+    let chainStore = Self.tmpChainStore()
+    let svc = WalletService(store: store, signing: StubSigner(), chainStore: chainStore)
+    let id = UUID()
+    let createdAt = Date().addingTimeInterval(-1000)
+    let expiresAt = Date().addingTimeInterval(-100)
+    let account = "0x1234567890abcdef1234567890abcdef12345678"
+    let params: JSONValue = .array([.string("0x1234"), .string("0x6869")])
+    let record = WalletPendingRequest(
+      id: id,
+      kind: .message,
+      method: "personal_sign",
+      origin: "https://dapp.example",
+      chainId: "1",
+      account: account,
+      params: params,
+      payloadDigest: CanonicalRequest.bindingDigestV2(
+        requestID: id, kind: .message, method: "personal_sign",
+        origin: "https://dapp.example", profileID: nil, chainId: "1", account: account,
+        params: params, createdAt: createdAt, expiresAt: expiresAt),
+      bindingVersion: 2,
+      createdAt: createdAt,
+      expiresAt: expiresAt
+    )
+    try await store.insert(record)
+    let envelope = NativeWalletEnvelope(
+      .object([
+        "action": .string("reject"),
+        "payload": .object([
+          "requestId": .string(id.uuidString),
+          "revision": .number(0),
+        ]),
+      ]))
+    let response = await NativeWalletDispatcher.dispatch(
+      service: svc, envelope: envelope, profileID: nil)
+    let expected: JSONValue = .object([
+      "ok": .bool(false),
+      "error": .object(["code": .number(4001), "message": .string("Request expired")]),
+    ])
+    #expect(response == expected)
+  }
+
+  @Test("dispatcher reject of a missing request returns a not-found error, not a generic failure")
+  func dispatcherRejectNotFound() async throws {
+    let svc = service()
+    let envelope = NativeWalletEnvelope(
+      .object([
+        "action": .string("reject"),
+        "payload": .object([
+          "requestId": .string(UUID().uuidString),
+          "revision": .number(0),
+        ]),
+      ]))
+    let response = await NativeWalletDispatcher.dispatch(
+      service: svc, envelope: envelope, profileID: nil)
+    let expected: JSONValue = .object([
+      "ok": .bool(false),
+      "error": .object(["code": .number(4101), "message": .string("Request no longer exists")]),
+    ])
+    #expect(response == expected)
+  }
+
   @Test("eth_requestAccounts connect resolves to the account array")
   func connectResolvesAccounts() async throws {
     let account = "0x1234567890abcdef1234567890abcdef12345678"

@@ -7693,3 +7693,31 @@ External --whats-new <public-test-note> --no-wait` added the build to the existi
 account-control test notes and submitted review. `stupid-app release status --live --output
 .release/testflight-101` then verified external IN_BETA_TESTING. Build 101 is available to external
 testers. No stupid-app source or wallet storage identities changed.
+
+## 2026-09-06 — Agent-facing Chrome release workflow
+
+Documented the Chrome extension and helper build/release flow in AGENTS.md, which previously
+contained only the general stupid-app build invariant. Clarified the existing owner-authorized
+repository-local helper exception and retained stupid-app ownership of iOS/Safari. Added version
+locations, build/test commands, Developer ID/profile requirements, notarization and staging rules,
+finalized-package installation, browser reload and acceptance requirements, the four public assets,
+full-SHA GitHub publication/checksum verification, and the separate external TestFlight sequence.
+Checked the instructions against the current build, packaging, finalization and installer scripts
+and the preceding verified releases. Documentation-only change; no build or release was executed.
+
+## 2026-09-06 — Clear-signing popup rendering, reject error mapping, TestFlight build 102
+
+Rendered a legacy before/after simulator run to confirm clear signing in the Safari review popup:
+- When a dapp submits an ERC-7730 clear-signable `eth_sendTransaction`, the review popup now hides
+  the raw `Data` calldata row whenever a decoded intent is present, so `Intent`/`Amount`/`To` carry
+  the review. Raw rows remain the fail-safe when decoding yields no intent. Applied in `popup.js`
+  for sends and per-call for batches; extension manifest bumped to 0.1.56 so Safari reloads it.
+- `ClearSigningFormatter` now emits full address values for `address`/`addressName` fields instead
+  of abbreviating at the source, so review surfaces can render a deterministic leading blockie and
+  shorten for display; updated the formatter vector expectation accordingly.
+- `NativeWalletDispatcher.reject` now maps `expired` and `notFound` errors to structured codes
+  (4001 "Request expired", 4101 "Request no longer exists") instead of leaking the generic "reject
+  failed" catch-all; `approve` already covered these. Regression tests cover both dispatcher paths.
+- `stupid-app release bump` set Apple CFBundleVersion 101→102 across the app and Safari extension;
+  `release archive` produced `.release/StupidWallet.ipa` and `release upload --wait` was accepted by
+  App Store Connect with build state VALID and internal IN_BETA_TESTING.

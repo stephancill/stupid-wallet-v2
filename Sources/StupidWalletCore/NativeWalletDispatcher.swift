@@ -296,6 +296,10 @@ public enum NativeWalletDispatcher {
         return errorJSON(-32602, "Request review changed; reload the request")
       } catch WalletError.alreadyConsumed {
         return errorJSON(4001, "Request already handled")
+      } catch WalletError.notFound {
+        return errorJSON(4101, "Request no longer exists")
+      } catch WalletError.expired {
+        return errorJSON(4001, "Request expired")
       } catch WalletError.queued {
         return errorJSON(-32000, "An earlier request must be handled first")
       } catch {

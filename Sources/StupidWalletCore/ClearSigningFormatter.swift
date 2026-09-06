@@ -187,7 +187,9 @@ public struct ClearSigningFormatter {
   private static func text(_ value: ABIValue, field: ClearSigningDescriptor.Field) -> String {
     switch (field.format ?? "").lowercased() {
     case "address", "addressname", "addr":
-      return shortAddress(value.hexDisplay)
+      // Emit the canonical full address so display surfaces can render a deterministic
+      // blockie/avatar derived from it (abbreviating here would discard the entropy).
+      return value.hexDisplay
     case "bool":
       return value.displayString
     case "bytes", "bytes32", "bytes64":

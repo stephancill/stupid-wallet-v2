@@ -62,8 +62,9 @@ useful, use points rather than days or weeks.
 
 ## Product Invariants
 
-- Build, run, sign, and release through `stupid-app`; do not introduce an Xcode project
-  as a second source of build truth.
+- Build, run, sign, and release the iOS app/Safari extension through `stupid-app`; do not
+  introduce an Xcode project as a second source of build truth. The owner-authorized
+  Chrome helper exception is documented under Chrome Build And Release below.
 - Preserve the existing production app, extension, App Group, and keychain identities
   exactly unless the project owner explicitly changes the upgrade strategy.
 - Existing installed-wallet migration is a release requirement. Do not delete or replace
@@ -192,6 +193,105 @@ useful, use points rather than days or weeks.
 - Record exact public-safe verification commands and outcomes in implementation notes.
 - Do not claim signing success based only on serialization, a local signature, or bundle
   structure. Verify recovered signer and, for transactions, accepted network behavior.
+
+## Chrome Build And Release
+
+The Chrome extension and macOS helper use the existing repository-local build/signing
+exception; do not modify `../stupid-ios-dev` to release them. The iOS app and Safari
+extension still use `stupid-app`. Read `ChromeExtension/README.md` for architecture and
+acceptance commands, and `ChromeExtension/RELEASE-INSTALL.md` for end-user installation.
+
+### Prepare And Build
+
+1. Inspect the current diff and preserve unrelated work. Update implementation notes and
+   the handover as required, and record the exact source commit used for the artifacts.
+2. Set the Chrome version in `ChromeExtension/build.mjs`. For helper changes, synchronize
+   its marketing/build versions in `package-release.py` and `install-local.py`, and the
+   archive version in `finalize-release.py`. Update documented compatibility. Safari's
+   manifest and Apple bundle versions are separate; shared resource changes also require
+   a Safari build and, when requested, a new TestFlight build.
+3. Install pinned dependencies with `bun install --frozen-lockfile` from `ChromeExtension/`.
+   From the repository root, run:
+
+```sh
+node ChromeExtension/build.mjs
+swift build -c release --product StupidWalletChromeHost
+node --test Tests/JavaScript/*.test.mjs
+swift test
+```
+
+Run configured formatting/linting for changed code and `stupid-app doctor` for packaging
+changes. Shared Swift/Safari changes also require `stupid-app build` and the usual simulator
+reinstall. Chrome output is `.build/chrome-extension`; edit its source, not generated files.
+Rebuild the helper after the final Swift edit before signing it.
+
+### Sign, Notarize And Package
+
+Use the existing Developer ID Application identity and compatible MAC_APP_DIRECT profile
+for the helper's existing bundle, App Group and keychain identities. Reuse credentials
+privately; never export signing keys or create replacement Apple resources implicitly.
+`install-local.py` uses Apple Development signing and is not the distribution workflow.
+
+```sh
+uv run --no-project python ChromeExtension/package-release.py \
+  --profile <private-direct-profile-path> --identity <Developer-ID-SHA1>
+```
+
+This verifies profile/identity compatibility, packages the optimized arm64 executable with
+its authorized profile, signs with hardened runtime and secure timestamp, and verifies
+the signature. It writes `.release/chrome/staging.json`, the extension ZIP, and
+`.release/chrome/helper-notarization.zip`. Staging metadata and standalone profiles are private.
+
+Submit that exact helper ZIP using `xcrun notarytool submit` with the existing App Store
+Connect key (`--key`, `--key-id`, `--issuer`). Credentials are managed under
+`~/.stupid-app/credentials`; read values privately rather than putting them in documentation
+or logs. Save the submission response in an ignored private directory. Check that submission
+with `xcrun notarytool info` until its status is **Accepted**, then run:
+
+```sh
+uv run --no-project python ChromeExtension/finalize-release.py
+```
+
+The finalizer reads the current staging record, staples and validates notarization, verifies
+codesign and Gatekeeper, and assembles the public archives and checksums. It is not idempotent
+for an already-created package directory. Do not confuse a previous submission's acceptance
+with the current artifact. Any helper rebuild/re-sign requires a fresh submission; do not
+alter the signed app after notarization other than stapling.
+
+### Install, Verify And Publish
+
+1. Extract the finalized helper ZIP and run its included `install-release.command` with
+   `bash`, without sudo. Quit Chrome before replacement. The installer verifies Developer
+   ID/Gatekeeper, retains the prior helper, and updates only the per-user helper and Chrome
+   native-host registration. It preserves wallet data and pairing.
+2. Load or update the unpacked extension, retaining its directory and fixed extension ID.
+   Reload it in `chrome://extensions`, then reload existing dapp tabs. Rebuilding files
+   alone leaves an old worker running and old tabs without the current isolated bridge.
+   The helper starts on demand through Chrome native messaging; no login item is installed.
+3. Verify the actual installed versions and applicable flows in Google Chrome using native
+   Computer Use, not the browser-control skill. Arc acceptance requires separate evidence.
+   Use the local fixture in `Tests/ChromeAcceptance`; respect existing authorization for
+   account grants and protected operations. Report untested flows honestly. A signed bundle
+   or working popup alone does not prove signing; recover the signer independently.
+4. When publication is requested, commit and push the source and documentation. Create a
+   GitHub prerelease named `chrome-v<extension-version>-beta.<iteration>` using `gh release
+   create --target <full-pushed-commit-SHA> --prerelease --notes-file <notes-file>`. GitHub
+   rejected an abbreviated SHA in this workflow. Attach exactly these four deliverables:
+   `stupid-wallet-chrome-<version>.zip`,
+   `stupid-wallet-chrome-helper-<version>-macos-arm64.zip`, `RELEASE-INSTALL.md`, and
+   `SHA256SUMS`, all from `.release/chrome/`. Never upload the whole directory, staging
+   metadata, submission ZIP, credentials or standalone profiles. The signed helper
+   necessarily contains its authorized embedded distribution profile.
+5. Verify uploaded asset sizes and GitHub SHA-256 digests against local files, including
+   SHA256SUMS itself. Record the release URL, source commit, verification and remaining
+   acceptance gaps in implementation notes.
+
+GitHub publication does not update TestFlight. When requested, use the stupid-app CLI skill:
+select an unused build with `release new-build`, synchronize both Apple bundles with
+`release bump --build-number`, run preflight/doctor, archive, upload with `--wait`, and run
+`release external-beta` against the existing External group with public test notes. Verify
+`release status --live` reports external `IN_BETA_TESTING` before claiming availability;
+commit and push the version bump and release record.
 
 ## External References
 

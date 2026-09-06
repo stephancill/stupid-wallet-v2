@@ -506,7 +506,7 @@ test("EIP-5792 methods use native-authoritative routes and preserve method spell
   );
 });
 
-function connectionHarness() {
+function connectionHarness({ missingBridge = false } = {}) {
   let listener;
   const calls = [],
     events = [];
@@ -559,7 +559,11 @@ function connectionHarness() {
         ]);
       },
       async sendMessage(id, message) {
-        if (message.type === "wallet.documentContext") return { token: documentToken };
+        if (message.type === "wallet.documentContext") {
+          if (missingBridge)
+            throw new Error("Could not establish connection. Receiving end does not exist.");
+          return { token: documentToken };
+        }
         events.push({ id, message });
       },
     },
@@ -584,6 +588,13 @@ function connectionHarness() {
     },
   };
 }
+
+test("idle controls explain recovery when the page bridge is absent", async () => {
+  const h = connectionHarness({ missingBridge: true });
+  const reply = await h.send({ type: "popup.siteAccounts" });
+  assert.match(reply.error.message, /Reload the page, then reopen the wallet popup/);
+  assert.equal(h.calls.length, 0);
+});
 
 test("idle connection switching uses canonical native approval and refreshes only the site", async () => {
   const h = connectionHarness();

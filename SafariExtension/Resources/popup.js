@@ -218,6 +218,12 @@
         ? detailRows.filter((row) => !["Chain", "Value", "Network Fee"].includes(row.label))
         : [];
     const batchRows = kind === "batch" ? batchCallRows(detailRows) : [];
+    // A decoded clear-signing intent replaces the raw calldata: when one is present,
+    // drop the raw "Data" row so the human-readable intent/amount/to carry the review.
+    const clearSigned = transactionRows.some((row) => /(^| )Intent$/.test(row.label));
+    const visibleTransactionRows = clearSigned
+      ? transactionRows.filter((row) => row.label !== "Data")
+      : transactionRows;
     const summaryRows = detailRows.filter(
       (row) =>
         !transactionRows.includes(row) &&
@@ -231,7 +237,7 @@
     for (const row of summaryRows) appendSummaryRow(summary, row.label, row.value);
     body.appendChild(summary);
 
-    if (transactionRows.length > 0) appendSection(body, "Details", transactionRows);
+    if (visibleTransactionRows.length > 0) appendSection(body, "Details", visibleTransactionRows);
     if (batchRows.length > 0) appendBatchSection(body, batchRows);
 
     if (domainRows.length > 0) {
@@ -358,6 +364,9 @@
           continue;
         if (label === "Data" && (value === "0x" || value === "0x0")) continue;
         rows.push({ label, value });
+      }
+      if (rows.some((row) => /(^| )Intent$/.test(row.label))) {
+        rows = rows.filter((row) => row.label !== "Data");
       }
       list.appendChild(detailTable(rows));
     }

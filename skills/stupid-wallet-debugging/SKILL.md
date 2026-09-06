@@ -556,3 +556,7 @@ stupid-app run --simulator --udid 6552DF1D-95CE-48E3-801F-8F80F0AA8D29
   new unpacked popup files are talking to an already-running old worker. Check Chrome's displayed
   extension version, reload the extension, and reload the dapp's isolated bridge. Rebuilding files
   alone does not update the running worker. Verify the installed helper version separately.
+- `Could not establish connection. Receiving end does not exist.` from idle page inspection means
+  `tabs.sendMessage` could not reach the isolated bridge. Reload the dapp page after extension
+  installation/reload, then reopen the popup. Catch this rejection at document-context lookup and
+  explain recovery; never bypass document binding or treat the missing reply as a connection grant.
