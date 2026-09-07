@@ -50,6 +50,31 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-07 - External TestFlight Build 1.0.0 (104)
+
+### Summary
+
+- Released the registry chain-name lookup (see the adjoining change note) to external TestFlight.
+- Workflow via `stupid-app`: `release bump --build-number 104` (both Apple bundles moved 102 → 104 in
+  lockstep), `release preflight` READY, `release archive` (IPA SHA-256
+  `f97dac4f20b1f244fe4e8dd51a0d86e144052112087aaa13201511eacf3b337e`), `release upload --wait`
+  (upload COMPLETE, processing VALID, internal IN_BETA_TESTING), and `release external-beta` against
+  the existing External Testers group with a public note that unnamed switched/added networks now
+  show their registered chain name instead of a raw chain id.
+
+### State
+
+- Source commit for the release artifacts: `6c90322`.
+- Live App Store Connect at the time of writing: processing `VALID`, internal beta `IN_BETA_TESTING`,
+  external beta `BETA_APPROVED` (Apple approved the external review; the build is in the External
+  Testers group). It has not yet reported external `IN_BETA_TESTING`, so external availability is not
+  yet claimed; follow up with `stupid-app release status --live` and re-check for `IN_BETA_TESTING`
+  before declaring testers can install.
+
+### Follow-Up
+
+- Confirm `status --live` reports external `IN_BETA_TESTING`, then communicate the build to testers.
+
 ## 2026-09-07 - Registry Name Lookup For Unnamed Networks
 
 ### Summary
