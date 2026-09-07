@@ -178,6 +178,84 @@ struct RPCClientTests {
     #expect(await service.status(for: id)?.status == "failed")
   }
 
+  @Test("unnamed added network uses the fetched registry name")
+  func addNetworkFetchesName() async throws {
+    let directory = directory()
+    StubURLProtocol.handler = { request in
+      if request.httpMethod == "GET" {
+        // The Stupidtech chain-metadata registry endpoint.
+        return (httpResponse(), jsonObject(["name": "Allium Testnet", "chainId": 31337]))
+      }
+      return (httpResponse(), jsonObject(["jsonrpc": "2.0", "id": 1, "result": "0x7a69"]))
+    }
+    let networkStore = NetworkStore(directory: directory, legacySuiteName: UUID().uuidString)
+    let service = WalletService(
+      store: PendingRequestStore(directory: directory), signing: StubSigner(),
+      connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
+      chainStore: ChainStore(directory: directory), networkStore: networkStore,
+      rpcClient: RPCClient(session: URLSession.stubSession),
+      rpcOverrideStore: RPCOverrideStore(directory: directory))
+    try await service.connect(origin: "https://dapp.example")
+
+    let id = try await service.prepare(
+      method: "wallet_addEthereumChain",
+      params: .array([.object(["chainId": .string("0x7a69")])]),
+      origin: "https://dapp.example")
+    #expect(try await service.approve(request: id) == .null)
+    #expect(try networkStore.network(chainID: "31337")?.name == "Allium Testnet")
+  }
+
+  @Test("unnamed switched network uses the fetched registry name")
+  func switchFetchesName() async throws {
+    let directory = directory()
+    StubURLProtocol.handler = { request in
+      if request.httpMethod == "GET" {
+        return (httpResponse(), jsonObject(["name": "Allium Testnet", "chainId": 31337]))
+      }
+      return (httpResponse(), jsonObject(["jsonrpc": "2.0", "id": 1, "result": "0x7a69"]))
+    }
+    let networkStore = NetworkStore(directory: directory, legacySuiteName: UUID().uuidString)
+    let service = WalletService(
+      store: PendingRequestStore(directory: directory), signing: StubSigner(),
+      connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
+      chainStore: ChainStore(directory: directory), networkStore: networkStore,
+      rpcClient: RPCClient(session: URLSession.stubSession),
+      rpcOverrideStore: RPCOverrideStore(directory: directory))
+    try await service.connect(origin: "https://dapp.example")
+
+    #expect(
+      try await service.switchChain(
+        params: .array([.object(["chainId": .string("0x7a69")])]),
+        origin: "https://dapp.example") == .null)
+    #expect(try networkStore.network(chainID: "31337")?.name == "Allium Testnet")
+  }
+
+  @Test("unnamed added network popup shows the fetched registry name")
+  func popupShowsFetchedName() async throws {
+    let directory = directory()
+    StubURLProtocol.handler = { request in
+      if request.httpMethod == "GET" {
+        return (httpResponse(), jsonObject(["name": "Allium Testnet", "chainId": 31337]))
+      }
+      return (httpResponse(), jsonObject(["jsonrpc": "2.0", "id": 1, "result": "0x7a69"]))
+    }
+    let service = WalletService(
+      store: PendingRequestStore(directory: directory), signing: StubSigner(),
+      connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
+      chainStore: ChainStore(directory: directory),
+      networkStore: NetworkStore(directory: directory, legacySuiteName: UUID().uuidString),
+      rpcClient: RPCClient(session: URLSession.stubSession),
+      rpcOverrideStore: RPCOverrideStore(directory: directory))
+    try await service.connect(origin: "https://dapp.example")
+
+    let id = try await service.prepare(
+      method: "wallet_addEthereumChain",
+      params: .array([.object(["chainId": .string("0x7a69")])]),
+      origin: "https://dapp.example")
+    let summary = try await service.summarize(request: id)
+    #expect(summary?.rows.contains { $0.label == "Name" && $0.value == "Allium Testnet" } == true)
+  }
+
   @Test("a successful result is preserved")
   func resultPreserved() async throws {
     StubURLProtocol.shouldFail = false

@@ -50,6 +50,57 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-07 - Registry Name Lookup For Unnamed Networks
+
+### Summary
+
+- Added a best-effort chain-name lookup to `wallet_switchEthereumChain` and
+  `wallet_addEthereumChain` so an unknown chain is no longer shown to users only as its generic
+  `Chain N` id when the request carried no `chainName`.
+- `wallet_switchEthereumChain` never carried a name (EIP-3326 supplies only `chainId`), so its
+  `NetworkStore.record` call had no suggested name and every non-initial, non-`knownNames` chain
+  received the generic numeric name. `wallet_addEthereumChain` could also omit `chainName`.
+- `WalletService.suggestedChainName(chainID:dappName:)` now decides the persisted name:
+  1. a non-empty request-supplied name wins; 2. otherwise the store's existing real (non-generic)
+  name is kept so the shipped initial networks and the pinned `knownNames` table (e.g. 137 →
+  Polygon) are preserved and no redundant lookup happens; 3. otherwise it fetches the canonical
+  name from the Stupidtech registry `https://evm.stupidtech.net/v1/chains/{decimalChainId}` and
+  uses its `name` field; 4. only when no name can be resolved does `NetworkStore.record` apply
+  the existing `Chain <id>` generic fallback.
+- Added `NetworkStore.hasRealName(chainID:)` so callers can cheaply detect whether a real name
+  is already available without duplicating the store's internal initial/known/legacy precedence,
+  and `NetworkStore.resolvedRealName(chainID:)` to surface that name for review surfaces.
+- The Safari popup summary for an unnamed `wallet_addEthereumChain` now shows the resolved
+  chain `Name` too (request name, then a store-known name, then the registry fetch), instead of
+  only a bare numeric `Chain ID`. This runs in `WalletService.makeSummary`, which is async, so the
+  popup and the persisted store agree on a chain's display name.
+- Registry lookup uses the injected `RPCClient` session (so it is stub-routable and network-free
+  in tests) with a 5-second timeout, decodes only the `name` field, and never throws — a failed
+  or absent lookup falls back to the generic name without failing the switch or add.
+
+### Why
+
+- The displayed name for a newly added or switched unknown chain was the raw chain id
+  (`Chain 31337`), which is unhelpful when the registry already publishes a canonical name.
+
+### Verification
+
+- `swift format --in-place` on the three changed Swift files completed.
+- `swift test`: all 325 tests in 37 suites passed, including deterministic regression coverage
+  for the registry fetch on diagonal switch/add plus popup display (`unnamed added network uses the
+  fetched registry name`, `unnamed switched network uses the fetched registry name`, `unnamed added
+  network popup shows the fetched registry name`); existing coverage confirming known chain 137 still
+  records `Polygon` and dapp-supplied names still win remains green.
+- Confirmed the live registry endpoint path: `https://evm.stupidtech.net/v1/chains/137` returns
+  `{"chainId":137,"name":"Polygon Mainnet",...}` while `.../chains/137` (no `v1`) returns 404.
+- `stupid-app doctor` completed with 0 failures and 0 warnings; `stupid-app build` succeeded.
+- `git diff --check` passed.
+
+### Follow-Up
+
+- Repeat network-addition/switch name visibility on the preferred iOS simulator, and verify a few
+  real unknown-chain names once a physical-device pass is available.
+
 ## 2026-09-06 - ERC-7730 Clear Signing For Calldata Review
 
 ### Summary

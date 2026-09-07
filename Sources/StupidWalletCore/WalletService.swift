@@ -494,7 +494,8 @@ public actor WalletService {
       let consumed = try await store.record(journal.requestID)?.status == .consumed
       try chainStore.recoverSwitch(journal, consumed: consumed)
     }
-    try networkStore.record(chainID: target)
+    try networkStore.record(
+      chainID: target, suggestedName: await suggestedChainName(chainID: target, dappName: nil))
     try chainStore.setChainID(target)
     return .null
   }
@@ -739,6 +740,17 @@ public actor WalletService {
       default: return row
       }
     }
+    if record.kind == .chain, !rows.contains(where: { $0.0 == "Name" }),
+      let chainRow = rows.first(where: { $0.0 == "Chain ID" })
+    {
+      let name = await resolvedChainDisplayName(chainID: chainRow.1)
+      if let name {
+        let index =
+          rows.firstIndex(where: { $0.0 == "Chain ID" }).map { rows.index(after: $0) }
+          ?? rows.endIndex
+        rows.insert(("Name", name), at: index)
+      }
+    }
     if record.kind == .batch, let value = Self.batchValue(record.params, chainID: record.chainId) {
       let chainIndex = rows.firstIndex { $0.0 == "Chain" }.map { rows.index(after: $0) }
       rows.insert(("Value", value), at: chainIndex ?? rows.endIndex)
@@ -769,57 +781,58 @@ public actor WalletService {
   }
 
   /// Decodes clear-signing (ERC-7730) fields for a send or batch request's calldata and returns
-/// them as labelled review rows. Returns empty when no descriptor matches or formatting fails,
-/// leaving the raw calldata rows as the fail-safe fallback.
-private func decodedClearRows(for record: WalletPendingRequest) async -> [(String, String)] {
-  guard record.kind == .send || record.kind == .batch else { return [] }
-  let service = ClearSigningService(
-    tokenResolver: RPCTokenResolver(client: rpcClient, resolver: resolver))
-  var result: [(String, String)] = []
+  /// them as labelled review rows. Returns empty when no descriptor matches or formatting fails,
+  /// leaving the raw calldata rows as the fail-safe fallback.
+  private func decodedClearRows(for record: WalletPendingRequest) async -> [(String, String)] {
+    guard record.kind == .send || record.kind == .batch else { return [] }
+    let service = ClearSigningService(
+      tokenResolver: RPCTokenResolver(client: rpcClient, resolver: resolver))
+    var result: [(String, String)] = []
 
-  if record.kind == .send {
-    guard case .array(let items) = record.params, items.count == 1,
-      case .object(let transaction) = items[0],
-      let to = transaction["to"]?.stringValue,
-      let data = Self.calldata(of: transaction)
-    else { return [] }
-    guard let display = await service.display(chainId: record.chainId, to: to, data: data) else {
+    if record.kind == .send {
+      guard case .array(let items) = record.params, items.count == 1,
+        case .object(let transaction) = items[0],
+        let to = transaction["to"]?.stringValue,
+        let data = Self.calldata(of: transaction)
+      else { return [] }
+      guard let display = await service.display(chainId: record.chainId, to: to, data: data) else {
+        return []
+      }
+      if let intent = display.intent, !intent.isEmpty {
+        result.append(("Intent", intent))
+      }
+      result.append(contentsOf: display.fields.map { ($0.label, $0.value) })
+      return result
+    }
+
+    guard case .object(let object) = record.params, case .array(let calls)? = object["calls"] else {
       return []
     }
-    if let intent = display.intent, !intent.isEmpty {
-      result.append(("Intent", intent))
+    for (index, callValue) in calls.enumerated() {
+      guard case .object(let call) = callValue,
+        let to = call["to"]?.stringValue,
+        let data = Self.calldata(of: call),
+        let display = await service.display(chainId: record.chainId, to: to, data: data)
+      else { continue }
+      if let intent = display.intent, !intent.isEmpty {
+        result.append(("Call \(index + 1) Intent", intent))
+      }
+      result.append(
+        contentsOf: display.fields.map {
+          ("Call \(index + 1) \($0.label)", $0.value)
+        })
     }
-    result.append(contentsOf: display.fields.map { ($0.label, $0.value) })
     return result
   }
 
-  guard case .object(let object) = record.params, case .array(let calls)? = object["calls"] else {
-    return []
-  }
-  for (index, callValue) in calls.enumerated() {
-    guard case .object(let call) = callValue,
-      let to = call["to"]?.stringValue,
-      let data = Self.calldata(of: call),
-      let display = await service.display(chainId: record.chainId, to: to, data: data)
-    else { continue }
-    if let intent = display.intent, !intent.isEmpty {
-      result.append(("Call \(index + 1) Intent", intent))
+  private static func calldata(of transaction: [String: JSONValue]) -> String? {
+    guard let data = transaction["data"]?.stringValue, data != "0x", !data.isEmpty else {
+      return transaction["input"]?.stringValue
     }
-    result.append(contentsOf: display.fields.map {
-      ("Call \(index + 1) \($0.label)", $0.value)
-    })
+    return data
   }
-  return result
-}
 
-private static func calldata(of transaction: [String: JSONValue]) -> String? {
-  guard let data = transaction["data"]?.stringValue, data != "0x", !data.isEmpty else {
-    return transaction["input"]?.stringValue
-  }
-  return data
-}
-
-/// The current editable display label for an account, or nil when the registry
+  /// The current editable display label for an account, or nil when the registry
   /// does not resolve it. Labels are non-authoritative review metadata and never
   /// enter canonical request identity.
   private func accountLabel(for address: String) -> String? {
@@ -1513,7 +1526,9 @@ private static func calldata(of transaction: [String: JSONValue]) -> String? {
         throw WalletError.rpc(rpcError)
       }
       try networkStore.record(
-        chainID: target, suggestedName: Self.requestedChainName(record.params))
+        chainID: target,
+        suggestedName: await suggestedChainName(
+          chainID: target, dappName: Self.requestedChainName(record.params)))
     }
     record.status = .consumed
     record.result = result
@@ -1596,6 +1611,45 @@ private static func calldata(of transaction: [String: JSONValue]) -> String? {
       object = nil
     }
     return object?["chainName"]?.stringValue
+  }
+
+  /// Resolves the display name to persist for a chain. Prefers a supplied (dapp) name,
+  /// then a name the store already knows (initial/known/user networks) to preserve pinned
+  /// naming and avoid a redundant lookup, then a best-effort registry fetch. Returns `nil`
+  /// only when the generic "Chain <id>" fallback in `NetworkStore.record` is the right
+  /// answer. Name resolution is best-effort and never fails a switch or add.
+  private func suggestedChainName(chainID: String, dappName: String?) async -> String? {
+    if let trimmed = dappName?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty {
+      return trimmed
+    }
+    if networkStore.hasRealName(chainID: chainID) { return nil }
+    return await fetchedChainName(chainID: chainID)
+  }
+
+  /// Most the display name for a chain before persisting (approve) or rendering (popup):
+  /// a name already known to the store wins, otherwise a best-effort registry fetch.
+  private func resolvedChainDisplayName(chainID: String) async -> String? {
+    if let known = networkStore.resolvedRealName(chainID: chainID) { return known }
+    return await fetchedChainName(chainID: chainID)
+  }
+
+  /// Fetches the canonical name for a chain from the Stupidtech registry metadata endpoint,
+  /// or nil when the chain has no registered metadata or the fetch fails. A short timeout
+  /// keeps this cosmetic lookup from delaying a chain change.
+  private func fetchedChainName(chainID: String) async -> String? {
+    guard let normalized = ChainStore.normalize(chainID),
+      let url = URL(string: "https://evm.stupidtech.net/v1/chains/\(normalized)")
+    else { return nil }
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.timeoutInterval = 5
+    guard let (data, response) = try? await rpcClient.session.data(for: request),
+      (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) == true,
+      case .object(let object)? = try? JSONDecoder().decode(JSONValue.self, from: data),
+      let name = object["name"]?.stringValue, !name.isEmpty
+    else { return nil }
+    return name
   }
 
   private func configureRPCForAddedNetwork(chainID: String, params: JSONValue) async throws {

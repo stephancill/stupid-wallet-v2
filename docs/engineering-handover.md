@@ -404,7 +404,13 @@ Stale queued approvals fail terminally with `4901`, and the worker broadcasts th
 native chain to every tab after a switch or recovery. Every successful switch also records
 the target in the shared `NetworkStore`; known chain 137 is displayed as Polygon and an
 otherwise unknown switched chain receives a `Chain N` name. Confirmed
-`wallet_addEthereumChain` metadata records its supplied name. If the Stupidtech default does
+`wallet_addEthereumChain` metadata records its supplied name. When a request supplies no
+chain name (`wallet_switchEthereumChain` never does; `wallet_addEthereumChain` may omit it)
+and the chain is not already known to the store, native code fetches the canonical name from
+the Stupidtech registry (`https://evm.stupidtech.net/v1/chains/{chainId}`, `name` field) as a
+best-effort lookup that never fails the switch or add; only if that fetch is unavailable does a
+chain receive the generic `Chain N` name. The add-network popup shows this resolved name (request,
+store-known, or fetched) rather than a bare chain id. If the Stupidtech default does
 not return the requested `eth_chainId`, approval validates and saves the first supplied RPC URL
 as the fallback unless the user already selected an override.
 

@@ -77,6 +77,35 @@ public struct NetworkStore: @unchecked Sendable {
     return try all().first { $0.id == normalized }
   }
 
+  /// Whether the store already yields a real, non-generic display name for this chain.
+  /// Callers use this to skip a redundant network name lookup for known networks,
+  /// preserving the initially shipped and manually recognized names.
+  public func hasRealName(chainID: String) -> Bool {
+    guard let normalized = ChainStore.normalize(chainID) else { return false }
+    if Self.initialNetworks.contains(where: { $0.id == normalized }) { return true }
+    if Self.knownNames[normalized] != nil { return true }
+    if let existing = try? network(chainID: normalized), existing.name != "Chain \(normalized)" {
+      return true
+    }
+    return false
+  }
+
+  /// The real (non-generic) display name the store already knows for this chain, or `nil`
+  /// when only the generic "Chain <id>" would apply. Mirrors the name resolution used by
+  /// `record` so review surfaces and persistence agree on a chain's display name.
+  public func resolvedRealName(chainID: String) -> String? {
+    guard let normalized = ChainStore.normalize(chainID) else { return nil }
+    if let initial = Self.initialNetworks.first(where: { $0.id == normalized }) {
+      return initial.name
+    }
+    let generic = "Chain \(normalized)"
+    if let storeName = (try? network(chainID: normalized))?.name, storeName != generic {
+      return storeName
+    }
+    if let known = Self.knownNames[normalized] { return known }
+    return nil
+  }
+
   public func add(name: String, chainID: String) throws {
     let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedName.isEmpty, let normalized = ChainStore.normalize(chainID) else {
