@@ -50,6 +50,42 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-17 - Notification Blockie Cross-Renderer Grid Fix
+
+### Summary
+
+- Fixed `NotificationBlockie` so the Notification Service Extension's generated avatar matches the
+  containing app's `BlockieView` pixel grid for the same lowercase address seed.
+- Root cause: the app's `BlockieView.make` draws three palette colors from its PRNG stream before
+  generating the 8x8 tile grid. `NotificationBlockie.pixels(for:)` instead generated the grid from a
+  freshly seeded generator and reproduced the palette separately. The colors still matched, but the tile
+  pattern came from the wrong portion of the PRNG stream, so notification avatars showed a different
+  blockie than the in-app account visual for every address.
+- Introduced one private `artwork(for:)` that replays the app's ordered sequence exactly (foreground,
+  background, accent, then the 64 tiles) and feeds both `pixels(for:)` and
+  `renderPNG(seed:pixelsPerCell:)`.
+- Added `testBlockiePixelsMatchAppDrawOrder`, a known-vector regression test pinned to an independent
+  reimplementation of the app draw order.
+
+### Why
+
+- The extension must render the deterministic account blockie locally without sharing key material or app
+  UI code. A cross-process "matches the app blockie" contract requires identical PRNG consumption order,
+  not merely the same generator math; the prior determinism-only test could not detect the mismatch.
+
+### Verification
+
+- An independent app-order implementation produced the identical grid to the corrected renderer for the
+  test seed and for the reported address.
+- `swift test`: 322 tests / 37 suites pass, including the new draw-order vector plus the existing
+  determinism and PNG tests.
+- `xcrun swift-format lint --strict` is clean on the changed files.
+
+### Follow-Up
+
+- Physical lock-screen confirmation of the account-derived blockie remains outstanding, consistent with
+  the existing notification acceptance gaps.
+
 ## 2026-09-07 - External TestFlight Build 1.0.0 (104)
 
 ### Summary

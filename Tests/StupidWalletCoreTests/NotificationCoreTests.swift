@@ -222,6 +222,25 @@ final class NotificationCoreTests: XCTestCase {
     XCTAssertNotEqual(first, different, "different seeds must produce different renders")
   }
 
+  /// Pins the extension tile grid to the app `BlockieView.make` draw order: the three
+  /// palette colors consume the PRNG stream before the tile grid. Seeding a fresh
+  /// generator for the tiles (the previous behavior) produced a different avatar for the
+  /// same address, so this vector is the cross-renderer contract.
+  func testBlockiePixelsMatchAppDrawOrder() {
+    let seed = "0x1111111111111111111111111111111111111111"
+    let expected = [
+      0, 0, 1, 2, 2, 1, 0, 0,
+      1, 1, 0, 0, 0, 0, 1, 1,
+      2, 2, 0, 2, 2, 0, 2, 2,
+      1, 0, 0, 1, 1, 0, 0, 1,
+      0, 0, 2, 1, 1, 2, 0, 0,
+      1, 1, 2, 1, 1, 2, 1, 1,
+      0, 0, 0, 1, 1, 0, 0, 0,
+      1, 0, 1, 0, 0, 1, 0, 1,
+    ]
+    XCTAssertEqual(NotificationBlockie.pixels(for: seed), expected)
+  }
+
   func testDesiredStateOnlyPairsActiveChains() {
     let desired = NotificationDesiredState.desired(
       activeWalletAddresses: ["0xAaAa", "0xBbBb"],

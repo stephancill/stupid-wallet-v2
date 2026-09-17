@@ -21,21 +21,16 @@ public enum NotificationBlockie {
 
   /// 64 tile classes in the 8x8 grid (0 = background, 1 = foreground, 2 = accent).
   public static func pixels(for seed: String) -> [Int] {
-    let state = seedHash(seed)
-    var generator = Random(state: state)
-    var pixels: [Int] = []
-    for _ in 0..<8 {
-      var row = (0..<4).map { _ in Int(floor(generator.next() * 2.3)) }
-      row.append(contentsOf: row.reversed())
-      pixels.append(contentsOf: row)
-    }
-    return pixels
+    artwork(for: seed).pixels
   }
 
   public static func renderPNG(seed: String, pixelsPerCell: Int = 12) -> Data? {
     guard pixelsPerCell > 0 else { return nil }
-    let grid = pixels(for: seed)
-    let (foreground, background, accent) = palette(for: seed)
+    let art = artwork(for: seed)
+    let grid = art.pixels
+    let foreground = art.foreground
+    let background = art.background
+    let accent = art.accent
     let cells = 8
     let width = cells * pixelsPerCell
     guard
@@ -107,12 +102,24 @@ public enum NotificationBlockie {
     return state
   }
 
-  private static func palette(for seed: String) -> (foreground: RGB, background: RGB, accent: RGB) {
+  /// Reproduces the app's `BlockieView.make` draw order exactly: the three palette
+  /// colors are pulled from the PRNG stream before the 8x8 tile grid. Drawing the
+  /// tiles from a freshly seeded generator produces a different grid for the same
+  /// address, so both values must come from this single ordered sequence.
+  private static func artwork(for seed: String) -> (
+    pixels: [Int], foreground: RGB, background: RGB, accent: RGB
+  ) {
     var random = Random(state: seedHash(seed))
     let foreground = color(from: &random)
     let background = color(from: &random)
     let accent = color(from: &random)
-    return (foreground, background, accent)
+    var pixels: [Int] = []
+    for _ in 0..<8 {
+      var row = (0..<4).map { _ in Int(floor(random.next() * 2.3)) }
+      row.append(contentsOf: row.reversed())
+      pixels.append(contentsOf: row)
+    }
+    return (pixels, foreground, background, accent)
   }
 
   private static func color(from random: inout Random) -> RGB {

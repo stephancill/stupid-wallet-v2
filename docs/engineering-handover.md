@@ -41,7 +41,7 @@ permission acceptance:
 - **Swift Core foundation** — `NotificationModels`, `NotificationSigning` (CryptoKit, with a test that
   proves the shared P-256 vector verifies identically in Web Crypto and CryptoKit), a sensitive
   `NotificationRegistrationStore` (atomic App Group), the shared `NotificationBlockie` renderer (Core
-  Graphics, deterministic), and `NotificationPolicy` (desired enrollment + eligibility/cadence rules:
+  Graphics, deterministic, replaying the app `BlockieView` palette-then-grid PRNG order), and `NotificationPolicy` (desired enrollment + eligibility/cadence rules:
   authorization/APNs eligibility, liveness ≤14-day renewal, settings ≤30-day refresh, popup ≤24-hour
   coalescing). `NotificationInstallationKeyStore` persists the separate, non-user-presence P-256
   installation identity and opaque installation ID in an app-only, non-synchronizing
