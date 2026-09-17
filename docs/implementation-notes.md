@@ -50,6 +50,39 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-17 - Internal TestFlight Build 1.0.0 (105)
+
+### Summary
+
+- Rebased `feat/wallet-notifications-mvp-plan` onto `main` and published a new internal TestFlight
+  build carrying the notification blockie draw-order fix.
+- Version 1.0.0, build 105 across the app and both nested extensions (Safari web extension and
+  notification service).
+- IPA SHA-256 `5ebf1c5bb129efc5b925142a66241b4a7f2713f1be4cba63cc21f0b497e60fd3`; build upload
+  `b6092e50-eefd-4936-8a42-e8c8767df3cb`.
+
+### Why
+
+- The blockie fix needed to reach internal testers. Main had already published build 104, so the
+  rebased branch needed a fresh, unused build number (105). The rebase resolved the app and Safari
+  extension build-number conflict in favor of main's newer 104 and set the notification-service
+  extension to match, keeping all three bundles in lockstep.
+
+### Verification
+
+- `stupid-app doctor`: 0 failures / 0 warnings.
+- `stupid-app release bump --build-number 105`: app and both extensions moved 104 → 105 in lockstep.
+- `stupid-app release preflight`: READY for 1.0.0 (105) across all three bundles.
+- `stupid-app release archive`: signed IPA, project-owned post-sign verifier passed.
+- `stupid-app release upload --wait`: upload COMPLETE, processing VALID, internal IN_BETA_TESTING.
+- `stupid-app release status --live`: processing VALID, internal IN_BETA_TESTING, external
+  READY_FOR_BETA_SUBMISSION.
+
+### Follow-Up
+
+- No external TestFlight submission was requested. Physical lock-screen confirmation of the
+  account-derived notification blockie remains outstanding.
+
 ## 2026-09-17 - Notification Blockie Cross-Renderer Grid Fix
 
 ### Summary
