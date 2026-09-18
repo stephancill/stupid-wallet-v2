@@ -69,7 +69,8 @@ permission acceptance:
   palette-then-grid PRNG order and top-down row order so notification blockies match the in-app
   account blockie; both fixes are in internal TestFlight 1.0.0 (106). The display map now also
   includes the active account even when the local enrollment set is empty, so a stale server
-  enrollment cannot force the extension's chain-only fallback.
+  enrollment cannot force the extension's chain-only fallback; that display-map fix is in internal
+  TestFlight 1.0.0 (107).
 - **Tooling** — `stupid-app` 0.0.16 provides per-bundle capability derivation (an entitlement is enabled
   only on the bundle that declares it) and `EntitlementDeriver` reconciling `aps-environment`
   (`development`/`production`). Release-built and installed; the app's `aps-environment: development`

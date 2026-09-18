@@ -50,6 +50,38 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-18 - Internal TestFlight Build 1.0.0 (107)
+
+### Summary
+
+- Published internal TestFlight build 1.0.0 (107) carrying the notification display-map
+  active-account fix (build 106 carried the two blockie renderer fixes).
+- IPA SHA-256 `9154edd12222fa0e2b59834167ceda88db134a861dad74de144e169f885df058`; build upload
+  `e4532a27-5da6-43d7-aa88-014a78939cfb`.
+
+### Why
+
+- Build 106's display map only contained locally enrolled addresses, so a stale server enrollment
+  kept delivering an account whose alias was absent and the extension always used the chain-only
+  fallback. Build 107 always includes the active account.
+
+### Verification
+
+- `stupid-app doctor`: 0 failures / 0 warnings.
+- `stupid-app release bump --build-number 107`: app and both extensions moved 106 → 107 in lockstep.
+- `stupid-app release preflight`: READY for 1.0.0 (107) across all three bundles.
+- `stupid-app release archive`: signed IPA, project-owned post-sign verifier passed.
+- `stupid-app release upload --wait`: upload COMPLETE, processing VALID, internal IN_BETA_TESTING.
+- `stupid-app release status --live`: processing VALID, internal IN_BETA_TESTING, external
+  READY_FOR_BETA_SUBMISSION.
+
+### Follow-Up
+
+- After installing and launching 107 on the phone, confirm the App Group display map contains the
+  active account's registration ID and the next notification resolves the account label and blockie.
+- The phone's local enrollment set is still empty, so re-enable Account Activity to resume server
+  reconciliation; `pendingCleanup` retry and stale-enrollment expiry remain open.
+
 ## 2026-09-18 - Notification Display Map Active-Account Inclusion
 
 ### Summary
