@@ -177,6 +177,18 @@ generic error text and do not bypass the canonical approval protocol.
     “Connected to native AFC staging over the tunnel,” treat it as a large-transfer tunnel/data-path issue,
     not stale pairing. An interrupted macOS network run can leave a root-owned `coredevice-helper` alive;
     identify the exact process before asking for administrator approval to terminate only that helper.
+33. A notification that renders only `<chain>` with the chain-scoped fallback blockie while the backend
+    still delivers the account means the extension's App Group display map lacks the payload's opaque
+    registration ID. The map is non-secret and readable from a paired iPhone without a build:
+    `xcrun devicectl device copy from -d <udid> --domain-type appGroupDataContainer --domain-identifier
+    group.co.za.stephancill.stupid-wallet --source
+    Library/Preferences/group.co.za.stephancill.stupid-wallet.plist --destination /tmp/prefs.plist`
+    then `plutil -p`. `notificationDisplayState => {"aliases":{}}` proves the fallback. Only `Library`,
+    `Documents`, and `tmp` are transferable; `notificationRegistration.json` at the container root is
+    not. Cross-check the backend: an installation whose `last_seen_at`/`app_build` are old has not
+    reconciled, so a stale server enrollment can keep delivering while the local enrollment set is empty.
+    The map must include the active account even when `enrolledAddresses` is empty; writing aliases only
+    for the enrolled set leaves the extension permanently falling back.
 
 ## Stack Map
 

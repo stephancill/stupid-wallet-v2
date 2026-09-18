@@ -113,6 +113,32 @@ final class NotificationCoreTests: XCTestCase {
     XCTAssertEqual(loaded.aliases[registrationID], alias)
   }
 
+  /// The active account is written even when the local enrollment set is empty, because a
+  /// stale server enrollment can keep delivering it after the local state is lost.
+  func testDisplayMapIncludesActiveAccountWithoutEnrollment() {
+    let active = "0x8d25687829d6b85d9e0020b8c89e3ca24de20a89"
+    let other = "0x2222222222222222222222222222222222222222"
+    let aliases = NotificationDisplayMap.aliases(
+      installationID: "inst_test",
+      enrolledAddresses: [other],
+      labels: [active: "Main"],
+      additionalAddress: active)
+    let activeID = NotificationRegistrationID.opaque(installationID: "inst_test", address: active)
+    let otherID = NotificationRegistrationID.opaque(installationID: "inst_test", address: other)
+    XCTAssertEqual(aliases[activeID]?.label, "Main")
+    XCTAssertEqual(aliases[activeID]?.address, active)
+    XCTAssertNotNil(aliases[otherID])
+  }
+
+  func testDisplayMapFallsBackToShortAddressLabel() {
+    let active = "0x8d25687829d6b85d9e0020b8c89e3ca24de20a89"
+    let aliases = NotificationDisplayMap.aliases(
+      installationID: "inst_test", enrolledAddresses: [], labels: [:],
+      additionalAddress: active)
+    let id = NotificationRegistrationID.opaque(installationID: "inst_test", address: active)
+    XCTAssertEqual(aliases[id]?.label, "0x8d25...0a89")
+  }
+
   func testRegistrationStateWithoutDisplayLabelsRemainsBackwardCompatible() throws {
     let legacy = Data(
       """

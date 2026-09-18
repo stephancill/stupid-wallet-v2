@@ -50,6 +50,39 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-18 - Notification Display Map Active-Account Inclusion
+
+### Summary
+
+- Fixed the App Group notification display map so the active account is always written, not only the
+  locally enrolled addresses. `NotificationDisplayMap.aliases(...)` unions `enrolledAddresses` with an
+  explicit `additionalAddress`; `NotificationCoordinator.updateDisplayAlias` passes the active account
+  and `writeDisplayState` builds the map through the helper.
+- Added regression coverage for including a non-enrolled active account and for the short-address label
+  fallback.
+
+### Why
+
+- A stale server enrollment can keep delivering an account after the local enrollment set is lost. The
+  Notification Service Extension resolves each payload's opaque registration ID against the App Group
+  display map; if the map only contains enrolled addresses, a still-delivered account falls back to
+  `notification-<chain>` with no label. Physical inspection confirmed the iPhone's map was
+  `{"aliases":{}}` while the backend still delivered that account and the installation had not
+  reconciled since an older build.
+
+### Verification
+
+- `swift test`: 325 tests / 37 suites pass, including the two new display-map XCTest cases.
+- `stupid-app build` succeeds for the iOS app.
+- Physical verification pending: install and confirm the map now contains the active account's
+  registration ID and the notification resolves the account label and blockie.
+
+### Follow-Up
+
+- The phone's local enrollment set is empty while the server enrollment persists, so the app is not
+  renewing. Re-enabling Account Activity restores reconciliation; retrying `pendingCleanup` deletion
+  and expiring stale server enrollments remain open.
+
 ## 2026-09-18 - Internal TestFlight Build 1.0.0 (106)
 
 ### Summary

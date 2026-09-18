@@ -83,3 +83,33 @@ public enum NotificationRegistrationID {
     return "ar_\(NotificationBase64URL.encode(Data(digest)).prefix(24))"
   }
 }
+
+/// Builds the registration-ID -> alias map the Notification Service Extension resolves
+/// against. The active account is always included, not only enrolled addresses: a stale
+/// server enrollment can keep delivering an account after the local enrollment set is lost,
+/// and without its alias the extension can only render the chain-only fallback.
+public enum NotificationDisplayMap {
+  public static func aliases(
+    installationID: String,
+    enrolledAddresses: Set<String>,
+    labels: [String: String],
+    additionalAddress: String? = nil
+  ) -> [String: NotificationDisplayAlias] {
+    var addresses = enrolledAddresses
+    if let additionalAddress, !additionalAddress.isEmpty {
+      addresses.insert(additionalAddress.lowercased())
+    }
+    var aliases: [String: NotificationDisplayAlias] = [:]
+    for address in addresses {
+      let registrationID = NotificationRegistrationID.opaque(
+        installationID: installationID, address: address)
+      let label = labels[address].flatMap { $0.isEmpty ? nil : $0 } ?? shortAddress(address)
+      aliases[registrationID] = NotificationDisplayAlias(label: label, address: address)
+    }
+    return aliases
+  }
+
+  private static func shortAddress(_ address: String) -> String {
+    address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
+  }
+}

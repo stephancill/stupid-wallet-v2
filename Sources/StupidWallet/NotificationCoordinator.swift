@@ -91,7 +91,7 @@ import UserNotifications
         synchronizeInstallationMetadata(from: identity)
       }
       try? await store.write(state)
-      try? await writeDisplayState()
+      try? await writeDisplayState(additionalAddress: normalized)
     }
 
     func foreground() async {
@@ -254,16 +254,13 @@ import UserNotifications
       }
     }
 
-    private func writeDisplayState() async throws {
+    private func writeDisplayState(additionalAddress: String? = nil) async throws {
       guard let installationID = state.installationId else { return }
-      var aliases: [String: NotificationDisplayAlias] = [:]
-      for address in state.enrolledAddresses {
-        let registrationID = NotificationRegistrationID.opaque(
-          installationID: installationID, address: address)
-        let label = state.displayLabelsByAddress[address].flatMap { $0.isEmpty ? nil : $0 }
-          ?? shortAddress(address)
-        aliases[registrationID] = NotificationDisplayAlias(label: label, address: address)
-      }
+      let aliases = NotificationDisplayMap.aliases(
+        installationID: installationID,
+        enrolledAddresses: state.enrolledAddresses,
+        labels: state.displayLabelsByAddress,
+        additionalAddress: additionalAddress)
       try await displayStore.write(NotificationDisplayState(aliases: aliases))
     }
 
@@ -272,10 +269,6 @@ import UserNotifications
       state.synchronizeInstallationMetadata(
         installationID: installationID,
         publicKeyHash: identity.publicKeySPKIBase64URL.map(publicKeyHash))
-    }
-
-    private func shortAddress(_ address: String) -> String {
-      address.count > 12 ? "\(address.prefix(6))...\(address.suffix(4))" : address
     }
 
     private var apnsEnvironment: String {
