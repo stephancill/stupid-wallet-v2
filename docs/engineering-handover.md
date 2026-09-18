@@ -66,8 +66,9 @@ permission acceptance:
   credential; entitlements are App-Group-only. Its extension point is Apple's exact
   `com.apple.usernotifications.service`; the earlier `serviceextension` suffix prevented mutable-alert
   invocation and is regression-tested. Its avatar renderer replays the app `BlockieView`
-  palette-then-grid PRNG order so notification blockies match the in-app account blockie; the fix is
-  carried by internal TestFlight build 1.0.0 (105).
+  palette-then-grid PRNG order and top-down row order so notification blockies match the in-app
+  account blockie; the PRNG-order fix is in internal TestFlight 1.0.0 (105) and the orientation fix
+  awaits a later build.
 - **Tooling** — `stupid-app` 0.0.16 provides per-bundle capability derivation (an entitlement is enabled
   only on the bundle that declares it) and `EntitlementDeriver` reconciling `aps-environment`
   (`development`/`production`). Release-built and installed; the app's `aps-environment: development`

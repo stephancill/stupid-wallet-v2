@@ -50,6 +50,39 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-18 - Notification Blockie Vertical Orientation Fix
+
+### Summary
+
+- Fixed a second avatar mismatch in `NotificationBlockie`: the rendered PNG was vertically mirrored
+  relative to the app's `BlockieView`. `CGContext` uses a bottom-left origin while the app's
+  `UIGraphicsImageRenderer` uses top-left, so artwork row 0 was drawn at the image bottom.
+- Inverted the row-to-y mapping so artwork row 0 is the PNG's top row.
+- Added `testBlockieRenderedImageTopRowMatchesArtworkRowZero`, which decodes the real PNG and compares
+  its first pixel row to artwork row 0 up to a palette permutation.
+
+### Why
+
+- Build 1.0.0 (105) carried the tile-order fix but not the orientation fix, so the notification avatar
+  still did not match the app. Rendering the extension PNG and the app algorithm from the same seed and
+  comparing cell-by-cell showed the extension image matched the tile grid only when vertically flipped.
+
+### Verification
+
+- PIL comparison of the extension PNG against the true tile grid: `match vs TRUE 24/64`,
+  `match vs VFLIP 64/64` before the fix; `match vs TRUE 64/64` after.
+- Rendered the avatar for the last production notification (`tokenReceived`, Base, address from
+  `installation_events` cursor 15) and compared the app and extension images: 65536/65536 pixels within
+  ±2/255; the fallback seed `notification-<chain>` differs completely.
+- `swift test`: 325 tests / 37 suites pass. `swift-format lint --strict` clean.
+
+### Follow-Up
+
+- Requires a new iOS build; 1.0.0 (105) does not contain this fix.
+- The on-device display-map lookup must also resolve the registration id to the address, otherwise the
+  extension falls back to `notification-<chain>` and shows a different avatar regardless of renderer
+  correctness.
+
 ## 2026-09-17 - Internal TestFlight Build 1.0.0 (105)
 
 ### Summary

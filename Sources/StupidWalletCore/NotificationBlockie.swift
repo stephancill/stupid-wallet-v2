@@ -57,10 +57,13 @@ public enum NotificationBlockie {
       )
       let col = index % cells
       let row = index / cells
+      // `CGContext` has a bottom-left origin, unlike the app's top-left
+      // `UIGraphicsImageRenderer`. Invert the row so artwork row 0 is the PNG's
+      // top row and the avatar is not vertically mirrored.
       context.fill(
         CGRect(
-          x: col * pixelsPerCell, y: row * pixelsPerCell, width: pixelsPerCell,
-          height: pixelsPerCell))
+          x: col * pixelsPerCell, y: (cells - 1 - row) * pixelsPerCell,
+          width: pixelsPerCell, height: pixelsPerCell))
     }
 
     guard let image = context.makeImage() else { return nil }

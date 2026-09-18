@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import XCTest
 
 @testable import StupidWalletCore
@@ -239,6 +241,40 @@ final class NotificationCoreTests: XCTestCase {
       1, 0, 1, 0, 0, 1, 0, 1,
     ]
     XCTAssertEqual(NotificationBlockie.pixels(for: seed), expected)
+  }
+
+  /// Pins the PNG orientation. `CGContext` draws bottom-up, unlike the app's top-down
+  /// `UIGraphicsImageRenderer`, so without the row inversion the notification avatar is
+  /// vertically mirrored relative to the app. Decodes the real PNG and compares the
+  /// image's first pixel row to artwork row 0, up to a palette permutation.
+  func testBlockieRenderedImageTopRowMatchesArtworkRowZero() throws {
+    let seed = "0x1111111111111111111111111111111111111111"
+    let data = try XCTUnwrap(NotificationBlockie.renderPNG(seed: seed, pixelsPerCell: 1))
+    let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+    let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+    let provider = try XCTUnwrap(image.dataProvider?.data)
+    let bytes = [UInt8](provider as Data)
+    let pixelBytes = image.bitsPerPixel / 8
+    func pixel(_ x: Int, _ y: Int) -> UInt32 {
+      let offset = y * image.bytesPerRow + x * pixelBytes
+      return UInt32(bytes[offset]) << 16 | UInt32(bytes[offset + 1]) << 8
+        | UInt32(bytes[offset + 2])
+    }
+
+    let grid = NotificationBlockie.pixels(for: seed)
+    let topRow = (0..<8).map { pixel($0, 0) }
+    XCTAssertEqual(signature(topRow), signature(Array(grid[0..<8])))
+    XCTAssertNotEqual(signature(topRow), signature(Array(grid[56..<64])))
+  }
+
+  private func signature<T: Hashable>(_ values: [T]) -> [Int] {
+    var labels: [T: Int] = [:]
+    return values.map { value in
+      if let label = labels[value] { return label }
+      let label = labels.count
+      labels[value] = label
+      return label
+    }
   }
 
   func testDesiredStateOnlyPairsActiveChains() {
