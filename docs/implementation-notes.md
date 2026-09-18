@@ -50,6 +50,36 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-18 - Internal TestFlight Build 1.0.0 (106)
+
+### Summary
+
+- Published internal TestFlight build 1.0.0 (106) carrying the complete notification blockie fix:
+  the tile draw-order correction and the vertical orientation correction.
+- IPA SHA-256 `3eada8dd611491572afea3eb8963a2df5709f5cf303b46fd48b2d9326b0d2637`; build upload
+  `c09083f5-1e90-4f4a-aa1e-399211cf8b1d`.
+
+### Why
+
+- Build 105 carried only the tile-order fix, so the notification avatar was still vertically mirrored
+  relative to the app. Build 106 renders the app's blockie grid in the app's top-down orientation.
+
+### Verification
+
+- `stupid-app doctor`: 0 failures / 0 warnings.
+- `stupid-app release bump --build-number 106`: app and both extensions moved 105 → 106 in lockstep.
+- `stupid-app release preflight`: READY for 1.0.0 (106) across all three bundles.
+- `stupid-app release archive`: signed IPA, project-owned post-sign verifier passed.
+- `stupid-app release upload --wait`: upload COMPLETE, processing VALID, internal IN_BETA_TESTING.
+- `stupid-app release status --live`: processing VALID, internal IN_BETA_TESTING, external
+  READY_FOR_BETA_SUBMISSION.
+
+### Follow-Up
+
+- No external TestFlight submission was requested. Confirm on the physical device that the delivered
+  avatar matches the account blockie; if it still differs, the on-device display-map lookup is failing
+  and the extension is using the `notification-<chain>` fallback.
+
 ## 2026-09-18 - Notification Blockie Vertical Orientation Fix
 
 ### Summary
