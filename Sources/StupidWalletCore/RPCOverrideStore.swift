@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum RPCOverrideStoreError: Error, Sendable, Equatable {
@@ -8,6 +9,7 @@ public enum RPCOverrideStoreError: Error, Sendable, Equatable {
 /// Atomic App Group persistence for user-selected, pre-validated RPC endpoints.
 public struct RPCOverrideStore: Sendable {
   private let fileURL: URL?
+  private let lockURL: URL?
   private let deploymentStore: Simple7702AccountDeploymentStore
 
   public init(
@@ -16,10 +18,19 @@ public struct RPCOverrideStore: Sendable {
   ) {
     let container = directory ?? WalletStore.containerURL(appGroup: appGroup)
     fileURL = container?.appendingPathComponent("rpc-overrides.json", isDirectory: false)
+    lockURL = container?.appendingPathComponent("rpc-overrides.lock")
     deploymentStore = Simple7702AccountDeploymentStore(directory: directory, appGroup: appGroup)
   }
 
   public func all() throws -> [String: URL] {
+    try withLock { try allUnlocked() }
+  }
+
+  func withLockedOverrides<T>(_ body: ([String: URL]) throws -> T) throws -> T {
+    try withLock { try body(allUnlocked()) }
+  }
+
+  private func allUnlocked() throws -> [String: URL] {
     guard let fileURL else { throw RPCOverrideStoreError.unavailable }
     let data: Data
     do {
@@ -43,17 +54,13 @@ public struct RPCOverrideStore: Sendable {
     guard let normalized = ChainStore.normalize(chainID), let fileURL else {
       throw RPCOverrideStoreError.invalidChainID
     }
-    do {
-      try deploymentStore.remove(chainID: normalized)
-    } catch {
-      throw RPCOverrideStoreError.unavailable
-    }
-    var values = try all().mapValues(\.absoluteString)
-    values[normalized] = url.absoluteString
-    do {
-      try JSONEncoder().encode(values).write(to: fileURL, options: [.atomic])
-    } catch {
-      throw RPCOverrideStoreError.unavailable
+    try withLock {
+      do {
+        try deploymentStore.remove(chainID: normalized)
+        var values = try allUnlocked().mapValues(\.absoluteString)
+        values[normalized] = url.absoluteString
+        try JSONEncoder().encode(values).write(to: fileURL, options: [.atomic])
+      } catch { throw RPCOverrideStoreError.unavailable }
     }
   }
 
@@ -61,17 +68,23 @@ public struct RPCOverrideStore: Sendable {
     guard let normalized = ChainStore.normalize(chainID), let fileURL else {
       throw RPCOverrideStoreError.invalidChainID
     }
-    do {
-      try deploymentStore.remove(chainID: normalized)
-    } catch {
-      throw RPCOverrideStoreError.unavailable
+    try withLock {
+      do {
+        try deploymentStore.remove(chainID: normalized)
+        var values = try allUnlocked().mapValues(\.absoluteString)
+        values.removeValue(forKey: normalized)
+        try JSONEncoder().encode(values).write(to: fileURL, options: [.atomic])
+      } catch { throw RPCOverrideStoreError.unavailable }
     }
-    var values = try all().mapValues(\.absoluteString)
-    values.removeValue(forKey: normalized)
-    do {
-      try JSONEncoder().encode(values).write(to: fileURL, options: [.atomic])
-    } catch {
-      throw RPCOverrideStoreError.unavailable
-    }
+  }
+
+  private func withLock<T>(_ body: () throws -> T) throws -> T {
+    guard let lockURL else { throw RPCOverrideStoreError.unavailable }
+    let descriptor = open(lockURL.path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR)
+    guard descriptor >= 0 else { throw RPCOverrideStoreError.unavailable }
+    defer { _ = close(descriptor) }
+    guard flock(descriptor, LOCK_EX) == 0 else { throw RPCOverrideStoreError.unavailable }
+    defer { _ = flock(descriptor, LOCK_UN) }
+    return try body()
   }
 }

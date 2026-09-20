@@ -7797,3 +7797,367 @@ Rendered a legacy before/after simulator run to confirm clear signing in the Saf
 - `stupid-app release bump` set Apple CFBundleVersion 101→102 across the app and Safari extension;
   `release archive` produced `.release/StupidWallet.ipa` and `release upload --wait` was accepted by
   App Store Connect with build state VALID and internal IN_BETA_TESTING.
+
+## 2026-09-20 — Manually tracked ERC-20 balances
+
+Implemented the approved token-balances scope in the clean `feat/token-balances` worktree, based on
+committed source `448bc36c2b4a97976f099a217c4e3fd298b303d6` (Apple build 104). The starting worktree's
+uncommitted interface work was excluded. Runtime dependencies and deployment target are unchanged;
+verification used `stupid-app` 0.0.17, Swift 6.4, Xcode 27.0 and iOS SDK 27.0.
+
+Product behavior:
+
+- Home shows symbol, configured network name, and balance below the native total, with Add Token at
+  the bottom. Settings → Tokens manages the same initially empty shared watchlist. Token details show
+  the exact full-width amount, contract/copy action, decimals, last successful update, refresh, and
+  removal. Zero balances remain visible; sorting is by symbol then network and stable token identity.
+- Import selects a configured network and contract address, fetches required symbol/decimals, validates
+  contract code and a uint256 `balanceOf` response, rejects duplicates, and seeds the selected account's
+  cache. Missing metadata blocks import. Symbols use standard bounded UTF-8 ABI strings; no manual
+  metadata or bytes32-symbol adaptation was added. Amount formatting reuses the existing exact integer
+  formatter, with compact six-place list display and a tiny-positive indicator.
+- Include in Total Balance continues to govern native aggregation only. ERC-20 tokens on excluded
+  networks still display and refresh. Network deletion removes its tracked tokens and token balances
+  for every account. Account/group removal clears only those accounts' cached balances and retains
+  shared token definitions.
+
+Implementation:
+
+- Added `WalletToken`, `ERC20Reader`, `TokenStore`, `WalletBalanceService`, `WalletBalanceModel`, and
+  native token list/import/detail views. Home and Settings share one main-actor observable balance
+  coordinator rather than running independent requests. Existing account/lifecycle refresh entry
+  points now use it; selecting another account immediately hydrates that account's own cache.
+- Added JSON-RPC read batching to `RPCClient`. Included native reads and ERC-20 balance reads share
+  per-network arrays, with 50 calls per chunk and four concurrent chunks. Results match numeric IDs,
+  preserve independent structured errors/null, reject ambiguous IDs, and handle a missing response as
+  that read's error. Batch refusal fails visibly rather than silently retrying individual calls.
+- SWR publishes saved raw amounts before network waits, persists/publishes successful rows as each
+  chunk finishes, retains cached amounts and timestamps during failures, and stores successful zeros.
+  Native-total success/failure is independent of token success. Overlapping refreshes with the same
+  context await one task. Registry revision/membership, networks, override map, watchlist revision,
+  refresh ID, and current selected account prevent stale persistence or UI publication.
+- Token definitions, account caches, and refresh IDs share one versioned, locked, durably replaced
+  `tokens.json`. Removing a token and all its account balances is one commit. Network removal has a
+  durable `network-removal.json` journal; network-store entry resumes it before returning a network
+  snapshot or accepting restoration. RPC override mutations now serialize with commits through their
+  own advisory lock. The lock order is registry → networks → overrides → tokens → native cache, with
+  no lock held across an await/RPC. Reused existing registry durable-file helpers internally.
+- Extended the existing recoverable account/group deletion lifecycle to clear token caches. Malformed
+  token persistence fails without replacement; late reads cannot repopulate removed state.
+
+Verification:
+
+- `git ls-files --modified --others --exclude-standard -z -- '*.swift' | xargs -0 swift format --in-place`
+  and the corresponding `swift format lint --strict` command passed.
+- `swift test`: all 346 tests passed. Added coverage includes response reordering/partial errors/
+  missing and ambiguous IDs, metadata and balance validation, 0/6/8/18/255 decimals and maximum uint256,
+  account/network isolation, cache reload and corruption, failures retaining successes, cold failures,
+  zero persistence, excluded networks, 102-token chunking, progressive network publication,
+  coalescing, account switching during a suspended read, token removal during a suspended read,
+  RPC configuration changes, removal-journal recovery/readdition, and account/group cache cleanup.
+  Initial new-fixture failures were corrected to use a valid multi-group registry transition;
+  an unnecessary URLProtocol Sendable conformance was removed. The final suite passed without those
+  failures or compiler warnings.
+- `cast calldata 'balanceOf(address)' <synthetic-test-account>` independently matched the Swift
+  selector and padded account vector; `cast to-unit 1250000 6` agreed with the exact 1.25 amount.
+- `stupid-app build`: app and Safari extension build passed for iOS 17 / SDK 27.
+- `stupid-app doctor`: zero failures and warnings.
+- `stupid-app run --simulator --udid <preferred-simulator>`: latest sources reinstalled and launched.
+  Simulator UI acceptance imported USDC from Ethereum and Base using live metadata/balance reads,
+  showed separate zero balances on Home and Settings → Tokens, displayed exact token details and
+  timestamps, removed Base while preserving Ethereum, then reinstalled/relaunched and confirmed that
+  state remained. Both temporary tokens were removed through the UI after acceptance.
+- `git diff --check`: passed.
+
+Simulator investigation: IDB accepted typing commands without updating the focused field. Its flat
+accessibility output also omitted toolbar controls. A simulator restart initially left launch and
+screenshot operations hanging; restarting the stale CoreSimulator service restored reinstall/launch,
+and disconnecting the stale IDB companion restored navigation. AXe 1.8.0 supplied working text input
+and recursive accessibility inspection. Homebrew installation was blocked by its Command Line Tools
+version check; the already-downloaded release was SHA-256 checked against the formula and run from
+ignored `.build/` with the formula's local-tool signing steps. Updated the repository debugging skill
+with these failure signatures and the token-read/cache boundaries. No wallet records were edited to
+force a test outcome.
+
+Remaining acceptance: token-specific physical-device UI/foreground/offline behavior and mixed
+app/Safari/Chrome lifecycle checks. This work produced local development artifacts; release versions
+and external-beta availability are not advanced by this implementation.
+
+## 2026-09-20 — Hide zero-balance Home rows and restore the empty-state layout
+
+Updated Home to omit tracked tokens whose last successful raw balance is zero. The filter uses
+the full-width raw amount, so tiny positive amounts remain visible; uncached loading/unavailable
+rows are not treated as zero. Settings → Tokens retains every tracked token for management.
+When the filtered Home list is empty, flexible spacers center the native total in the available
+content area and place Add Token at the bottom. The layout uses the actual viewport height;
+Home keeps its compact top-aligned layout when token rows are visible.
+
+Verification: `swift format --in-place Sources/StupidWallet/ContentView.swift`,
+`swift format lint --strict Sources/StupidWallet/ContentView.swift`, and `stupid-app build` passed.
+`stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched the updated app.
+Accessibility inspection confirmed the centered native total with an empty watchlist. Importing
+a live Ethereum USDC zero balance kept Home centered with no token row; Settings → Tokens still
+displayed the tracked zero-balance row. This is a presentation-only change; the prior core test
+results remain applicable. Updated the engineering handover with the revised visibility policy.
+
+## 2026-09-20 — Automatic token paste and metadata loading
+
+Add Token now prefills a valid contract address from the clipboard once when the sheet opens and
+automatically loads metadata. Removed Check Token. Complete addresses trigger the existing validated
+batch lookup after a 350 ms debounce; address, network, and account changes cancel the previous task,
+clear its preview, and start a fresh lookup. Partial input makes no RPC request. The form displays
+loading/errors and supports pull-to-refresh for retries. Add remains disabled until validation
+succeeds. Clipboard reads use the standard iOS paste permission behavior, and later input changes
+do not repaste or overwrite the edited field.
+
+Verification:
+
+- `swift format --in-place Sources/StupidWallet/TokensView.swift` and
+  `swift format lint --strict Sources/StupidWallet/TokensView.swift`: passed.
+- `stupid-app build`: app and Safari extension build passed.
+- `stupid-app doctor`: zero failures and warnings.
+- `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and launched.
+- Simulator accessibility acceptance: after the system Allow Paste prompt, an Ethereum WETH address
+  was prefilled and its symbol, 18 decimals, and balance loaded with Add enabled, without any Check
+  Token action. Switching that address to Base automatically cleared the preview, disabled Add,
+  and reported no contract on that network. A previously tracked USDC address automatically produced
+  the duplicate-token error. These were metadata previews and did not add tokens to the watchlist.
+- `git diff --check`: passed. Core validation and persistence were unchanged by this UI workflow.
+
+Clipboard test setup initially read a different value because Device Hub synchronized the host
+clipboard over the simulator pasteboard. Synchronizing the same public contract address to both
+resolved the test setup. Updated the debugging skill with that boundary and the system paste prompt,
+and updated the handover with the automatic import workflow.
+
+## 2026-09-20 — Token row and detail polish
+
+Removed the "Cached" text from tracked-token rows; the retained-value state remains in the row model
+and is still covered by tests, but the list no longer labels it. Token details are now titled Token
+and show only the stored symbol, network, decimals, and contract address plus Remove Token. The
+Balance section (exact amount, update timestamp, retained-value note, per-row error, and Refresh) was
+removed; balances remain in the Home and Settings token lists, which refresh on launch, foreground
+return, token management, and pull-to-refresh.
+
+The contract address is no longer a tap-to-copy control with a separate Copy Address button. It uses
+the existing middle-truncated long-press text control already used for activity hashes and signatures,
+so a long press shows the standard iOS edit menu and its Copy action copies the full stored address.
+Reused the existing `CopyableText` control by widening it from file-private to module-internal instead
+of duplicating it.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict` on the changed Swift files: passed.
+- `stupid-app build`: app and Safari extension build passed.
+- `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and launched.
+- Simulator accessibility acceptance on a tracked USDC row: the detail screen's only heading is
+  Token, its Token Information section shows Symbol, Network, Decimals, and Contract, there is no
+  Balance section, and no Copy Address control inside the form. A held touch on the contract value
+  presented the native edit menu with a Copy action; choosing it placed the full 20-byte contract
+  address on the simulator pasteboard. These were metadata-only checks; no wallet or token state
+  changed beyond the tracked list.
+
+Updated the engineering handover to describe the revised detail contents, the long-press copy
+behavior, and the retained-value state that is no longer labelled in the UI.
+
+## 2026-09-20 — Token detail section naming
+
+Renamed the token detail information section from Token Information to Details and removed the
+Remove Token section footer that explained cross-account removal. The removal action, its destructive
+role, and the confirmation-free single-row behavior are unchanged.
+
+Verification: `swift format --in-place` and `swift format lint --strict` on the changed file passed,
+`stupid-app build` passed, and `stupid-app run --simulator --udid <preferred-simulator>` reinstalled
+and launched. Simulator accessibility inspection of a tracked token confirmed the only headings are
+Token and Details, the Details rows remain Symbol, Network, Decimals, and Contract, Remove Token is
+still present, and no footer text renders. Updated the engineering handover to match.
+
+## 2026-09-20 — Remove Token confirmation prompt
+
+Remove Token now requires confirmation before it deletes the token and every account's cached
+balance for it. The prompt is a modal alert titled `Remove <symbol>?` with the previous footer
+explanation as its message, a cancel role action, and a destructive Remove Token action. A
+confirmation dialog was tried first but placed the action sheet away from the reviewed row, so the
+modal alert is used instead. Cancelling leaves the token tracked and the detail screen in place.
+Removal behavior after confirmation is unchanged, including dismissal once the row disappears.
+
+Verification: `swift format --in-place` and `swift format lint --strict` on the changed file passed,
+`stupid-app build` passed, and `stupid-app run --simulator --udid <preferred-simulator>` reinstalled
+and launched. Simulator accessibility inspection confirmed the modal alert renders centered with the
+title, message, Cancel, and destructive Remove Token actions. Cancelling kept the token tracked, and
+confirming removed it, dismissed the detail screen, and left the Tokens list empty. Updated the
+engineering handover with the confirmation behavior.
+
+## 2026-09-20 — Extracted iOS UI design rules into a reusable skill
+
+The copyable-value and destructive-action decisions made during the token UI work were generalised
+into a new global skill, `stupid-ios-design`, kept outside this repository alongside the other
+Stupid skills. It records two rules so far: identifier-like values are middle-truncated and copied
+through the native long-press edit menu, which always copies the complete stored value; and every
+destructive action is confirmed with a centered modal alert rather than an action sheet, with a
+cancel path and a message stating the scope. The skill also documents how to add further rules.
+
+No wallet source changed for this entry. The token screens in this repository already follow both
+rules, which is where they were established.
+
+## 2026-09-20 — Token search with the Stupid Tokens catalog
+
+Add Token is now a search screen instead of a network picker plus contract field. It accepts a token
+name, symbol, or contract address and adds the selected result directly. The clipboard address
+prefill is retained; the debounced auto-search, loading state, and error reporting are unchanged in
+spirit, and there is still no manual check step.
+
+Search uses the public, keyless `https://tokens.stupidtech.net` catalog documented at
+`tokens.stupidtech.net`: `GET /v1/search?q=&chainId=&limit=`. Only the search endpoint is used.
+Requests are issued once per configured network, bounded to four concurrent requests and 20 results
+per network, and identical searches are cached in memory for 60 seconds because the service asks
+callers to cache responses and avoid tight polling. Envelope validation is strict; unusable entries
+are dropped, a response in which nothing is usable fails loudly, responses are size-bounded, 400 is
+treated as a client error, and transport or server failures surface as an unavailable search. A
+single unreachable network still returns the other networks' matches.
+
+Results are ordered by USD market cap descending, with unknown caps last, and the catalog's own
+ranking is interleaved across networks so each configured network's best match appears near the top
+instead of one network's long tail. Market caps are scaled from the exact decimal string (for
+example `74228944289` becomes `$74.2B`) without floating point. Rows show the catalog icon when the
+catalog provides one, the symbol, the name when it differs from the symbol, the network name, and the
+market cap; already tracked tokens show Added and cannot be selected again.
+
+A complete contract address is not sent to the catalog. It is validated on chain against every
+configured network, which preserves importing tokens that the catalog does not list and returns each
+network where the address is a valid ERC-20. Selecting any result performs the existing on-chain
+validation (code, symbol, decimals, balance) before the import is persisted, so catalog metadata
+remains display-only and is never stored. As part of this, address normalization now accepts an
+uppercase `0X` prefix, which previously made a pasted address fall through to a catalog search.
+
+Implementation: added `StupidTokensClient` (an actor with the short-lived search cache and strict
+decoding), `MarketCapFormatter`, and `TokenCandidate`; extended `WalletBalanceService` with
+`searchTokens`, a per-network catalog fan-out, and a bounded on-chain address probe. The address
+probe treats a non-contract as a normal miss and only counts transport or response failures.
+
+Verification:
+
+- `swift test`: 356 tests passed, including new coverage for catalog parsing and normalization,
+  request scoping and caching, dropped unusable entries, unusable/oversized/400/5xx/offline
+  responses, invalid arguments, per-network partial failure, complete catalog failure, market-cap
+  ordering with unknown caps last and cross-network interleaving, market-cap formatting, the
+  on-chain address probe (importable, already tracked, not a contract, unreachable), and empty
+  queries. Existing token-balance and deletion tests were unchanged and still pass.
+- `swift format --in-place` and `swift format lint --strict` on all changed Swift files passed;
+  `stupid-app build` passed; `git diff --check` passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched. Live simulator
+  acceptance searched `usdc` and rendered catalog icons, symbols, names, network names, and compact
+  market caps, with the Ethereum USDC match first and Base, Arbitrum, and Optimism matches interleaved
+  behind it. The metadata previews were not added to the watchlist.
+
+No new dependency, endpoint override, or persisted format was introduced; the catalog URL is fixed
+and catalog responses are never stored.
+
+## 2026-09-20 — Market cap display in add-token results
+
+Add-token results show the catalog market cap when the catalog provides one, alongside the icon,
+symbol, name, and network. A row that is already tracked shows Added as well rather than replacing
+the market cap, and the value stays visible while a row is importing.
+
+The catalog changed its `marketCapUsd` representation from a decimal integer to a decimal string with
+a fractional part (for example `74090707373.5601`), which the integer-only parser rejected and which
+therefore silently removed the market cap from every row. Market cap parsing and the compact
+formatter now accept an optional fractional part and truncate it, so the value is exact, never
+rounded through a floating-point type, and still ordered correctly. The results empty state and the
+"search by name, symbol, or address" guidance text were also removed; the search field placeholder
+already communicates the accepted input, and an empty query now shows nothing.
+
+Verification:
+
+- `swift test`: 357 tests passed, including market-cap formatting for integer, fractional, padded,
+  and unusable inputs, and catalog parsing of a fractional market cap.
+- `swift format --in-place` and `swift format lint --strict` on the changed Swift files passed;
+  `stupid-app build` passed; `git diff --check` passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched. A live `usdc`
+  search rendered `$74B` for the Ethereum USDC match with its icon, while catalog entries without a
+  market cap showed none. Nothing was added to the watchlist.
+
+The catalog remains discovery-only: the displayed market cap is never persisted and never
+participates in on-chain validation.
+
+## 2026-09-20 — Inline search progress on the add-token screen
+
+The add-token search indicator moved into the search field itself: while a search is in flight a
+small progress indicator sits at the trailing edge of the input row, and the separate "Searching…"
+row was removed. The field's own placeholder and results list now carry the whole screen, so an empty
+query shows nothing at all.
+
+Verification: `swift format --in-place` and `swift format lint --strict` on the changed file passed,
+`stupid-app build` passed, and `stupid-app run --simulator --udid <preferred-simulator>` reinstalled
+and launched. A simulator screenshot captured immediately after typing showed the inline indicator in
+the input row with no separate searching row, and the completed search rendered market-cap-ordered
+results with caps and icons.
+
+## 2026-09-20 — Add-token flow: confirmation, tracked state, and the address fallback
+
+Reworked the add-token screen after the search work:
+
+- Selecting a result no longer imports immediately. It opens a modal alert naming the token and its
+  network; confirming performs the existing on-chain validation and import, and cancelling changes
+  nothing.
+- The sheet stays open after a successful import so several tokens can be added in one session, and
+  the added row flips to a tracked state in place: a checkmark, disabled, and the market cap still
+  shown when the catalog has one.
+- The per-row import spinner was removed, along with the sheet dismissal that followed an import.
+- The search field gained a clear control, and the inline progress indicator remains the only
+  search-progress affordance.
+- A contract address now goes through the catalog first, like any other query. Only when the catalog
+  has no match on any configured network does the screen reveal a network picker and validate the
+  address on chain on the selected network; changing the network reloads that single-chain
+  validation. This replaces the previous behavior, which probed every configured network at once for
+  an address, and preserves importing tokens the catalog does not list. The section footer that
+  explained the fallback was removed; the picker and the not-found message carry it.
+- The unused multi-network address probe and its outcome flag were deleted from
+  `WalletBalanceService`, which now exposes catalog search plus `addressCandidate(context:chainID:address:)`
+  for one network.
+
+Verification:
+
+- `swift test`: 356 tests passed. The address coverage now exercises the single-network candidate
+  resolution: importable on the selected chain, already tracked, not a contract, transport failure,
+  and an unconfigured chain. Catalog, ordering, caching, and formatting coverage is unchanged.
+- `swift format --in-place` and `swift format lint --strict` on the changed Swift files passed;
+  `stupid-app build` passed; `git diff --check` passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched. Live simulator
+  acceptance: the Base USDC address returned a catalog result with its icon and `$60.9B` market cap
+  and no network picker; an address unknown to the catalog revealed the picker, reported that no
+  ERC-20 token was found on Ethereum, and reloaded that message for Base after switching the network;
+  an unmatched text query reported "No tokens found." with no picker. Removing a tracked token
+  through the confirmation alert persisted to `tokens.json` (empty token list, incremented revision)
+  and survived relaunch.
+
+Docs: the handover's tracked-token section now describes the confirmation step, the tracked-row
+checkmark, the catalog-first address fallback, and the retained-value states.
+
+## 2026-09-20 — Token icons in tracked rows
+
+Tracked token rows now lead with the token icon, and the Settings → Tokens rows no longer show a
+balance. The shared row view keeps the balance for Home, where the token list exists to show
+balances, and hides it on the management screen. Home's zero-balance filtering is unchanged.
+
+Icons come from the Stupid Tokens catalog and are display-only. A new
+`StupidTokensClient.imageURL(chainID:address:)` reads `GET /v1/tokens/{chainId}/{address}`, verifies
+the returned address matches the request before trusting the icon, and caches results in memory for
+an hour, including negative results. `WalletBalanceService.tokenIcon` exposes it, and
+`WalletBalanceModel` resolves icons once per session for tracked tokens and publishes them into the
+rows, so the cached list renders immediately and the icon fills in. Nothing about the catalog is
+persisted, so `tokens.json` is unchanged. When the catalog has no icon, or while one is loading, the
+row shows a letter placeholder derived from the symbol.
+
+Verification:
+
+- `swift test`: 357 tests passed, including a new catalog-icon test covering the request path, the
+  one-request cache, a 404, a mismatched returned address, a missing icon field, and an invalid
+  address argument.
+- `swift format --in-place` and `swift format lint --strict` on the changed Swift files passed;
+  `stupid-app build` passed; `git diff --check` passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched. Live simulator
+  acceptance tracked Base USDC and confirmed the Settings row renders the catalog USDC icon with the
+  symbol and network and no trailing balance. To exercise the fallback, the catalog base URL was
+  temporarily pointed at an unreachable host, rebuilt, and the same row then rendered the letter
+  placeholder; the host was restored, rebuilt, and the real icon returned. The token was then removed
+  through the confirmation alert and the store confirmed an empty token list at revision 18.

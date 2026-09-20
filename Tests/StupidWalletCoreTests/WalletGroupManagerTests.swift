@@ -394,6 +394,49 @@ struct WalletGroupManagerTests {
     #expect(terminal.error?.nestedString(at: ["message"])?.contains("removed") == true)
   }
 
+  @Test(
+    "account and group deletion remove token caches while retaining the shared watchlist",
+    arguments: [false, true])
+  func deletesTokenBalances(entireGroup: Bool) throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+    _ = try environment.manager.deriveAccount(groupID: group.id)
+    let service = WalletBalanceService(directory: environment.directory)
+    let removedAccount = group.accounts[0].address
+    let context = try service.context(account: removedAccount)
+    let token = try WalletToken(
+      chainID: "1", address: "0x1111111111111111111111111111111111111111", symbol: "TEST",
+      decimals: 6)
+    let entry = TokenBalanceEntry(
+      raw: [UInt8](repeating: 0, count: 32), updatedAt: .now,
+      endpoint: context.endpoint(chainID: "1"))
+    try service.add(
+      imported: TokenImport(token: token, balance: entry, account: removedAccount.lowercased()),
+      context: context)
+    let survivingContext = try service.context(account: environment.existingAddress)
+    let survivingRefresh = try service.begin(context: survivingContext)
+    let result = NetworkBalanceResult(
+      native: nil, tokens: [TokenBalanceRead(tokenID: token.id, result: .success(entry))])
+    try service.commit(context: survivingContext, refreshID: survivingRefresh, result: result)
+    let oldContext = try service.context(account: removedAccount)
+    let oldRefresh = try service.begin(context: oldContext)
+
+    if entireGroup {
+      try environment.manager.deleteGroup(groupID: group.id)
+    } else {
+      try environment.manager.deleteAccount(groupID: group.id, address: removedAccount)
+    }
+
+    let snapshot = try service.tokens.load()
+    #expect(snapshot.tokens == [token])
+    #expect(snapshot.balance(account: removedAccount, tokenID: token.id) == nil)
+    #expect(snapshot.balance(account: environment.existingAddress, tokenID: token.id) != nil)
+    #expect(throws: TokenError.configurationChanged) {
+      try service.commit(context: oldContext, refreshID: oldRefresh, result: result)
+    }
+  }
+
   @Test("deleting registry barrier resumes after secret deletion failure")
   func resumesDeletion() throws {
     let seeds = StubSeedStore(deleteFailures: 1)

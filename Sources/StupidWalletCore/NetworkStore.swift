@@ -33,6 +33,10 @@ public struct NetworkStore: @unchecked Sendable {
   private let fileURL: URL?
   private let removedFileURL: URL?
   private let lockURL: URL?
+  private let removalURL: URL?
+  private let tokens: TokenStore
+  private let overrides: RPCOverrideStore
+  private let chainStore: ChainStore
   private let legacyDefaults: UserDefaults?
 
   public init(
@@ -44,10 +48,22 @@ public struct NetworkStore: @unchecked Sendable {
     fileURL = container?.appendingPathComponent("networks.json", isDirectory: false)
     removedFileURL = container?.appendingPathComponent("removed-networks.json", isDirectory: false)
     lockURL = container?.appendingPathComponent("networks.lock", isDirectory: false)
+    removalURL = container?.appendingPathComponent("network-removal.json")
+    tokens = TokenStore(directory: directory, appGroup: appGroup)
+    overrides = RPCOverrideStore(directory: directory, appGroup: appGroup)
+    chainStore = ChainStore(directory: directory, appGroup: appGroup)
     legacyDefaults = UserDefaults(suiteName: legacySuiteName ?? appGroup)
   }
 
   public func all() throws -> [WalletNetwork] {
+    try withLock { try allUnlocked() }
+  }
+
+  func withLockedNetworks<T>(_ body: ([WalletNetwork]) throws -> T) throws -> T {
+    try withLock { try body(allUnlocked()) }
+  }
+
+  private func allUnlocked() throws -> [WalletNetwork] {
     let stored = try storedCustomNetworks()
     let legacy = legacyNetworks()
     let excluded = legacyExcludedChainIDs()
@@ -111,26 +127,28 @@ public struct NetworkStore: @unchecked Sendable {
     guard !trimmedName.isEmpty, let normalized = ChainStore.normalize(chainID) else {
       throw NetworkStoreError.invalidNetwork
     }
-    guard try network(chainID: normalized) == nil else { throw NetworkStoreError.alreadyExists }
-    if Self.initialNetworks.contains(where: { $0.id == normalized }) {
-      try restore(chainID: normalized)
-      return
+    try withLock {
+      guard try !allUnlocked().contains(where: { $0.id == normalized }) else {
+        throw NetworkStoreError.alreadyExists
+      }
+      if Self.initialNetworks.contains(where: { $0.id == normalized }) {
+        try restoreUnlocked(chainID: normalized)
+        return
+      }
+      try upsertCustomUnlocked(name: trimmedName, chainID: normalized)
     }
-    try upsertCustom(name: trimmedName, chainID: normalized)
   }
 
   public func remove(chainID: String) throws {
-    guard let normalized = ChainStore.normalize(chainID), try network(chainID: normalized) != nil
-    else {
+    guard let normalized = ChainStore.normalize(chainID), let removalURL else {
       throw NetworkStoreError.invalidNetwork
     }
     try withLock {
-      var stored = try storedCustomNetworks()
-      stored.removeAll { $0.id == normalized }
-      try write(stored)
-      var removed = try removedChainIDs()
-      removed.insert(normalized)
-      try writeRemovedChainIDs(removed)
+      guard try allUnlocked().contains(where: { $0.id == normalized }) else {
+        throw NetworkStoreError.invalidNetwork
+      }
+      try WalletRegistryStore.durableReplace(data: JSONEncoder().encode(normalized), at: removalURL)
+      try resumeRemovalUnlocked()
     }
   }
 
@@ -138,26 +156,30 @@ public struct NetworkStore: @unchecked Sendable {
     guard let normalized = ChainStore.normalize(chainID) else {
       throw NetworkStoreError.invalidNetwork
     }
-    if Self.initialNetworks.contains(where: { $0.id == normalized }) {
-      try restore(chainID: normalized)
-      return
+    try withLock {
+      if Self.initialNetworks.contains(where: { $0.id == normalized }) {
+        try restoreUnlocked(chainID: normalized)
+        return
+      }
+      let trimmedName = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+      let existing = try allUnlocked().first { $0.id == normalized }
+      let genericName = "Chain \(normalized)"
+      let name =
+        existing.flatMap { $0.name == genericName ? nil : $0.name }
+        ?? trimmedName.flatMap { $0.isEmpty ? nil : $0 }
+        ?? Self.knownNames[normalized] ?? genericName
+      try upsertCustomUnlocked(name: name, chainID: normalized)
     }
-    let trimmedName = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let existing = try network(chainID: normalized)
-    let genericName = "Chain \(normalized)"
-    let name =
-      existing.flatMap { $0.name == genericName ? nil : $0.name }
-      ?? trimmedName.flatMap { $0.isEmpty ? nil : $0 }
-      ?? Self.knownNames[normalized] ?? genericName
-    try upsertCustom(name: name, chainID: normalized)
   }
 
   public func setIncluded(_ included: Bool, chainID: String) throws {
-    guard let normalized = ChainStore.normalize(chainID), try network(chainID: normalized) != nil
-    else {
+    guard let normalized = ChainStore.normalize(chainID) else {
       throw NetworkStoreError.invalidNetwork
     }
     try withLock {
+      guard try allUnlocked().contains(where: { $0.id == normalized }) else {
+        throw NetworkStoreError.invalidNetwork
+      }
       var custom = try storedCustomNetworks()
       if let index = custom.firstIndex(where: { $0.id == normalized }) {
         custom[index].includeInBalance = included
@@ -169,28 +191,46 @@ public struct NetworkStore: @unchecked Sendable {
     }
   }
 
-  private func upsertCustom(name: String, chainID: String) throws {
-    try withLock {
-      var custom = try storedCustomNetworks()
-      if let index = custom.firstIndex(where: { $0.id == chainID }) {
-        custom[index].name = name
-      } else {
-        custom.append(
-          WalletNetwork(
-            id: chainID, name: name,
-            includeInBalance: !legacyExcludedChainIDs().contains(chainID)))
-      }
-      try write(custom)
-      var removed = try removedChainIDs()
-      if removed.remove(chainID) != nil { try writeRemovedChainIDs(removed) }
+  private func upsertCustomUnlocked(name: String, chainID: String) throws {
+    var custom = try storedCustomNetworks()
+    if let index = custom.firstIndex(where: { $0.id == chainID }) {
+      custom[index].name = name
+    } else {
+      custom.append(
+        WalletNetwork(
+          id: chainID, name: name,
+          includeInBalance: !legacyExcludedChainIDs().contains(chainID)))
     }
+    try write(custom)
+    var removed = try removedChainIDs()
+    if removed.remove(chainID) != nil { try writeRemovedChainIDs(removed) }
   }
 
-  private func restore(chainID: String) throws {
-    try withLock {
-      var removed = try removedChainIDs()
-      if removed.remove(chainID) != nil { try writeRemovedChainIDs(removed) }
+  private func restoreUnlocked(chainID: String) throws {
+    var removed = try removedChainIDs()
+    if removed.remove(chainID) != nil { try writeRemovedChainIDs(removed) }
+  }
+
+  /// Finish deletion before any reader or subsequent add can observe the network again.
+  private func resumeRemovalUnlocked() throws {
+    guard let removalURL else { throw NetworkStoreError.unavailable }
+    let data: Data
+    do { data = try Data(contentsOf: removalURL) } catch let error as CocoaError
+      where error.code == .fileReadNoSuchFile
+    { return } catch { throw NetworkStoreError.unavailable }
+    guard let chainID = try? JSONDecoder().decode(String.self, from: data),
+      ChainStore.normalize(chainID) == chainID
+    else { throw NetworkStoreError.unavailable }
+    try write(storedCustomNetworks().filter { $0.id != chainID })
+    var removed = try removedChainIDs()
+    removed.insert(chainID)
+    try writeRemovedChainIDs(removed)
+    try tokens.remove(chainID: chainID)
+    try overrides.remove(forChainID: chainID)
+    if try chainStore.currentChainID() == chainID, let replacement = try allUnlocked().first {
+      try chainStore.setChainID(replacement.id)
     }
+    try WalletRegistryStore.durableRemove(at: removalURL)
   }
 
   private func storedCustomNetworks() throws -> [WalletNetwork] {
@@ -207,7 +247,7 @@ public struct NetworkStore: @unchecked Sendable {
   private func write(_ networks: [WalletNetwork]) throws {
     guard let fileURL else { throw NetworkStoreError.unavailable }
     do {
-      try JSONEncoder().encode(networks).write(to: fileURL, options: [.atomic])
+      try WalletRegistryStore.durableReplace(data: JSONEncoder().encode(networks), at: fileURL)
     } catch {
       throw NetworkStoreError.unavailable
     }
@@ -227,7 +267,8 @@ public struct NetworkStore: @unchecked Sendable {
   private func writeRemovedChainIDs(_ chainIDs: Set<String>) throws {
     guard let removedFileURL else { throw NetworkStoreError.unavailable }
     do {
-      try JSONEncoder().encode(chainIDs.sorted()).write(to: removedFileURL, options: [.atomic])
+      try WalletRegistryStore.durableReplace(
+        data: JSONEncoder().encode(chainIDs.sorted()), at: removedFileURL)
     } catch {
       throw NetworkStoreError.unavailable
     }
@@ -268,6 +309,7 @@ public struct NetworkStore: @unchecked Sendable {
       _ = flock(descriptor, LOCK_UN)
       _ = close(descriptor)
     }
+    try resumeRemovalUnlocked()
     return try operation()
   }
 }

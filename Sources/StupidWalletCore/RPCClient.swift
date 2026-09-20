@@ -16,6 +16,16 @@ public enum RPCClientError: Error, Sendable, Equatable {
   case httpStatus(Int)
 }
 
+public struct RPCRead: Sendable, Equatable {
+  public let method: String
+  public let params: JSONValue
+
+  public init(method: String, params: JSONValue) {
+    self.method = method
+    self.params = params
+  }
+}
+
 /// Minimal, dependency-free JSON-RPC 2.0 client. It never casts results; callers see a
 /// preserved `JSONValue` (result) or the node's structured error object.
 public struct RPCClient: Sendable {
@@ -25,6 +35,65 @@ public struct RPCClient: Sendable {
   public init(session: URLSession = .shared, requestTimeout: TimeInterval = 15) {
     self.session = session
     self.requestTimeout = requestTimeout
+  }
+
+  /// Results are returned in request order, independently of the node's response order.
+  /// This entry point is deliberately restricted to the wallet's balance reads.
+  public func readBatch(url: URL, reads: [RPCRead]) async throws -> [RPCResponse] {
+    guard !reads.isEmpty, reads.count <= 50,
+      reads.allSatisfy({ ["eth_call", "eth_getBalance", "eth_getCode"].contains($0.method) })
+    else { throw RPCClientError.invalidResponse }
+    let body = JSONValue.array(
+      reads.enumerated().map { index, read in
+        .object([
+          "jsonrpc": .string("2.0"), "id": .number(Double(index + 1)),
+          "method": .string(read.method), "params": read.params,
+        ])
+      })
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(body)
+    request.timeoutInterval = requestTimeout
+    let data: Data
+    let response: URLResponse
+    do {
+      (data, response) = try await session.data(for: request)
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      throw RPCClientError.transport
+    }
+    try Task.checkCancellation()
+    guard data.count <= 1_048_576,
+      let parsed = try? JSONDecoder().decode(JSONValue.self, from: data)
+    else { throw RPCClientError.invalidResponse }
+    guard case .array(let items) = parsed else {
+      if case .object(let object) = parsed, let error = object["error"] {
+        return reads.map { _ in .error(error) }
+      }
+      if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+        throw RPCClientError.httpStatus(http.statusCode)
+      }
+      throw RPCClientError.invalidResponse
+    }
+    var results: [Int: RPCResponse] = [:]
+    for item in items {
+      guard case .object(let object) = item, object["jsonrpc"] == .string("2.0"),
+        case .number(let number) = object["id"], number >= 1, number <= Double(reads.count),
+        number.rounded() == number, results[Int(number)] == nil,
+        (object["result"] != nil) != (object["error"] != nil)
+      else { throw RPCClientError.invalidResponse }
+      results[Int(number)] = try responseBody(from: item)
+    }
+    // Missing responses fail only their own reads; ambiguous IDs invalidate the batch above.
+    return reads.indices.map { index in
+      results[index + 1]
+        ?? .error(
+          .object([
+            "code": .number(-32603), "message": .string("The RPC omitted this balance response."),
+          ]))
+    }
   }
 
   /// Sends one request and returns the JSON-RPC response. A node error response is

@@ -131,7 +131,9 @@ import SwiftUI
         Button("Delete Network", role: .destructive, action: deleteNetwork)
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("This removes the network and its custom RPC URL from your wallet.")
+        Text(
+          "This removes the network, its custom RPC URL, and all tracked tokens and cached token balances on this network for every account."
+        )
       }
       .alert("Network Not Deleted", isPresented: deleteErrorIsPresented) {
         Button("OK", role: .cancel) {}
@@ -149,14 +151,8 @@ import SwiftUI
 
     private func deleteNetwork() {
       do {
-        let chainStore = ChainStore()
-        let wasSelected = try? chainStore.currentChainID() == network.id
         let networkStore = NetworkStore()
         try networkStore.remove(chainID: network.id)
-        try? RPCOverrideStore().remove(forChainID: network.id)
-        if wasSelected == true, let replacement = try networkStore.all().first {
-          try? chainStore.setChainID(replacement.id)
-        }
         onChange()
         dismiss()
       } catch {

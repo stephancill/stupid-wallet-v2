@@ -1,18 +1,19 @@
+import Combine
 import Foundation
 import StupidWalletCore
 
 @MainActor
 final class WalletViewModel: ObservableObject {
-  private let balanceCache = BalanceCache()
+  let balances = WalletBalanceModel()
+  private var balanceObservation: AnyCancellable?
   private let groupManager = WalletGroupManager()
-  private var stateGeneration = 0
   private var registryUnavailableMessage: String?
   @Published var addressHex = ""
   @Published var walletGroups: [WalletGroup] = []
-  @Published var balance: String?
-  @Published var networkBalances: [NetworkBalanceItem] = []
+  var balance: String? { balances.nativeTotal }
+  var networkBalances: [NativeBalanceRow] { balances.nativeRows }
   @Published var chainID = ChainStore.defaultChainID
-  @Published var includedNetworkCount = 0
+  var includedNetworkCount: Int { balances.includedNetworkCount }
   @Published var isSaving = false
   @Published private(set) var isLoadingInitialState = true
   @Published var errorMessage: String?
@@ -31,6 +32,9 @@ final class WalletViewModel: ObservableObject {
   }
 
   init() {
+    balanceObservation = balances.objectWillChange.sink { [weak self] in
+      self?.objectWillChange.send()
+    }
     Task { await adoptAndLoad() }
   }
 
@@ -40,30 +44,28 @@ final class WalletViewModel: ObservableObject {
   @MainActor
   private func adoptAndLoad() async {
     defer { isLoadingInitialState = false }
-    stateGeneration += 1
     do {
       let result = try await WalletRegistryAdoption().ensureAdopted()
       guard let registry = result.registry else {
         walletGroups = []
         addressHex = ""
-        balance = nil
+        balances.selectAccount("")
         return
       }
       walletGroups = registry.groups.filter { $0.lifecycle == .active }
       guard let address = registry.homeSelectedAddress else {
         addressHex = ""
-        balance = nil
-        networkBalances = []
+        balances.selectAccount("")
         return
       }
       addressHex = address
-      balance = try balanceCache.balance(account: address)
+      balances.selectAccount(address)
       registryUnavailableMessage = nil
       errorMessage = nil
     } catch {
       addressHex = ""
       walletGroups = []
-      balance = nil
+      balances.selectAccount("")
       let message = adoptionMessage(for: error)
       registryUnavailableMessage = message
       errorMessage = message
@@ -214,7 +216,6 @@ final class WalletViewModel: ObservableObject {
     errorMessage = nil
     do {
       try groupManager.deleteAccount(groupID: groupID, address: address)
-      networkBalances = []
       await adoptAndLoad()
       await refreshBalance()
       return true
@@ -233,7 +234,6 @@ final class WalletViewModel: ObservableObject {
     errorMessage = nil
     do {
       try groupManager.deleteGroup(groupID: groupID)
-      networkBalances = []
       await adoptAndLoad()
       await refreshBalance()
       return true
@@ -252,7 +252,6 @@ final class WalletViewModel: ObservableObject {
     errorMessage = nil
     do {
       _ = try groupManager.selectHomeAccount(address: address)
-      networkBalances = []
       await adoptAndLoad()
       await refreshBalance()
       return true
@@ -275,53 +274,17 @@ final class WalletViewModel: ObservableObject {
       })
     else { throw WalletGroupManagerError.groupNotFound }
     try WalletGroupManager().deleteGroup(groupID: group.id)
-    networkBalances = []
     await adoptAndLoad()
   }
 
   func refreshBalance() async {
     guard hasWallet else { return }
-    let account = addressHex
-    let generation = stateGeneration
     do {
       chainID = try ChainStore().currentChainID()
-      let included = try NetworkStore().all().filter(\.includeInBalance)
-      includedNetworkCount = included.count
-      let results = await NativeBalanceService().balances(
-        account: account, chainIDs: included.map(\.id))
-      guard generation == stateGeneration,
-        addressHex.caseInsensitiveCompare(account) == .orderedSame
-      else { return }
-      let resultsByChain = Dictionary(uniqueKeysWithValues: results.map { ($0.chainID, $0.wei) })
-      networkBalances = included.compactMap { network in
-        let wei = resultsByChain[network.id] ?? nil
-        guard wei?.contains(where: { $0 != 0 }) == true else { return nil }
-        return NetworkBalanceItem(
-          id: network.id, name: network.name,
-          balance: wei.map(NativeBalanceService.formatEther), wei: wei ?? [])
-      }
-      .sorted {
-        if $0.wei == $1.wei {
-          return $0.name.localizedStandardCompare($1.name) == .orderedAscending
-        }
-        return NativeBalanceService.isGreater($0.wei, than: $1.wei)
-      }
-      let successful = results.compactMap(\.wei)
-      let refreshedBalance: String
-      if included.isEmpty {
-        refreshedBalance = NativeBalanceService.formatEther(bytes: [0])
-      } else if successful.isEmpty {
-        if balance == nil { balance = "Unavailable" }
-        return
-      } else {
-        refreshedBalance = NativeBalanceService.formatEther(
-          bytes: successful.reduce([0], NativeBalanceService.add))
-      }
-      balance = refreshedBalance
-      try? balanceCache.save(balance: refreshedBalance, account: account)
     } catch {
-      if balance == nil { balance = "Unavailable" }
+      errorMessage = "The selected network could not be loaded."
     }
+    await balances.refresh()
   }
 
   private func message(for error: Error) -> String {
@@ -379,13 +342,6 @@ final class WalletViewModel: ObservableObject {
     }
     return "Your existing wallet could not be loaded. Please try again."
   }
-}
-
-struct NetworkBalanceItem: Identifiable, Sendable {
-  let id: String
-  let name: String
-  let balance: String?
-  let wei: [UInt8]
 }
 
 struct NetworkInfo: Identifiable, Sendable {

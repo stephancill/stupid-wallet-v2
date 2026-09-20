@@ -15,6 +15,7 @@ import SwiftUI
     @State private var showSettingsSheet = false
     @State private var showAccountPicker = false
     @State private var showCopyCheckmark = false
+    @State private var showAddToken = false
 
     var body: some View {
       NavigationView {
@@ -88,13 +89,16 @@ import SwiftUI
           Task { await vm.refreshBalance() }
         }
       ) {
-        SettingsView(address: vm.addressHex, accountName: homeAccountName)
+        SettingsView(address: vm.addressHex, accountName: homeAccountName, balances: vm.balances)
           .id(vm.addressHex.lowercased())
       }
       .sheet(isPresented: $showAccountPicker) {
         AccountPickerView(vm: vm)
       }
-      .task {
+      .sheet(isPresented: $showAddToken) {
+        NavigationView { AddTokenView(balances: vm.balances) }
+      }
+      .task(id: vm.addressHex) {
         await vm.refreshBalance()
       }
       .onChange(of: scenePhase) { _, phase in
@@ -106,79 +110,107 @@ import SwiftUI
         showActivity = false
         showConnectedApps = false
         showSettingsSheet = false
+        showAddToken = false
       }
     }
 
     private var walletView: some View {
-      ScrollView {
-        VStack {
-          Spacer()
-          VStack(alignment: .center) {
-            HStack {
-              Spacer()
-              Button {
-                showBalanceDetails = true
-              } label: {
-                HStack(alignment: .center, spacing: 8) {
-                  if let balance = vm.balance {
-                    Text("♦ \(balance)")
-                      .font(.system(size: 48, weight: .bold))
-                      .foregroundStyle(.primary)
-                      .lineLimit(1)
-                      .minimumScaleFactor(0.4)
-                      .allowsTightening(true)
-                  } else {
-                    ProgressView()
-                  }
-                  if !vm.networkBalances.isEmpty {
-                    Image(systemName: showBalanceDetails ? "chevron.up" : "chevron.down")
-                      .foregroundStyle(.secondary)
-                  }
-                }
-              }
-              .buttonStyle(.plain)
-              .disabled(vm.networkBalances.isEmpty)
-              .popover(
-                isPresented: $showBalanceDetails,
-                attachmentAnchor: .rect(.bounds),
-                arrowEdge: .top
-              ) {
-                Group {
-                  if !vm.networkBalances.isEmpty {
-                    VStack(alignment: .leading, spacing: 0) {
-                      ForEach(vm.networkBalances) { network in
-                        HStack(spacing: 6) {
-                          Text(network.name)
-                          Text(network.balance.map { "♦ \($0)" } ?? "Unavailable")
-                            .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 6)
-                      }
+      GeometryReader { geometry in
+        ScrollView {
+          VStack {
+            if visibleTokenRows.isEmpty { Spacer() }
+            VStack(alignment: .center) {
+              HStack {
+                Spacer()
+                Button {
+                  showBalanceDetails = true
+                } label: {
+                  HStack(alignment: .center, spacing: 8) {
+                    if let balance = vm.balance {
+                      Text("♦ \(balance)")
+                        .font(.system(size: 48, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.4)
+                        .allowsTightening(true)
+                    } else {
+                      ProgressView()
                     }
-                    .frame(minWidth: 280)
-                  } else if vm.balance == nil {
-                    Text("Loading balances...")
-                  } else if vm.includedNetworkCount == 0 {
-                    Text("No networks included")
-                  } else {
-                    Text("Balances unavailable")
+                    if !vm.networkBalances.isEmpty {
+                      Image(systemName: showBalanceDetails ? "chevron.up" : "chevron.down")
+                        .foregroundStyle(.secondary)
+                    }
                   }
                 }
-                .padding()
-                .presentationCompactAdaptation(.popover)
+                .buttonStyle(.plain)
+                .disabled(vm.networkBalances.isEmpty)
+                .popover(
+                  isPresented: $showBalanceDetails,
+                  attachmentAnchor: .rect(.bounds),
+                  arrowEdge: .top
+                ) {
+                  Group {
+                    if !vm.networkBalances.isEmpty {
+                      VStack(alignment: .leading, spacing: 0) {
+                        ForEach(vm.networkBalances) { network in
+                          HStack(spacing: 6) {
+                            Text(network.name)
+                            Text(network.balance.map { "♦ \($0)" } ?? "Unavailable")
+                              .foregroundStyle(.secondary)
+                          }
+                          .frame(maxWidth: .infinity, alignment: .leading)
+                          .padding(.vertical, 6)
+                        }
+                      }
+                      .frame(minWidth: 280)
+                    } else if vm.balance == nil {
+                      Text("Loading balances...")
+                    } else if vm.includedNetworkCount == 0 {
+                      Text("No networks included")
+                    } else {
+                      Text("Balances unavailable")
+                    }
+                  }
+                  .padding()
+                  .presentationCompactAdaptation(.popover)
+                }
+                Spacer()
               }
-              Spacer()
             }
+            .padding()
+            if visibleTokenRows.isEmpty { Spacer() }
+            VStack(spacing: 0) {
+              ForEach(visibleTokenRows) { row in
+                NavigationLink(destination: TokenDetailView(tokenID: row.id, balances: vm.balances))
+                {
+                  TokenRowView(row: row)
+                    .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+                Divider()
+              }
+              if let error = vm.balances.error {
+                Text(error).font(.footnote).foregroundStyle(.red).padding(.vertical, 8)
+              }
+              Button("Add Token") { showAddToken = true }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 16)
+            }
+            .padding(.horizontal)
           }
-          .padding()
-          Spacer()
+          .frame(minHeight: visibleTokenRows.isEmpty ? geometry.size.height : nil)
         }
-        .frame(minHeight: contentHeight)
+        .refreshable { await vm.refreshBalance() }
       }
-      .refreshable { await vm.refreshBalance() }
       .onChange(of: vm.networkBalances.isEmpty) { _, isEmpty in
         if isEmpty { showBalanceDetails = false }
+      }
+    }
+
+    private var visibleTokenRows: [TokenBalanceRow] {
+      vm.balances.rows.filter { row in
+        guard let entry = row.entry else { return true }
+        return entry.raw.contains { $0 != 0 }
       }
     }
 
@@ -188,13 +220,6 @@ import SwiftUI
       }?.label
     }
 
-    private var contentHeight: CGFloat {
-      #if canImport(UIKit)
-        UIScreen.main.bounds.height - 200
-      #else
-        600
-      #endif
-    }
   }
 
   private struct AddressMenuButton: View {

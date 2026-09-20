@@ -10,6 +10,7 @@ import SwiftUI
   struct SettingsView: View {
     let address: String
     let accountName: String?
+    @ObservedObject var balances: WalletBalanceModel
 
     var body: some View {
       NavigationView {
@@ -35,6 +36,9 @@ import SwiftUI
           Section {
             NavigationLink(destination: NetworksView()) {
               Text("Networks")
+            }
+            NavigationLink(destination: TokensView(balances: balances)) {
+              Text("Tokens")
             }
             NavigationLink(destination: AuthorizationsView(address: address)) {
               Text("Authorizations")

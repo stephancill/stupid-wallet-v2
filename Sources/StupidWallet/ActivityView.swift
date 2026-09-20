@@ -430,7 +430,7 @@ import SwiftUI
     }
   }
 
-  private struct CopyableText: UIViewRepresentable {
+  struct CopyableText: UIViewRepresentable {
     let value: String
 
     func makeCoordinator() -> Coordinator {

@@ -43,7 +43,8 @@ acceptance browser; Arc's native-host launch remains unproven.
 The local installer uses an existing compatible macOS development profile and Apple Development
 identity, under the owner's direct-codesign exception. It installs only a helper bundle and exact
 Chrome user-level registration. No stupid-app source or Apple account resources are modified.
-`stupid-app` 0.0.16 remains the iOS build authority. The owner authorized repository-local Chrome
+`stupid-app` remains the iOS build authority (0.0.17 verified for token-balances work with
+Swift 6.4 / Xcode 27 / iOS SDK 27, retaining the iOS 17 deployment target). The owner authorized repository-local Chrome
 beta packaging and GitHub prerelease distribution without modifying stupid-app. The helper now has
 an approved Developer ID Application certificate and MAC_APP_DIRECT profile for the existing helper
 bundle identity and shared stores. Optimized arm64 helper 0.0.4 is signed with hardened runtime and
@@ -447,11 +448,13 @@ Private Key reveal; and Activity list/detail. The implementation keeps the old n
 labels, spacing, forms, inset-grouped lists, typography, and SF Symbols while using the new
 core boundaries. Networks now has one unified configured-network list, a manually populated
 Add Network sheet, per-network deletion, and a per-network Include in Total Balance setting.
-Deletion clears the network's custom RPC state; deleting the selected network selects the first
+Deletion clears the network's custom RPC state, tracked tokens, and every account's token cache
+on that network; deleting the selected network selects the first
 remaining configured network when one exists. The home balance is
 the full-width sum of native wei balances from every included network; individual RPC
-failures do not discard successful balances, while a complete included-network outage is
-shown as unavailable. Expanding the aggregate balance lists every included network with a
+failures do not discard successful balances, while a complete included-network outage retains
+the cached total or shows unavailable when there is no cache. Expanding the aggregate balance lists
+every included network with a
 non-zero balance as an individual row, using the same fetch results as the total. Rows are
 ordered by descending full-width wei balance and render as compact left-aligned network and balance
 rows without a separator bullet.
@@ -518,6 +521,107 @@ that stale value visible while revalidating all included networks, and replaces 
 at least one network succeeds. A transient complete outage retains the stale total; without a
 cached or previously successful value, the UI reports the balance as unavailable. Forgetting
 the matching account removes its cached total.
+
+### Tracked ERC-20 Balances
+
+Home displays manually tracked tokens below the native total, with symbol, configured network name,
+and balance, followed by Add Token. Settings → Tokens sits alongside Networks and manages the same
+installation-wide watchlist. The list starts empty; importing discovers a token by name, symbol, or contract address. Token identity is normalized decimal chain ID plus lowercase contract address.
+Balances are separately keyed by normalized account and token identity. Home hides tokens whose
+last successful raw balance is zero; loading or unavailable balances without a cache remain visible.
+When no token rows are visible, the native total is vertically centered with Add Token at the bottom.
+Settings → Tokens retains the full tracked list, including zero balances, for management. Home rows
+show the token icon and the account's compact balance; the Settings rows are the same rows without the
+balance, because that screen manages tracking. Rows sort
+by symbol, network name, then stable token ID. Compact amounts truncate to six decimal
+places, with tiny positive values shown as `<0.000001`. Token details are titled Token; a Details
+section shows the stored symbol, network, decimals, and the middle-truncated contract address, and a
+separate section offers Remove Token behind a modal confirmation alert; there is no descriptive
+footer text.
+The contract address is copied through the standard long-press edit menu, which copies the full
+stored address. Balance rows, timestamps, and refresh stay in the Home and Settings lists, where
+pull-to-refresh revalidates; the list does not label a retained value as cached.
+
+Add Token is a search screen. It prefills a valid contract address from the clipboard once and
+searches automatically after a 350 ms debounce; editing the query or changing the account cancels the
+previous search and clears its results. The search field shows an inline progress indicator while a
+search is in flight and a clear control, and an empty query shows no results and no guidance row.
+Clipboard access uses the standard system pasteboard behavior.
+
+- Every query searches the Stupid Tokens catalog (`https://tokens.stupidtech.net/v1/search`) once per
+  configured network, bounded to four concurrent requests and 20 results per network. Catalog
+  responses are cached in memory for 60 seconds because the free service asks callers to cache and
+  avoid tight polling.
+- Results are ordered by USD market cap descending, with unknown caps last and the catalog's own
+  ranking interleaved across networks so each configured network's best match appears early. Rows
+  show the catalog icon when present, the symbol, the name when it differs from the symbol, the
+  network name, and the compact market cap when the catalog has one (`$74B`, truncated to one decimal
+  place of the scaled unit). A token that is already tracked shows a checkmark and its row is
+  disabled. Rows with no catalog market cap show none.
+- Selecting a result asks for confirmation in a modal alert naming the token and its network. The
+  import validates the token on chain, keeps the sheet open, and flips that row to its tracked state
+  so further tokens can be added in the same session.
+- When an exact contract address has no catalog match on any configured network, the screen shows a
+  network picker and validates the address on chain on the selected network, which keeps importing
+  tokens the catalog does not list. Changing the network reloads that single-chain validation, and a
+  non-contract address reports that no ERC-20 token was found on that network.
+- Tracked rows show the catalog icon when one exists. Icons are resolved per token from
+  `GET /v1/tokens/{chainId}/{address}` and cached in memory for an hour; a token the catalog does not
+  know, or an icon that is still loading, shows a letter placeholder instead. Icons are display-only
+  and are never persisted.
+- The catalog is discovery metadata only. Canonical symbol, decimals, and balance always come from
+  the on-chain read at import, so catalog metadata is never persisted and a missing or stale catalog
+  entry never blocks importing a token by address.
+
+Import reads contract code, `symbol()`, `decimals()`, and `balanceOf(selectedAccount)` in one RPC
+batch. It requires nonempty code, a valid UTF-8 ABI string symbol of at most 64 bytes, uint8 decimals,
+and exactly one uint256 balance word. Missing or malformed metadata blocks import; there are no
+manual metadata fields or legacy bytes32-symbol adaptation. Duplicate chain/address identities fail.
+The validated import seeds only the selected account's cache.
+
+`WalletBalanceModel` is one main-actor observable model shared by Home and Settings. It hydrates raw
+cached token balances before awaiting network reads and coalesces overlapping refreshes for the same
+context. Launch, foreground return, account selection, Settings dismissal, token management, and
+pull-to-refresh trigger revalidation. Successful rows publish and persist as their network batch
+finishes. During refresh or failure, existing values remain visible; without a successful
+cache, a failed row is Unavailable. Failures never save a zero or erase a previous success. Each row
+tracks its last-success timestamp and error, and a retained value is not labelled in the UI.
+Native aggregate SWR semantics remain
+account-bound and independent of whether token reads succeed.
+
+`WalletBalanceService` combines included native reads and tracked ERC-20 reads in JSON-RPC arrays
+grouped by network, with at most 50 reads per batch and four concurrent batches. Native reads appear
+once per network even when its tokens require multiple chunks. `RPCClient.readBatch` matches numeric
+response IDs rather than array order, preserves structured per-call errors and null, and rejects
+duplicate/unknown/ambiguous IDs. Missing responses fail only the missing reads. A server that refuses
+batching produces an error; there is no silent sequential retry. All calls use the existing default
+RPC resolver and deliberate user overrides. Include in Total Balance gates only native reads and
+native aggregation; tracked tokens still display and refresh on excluded networks.
+
+`TokenStore` persists versioned definitions, raw 32-byte balances, timestamps, endpoint provenance,
+watchlist revision, and refresh IDs in one durably replaced App Group `tokens.json`, protected by
+`tokens.lock`. Token removal atomically removes its balances for all accounts. Network removal first
+writes `network-removal.json`; every subsequent network read/mutation resumes cleanup before exposing
+or restoring the network. Account/group deletion removes only the deleted accounts' token caches
+through the existing recoverable lifecycle, retaining the shared watchlist.
+
+Balance commits recheck active registry membership/revision, network settings, exact override map,
+watchlist revision, and per-account refresh ID. Lock order is registry → networks → RPC overrides →
+tokens → native cache; no lock spans RPC or an await. RPC override mutation now uses an advisory lock
+so a configuration change cannot race a cache commit. A removed token/account or superseded refresh
+cannot be recreated by a late response. Token data is sensitive account activity despite containing
+no key material; corrupt persistence fails without overwriting it.
+
+Verification: deterministic batching, metadata, exact amounts, SWR, account isolation, progressive
+results, coalescing, late-response rejection, network-removal recovery and account/group cleanup are
+covered by package tests (357 tests pass), along with catalog parsing, request scoping and caching,
+malformed/oversized/rejected catalog responses, per-network partial failure, market-cap ordering and
+formatting, and the on-chain address probe. The iOS app/Safari build and preferred simulator
+reinstall/launch pass. Initial simulator UI acceptance fetched/imported USDC on Ethereum and Base,
+displayed their balances, showed token details, and removed the
+Base token while retaining Ethereum across reinstall/relaunch. Both temporary tracked tokens were
+then removed through the UI.
+Token-specific physical-device acceptance remains separate from the existing signing/migration gates.
 
 `RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
 App Group. Both the app and Safari handler construct their resolver from this store, and
@@ -823,6 +927,8 @@ The first usable milestone includes:
   account.
 - Preserve or migrate an existing installed wallet.
 - Display the account address and aggregate native-token balance across included networks.
+- Manually import and display tracked ERC-20 balances on Home, with shared Settings → Tokens
+  management and account-specific stale-while-revalidate caches.
 - Authenticated private-key backup with explicit warnings and no persistent plaintext.
 - Connect, list, and disconnect authorized sites.
 - EIP-1193 request transport and EIP-6963 discovery.
@@ -1189,11 +1295,14 @@ from confirmed dapp suggestions or user settings.
 add-chain requests, successful switches, manual additions, and legacy `customChains` names.
 Switching to a chain is sufficient to make it visible in Settings. The Include in Total
 Balance preference defaults on, preserves the legacy `excludedFromBalance` values, and gates
-both fetching and home-screen aggregation. Manual additions require a name, chain ID, and an
+native fetching and native home-screen aggregation. Tracked ERC-20 balances are independent of
+that preference. Manual additions require a name, chain ID, and an
 RPC URL that passes the same HTTPS, reachability, and exact-chain validation as an edited
 override. Any configured network can be deleted. Removal persists by chain ID so an initial seed or
 legacy entry does not reappear; a later explicit add-chain approval, successful switch, or manual
 addition restores it. Selection does not make a network undeletable.
+Deletion recoverably clears tracked tokens and their cached balances across all accounts before
+any explicit restoration; readding a network does not restore its removed tokens.
 
 Each chain may have one validated override. Saving an override requires:
 
@@ -1309,6 +1418,7 @@ Use the production App Group for shared non-secret state:
 
 - Current chain and network metadata.
 - Validated user RPC overrides.
+- Shared ERC-20 token definitions and account-specific raw balance caches (`tokens.json`).
 - Connected-site grants keyed by normalized origin, not hostname alone.
 - Pending signing records and replay state.
 - SQLite activity database.

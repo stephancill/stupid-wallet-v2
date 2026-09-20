@@ -73,6 +73,20 @@ generic error text and do not bypass the canonical approval protocol.
     `DTSDKBuild`, and `DTSDKName` in `Payload/<app>.app/Info.plist` (`unzip -p <ipa>` then
     `plutil -p`); genuine Xcode archives always include the SDK build keys. A genuine-Xcode build can
     be used as a probe to isolate a packaging defect from a policy change.
+16. With Xcode 27, an IDB text-input command can exit successfully without changing a focused
+    SwiftUI text field. Verify its actual accessibility value. AXe 1.8.0 `axe type <text> --udid
+    <simulator>` worked for this failure; its recursive `describe-ui` also exposed toolbar controls
+    absent from IDB's flat tree. Filter the recursive tree by type and visible frame rather than
+    printing the whole keyboard hierarchy. If a simulator restart leaves IDB reporting connection
+    refused on its old companion socket, `idb disconnect <simulator>` lets it create a fresh companion.
+    A booted simulator with hanging launch and screenshot commands recovered after shutting down the
+    target and restarting the stale CoreSimulator service, then rebuilding/installing through
+    `stupid-app`. Do not erase wallet state to repair an input/launch transport failure.
+17. Device Hub's shared clipboard can overwrite `simctl pbcopy` with the host clipboard. For a
+    clipboard UI test, compare the simulator value with the expected public test string without
+    printing unexpected clipboard contents; synchronize that test string with host `pbcopy` when
+    necessary. Automatic `UIPasteboard.general.string` access can show the system Allow Paste prompt.
+    Complete that prompt and verify the field value before judging automatic metadata loading.
 
 ## Stack Map
 
@@ -369,6 +383,12 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
 
 ### 6. Verify RPC Behavior
 
+- Home token reads use `WalletBalanceModel` → `WalletBalanceService` → `RPCClient.readBatch`.
+  Inspect network/override/watchlist context and per-account `tokens.json` timestamps before blaming
+  formatting. Array response order is not request order; correlate IDs. Cached rows after a failure
+  intentionally retain the last success, while successful zero balances are persisted as zero.
+  Include in Total Balance affects native reads only. A pending `network-removal.json` resumes cleanup
+  on the next network-store access; never edit that journal or token caches to force recovery.
 - Reproduce a failing passthrough call with the exact original method spelling and params.
 - Compare native behavior with a direct public-safe request:
 

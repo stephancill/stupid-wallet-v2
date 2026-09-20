@@ -390,6 +390,7 @@ struct WalletRegistryTransition: Codable, Sendable, Equatable {
 
 /// Persists the authoritative wallet registry and its rebuild compatibility projection.
 public struct WalletRegistryStore: Sendable {
+  var directory: URL? { fileURL?.deletingLastPathComponent() }
   private let fileURL: URL?
   private let projectionURL: URL?
   private let journalURL: URL?
@@ -874,7 +875,7 @@ public struct WalletRegistryStore: Sendable {
     try decode(encode(value))
   }
 
-  private static func durableRemove(at fileURL: URL) throws {
+  static func durableRemove(at fileURL: URL) throws {
     guard unlink(fileURL.path) == 0 else {
       if errno == ENOENT { return }
       throw WalletRegistryError.unavailable
@@ -882,7 +883,7 @@ public struct WalletRegistryStore: Sendable {
     try synchronizeDirectory(fileURL.deletingLastPathComponent())
   }
 
-  private static func durableReplace(data: Data, at fileURL: URL) throws {
+  static func durableReplace(data: Data, at fileURL: URL) throws {
     let directoryURL = fileURL.deletingLastPathComponent()
     let temporaryURL = directoryURL.appendingPathComponent(
       ".\(fileURL.lastPathComponent).\(UUID().uuidString).tmp", isDirectory: false)

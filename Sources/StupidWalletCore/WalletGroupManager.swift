@@ -34,6 +34,7 @@ public struct WalletGroupManager: Sendable {
   private let lifecycle: WalletGroupLifecycleCoordinator
   private let connectionStore: ConnectionStateStore
   private let balanceCache: BalanceCache
+  private let tokenStore: TokenStore
   private let pendingStore: PendingRequestStore
   private let migrationBackend: SecurityWalletBackend
 
@@ -49,6 +50,7 @@ public struct WalletGroupManager: Sendable {
     lifecycle = WalletGroupLifecycleCoordinator(directory: directory, appGroup: appGroup)
     connectionStore = ConnectionStateStore(directory: directory, suiteName: appGroup)
     balanceCache = BalanceCache(directory: directory, appGroup: appGroup)
+    tokenStore = TokenStore(directory: directory, appGroup: appGroup)
     pendingStore = PendingRequestStore(
       directory: directory?.appendingPathComponent("PendingRequests", isDirectory: true),
       appGroupID: appGroup)
@@ -71,6 +73,7 @@ public struct WalletGroupManager: Sendable {
     self.lifecycle = lifecycle
     self.connectionStore = connectionStore
     self.balanceCache = balanceCache
+    tokenStore = TokenStore(directory: registryStore.directory)
     self.pendingStore = pendingStore
     self.migrationBackend = migrationBackend
   }
@@ -604,6 +607,7 @@ public struct WalletGroupManager: Sendable {
     try terminalizePendingRequests(accounts: removedAccounts)
     try removeConnections(accounts: removedAccounts)
     try balanceCache.remove(account: account.address)
+    try tokenStore.removeBalances(account: account.address)
 
     guard let current = try registryStore.loadReady() else {
       throw WalletGroupManagerError.registryNotReady
@@ -672,6 +676,7 @@ public struct WalletGroupManager: Sendable {
     try removeConnections(accounts: removedAccounts)
     for account in group.accounts {
       try balanceCache.remove(account: account.address)
+      try tokenStore.removeBalances(account: account.address)
       if migrationBackend.oldAddress()?.caseInsensitiveCompare(account.address) == .orderedSame {
         migrationBackend.forgetMigrationMaterial(address: account.address)
       }
