@@ -87,9 +87,11 @@ Helper 0.0.5 has passed Apple notarization, stapling and Gatekeeper verification
 locally. Chrome 0.0.7 live acceptance confirms the idle connected-account bar and grouped picker,
 with existing pairing retained. Live switch/disconnect mutation acceptance remains pending.
 GitHub prerelease `chrome-v0.0.7-beta.1` publishes these artifacts from `c499181`; all four
-uploaded asset digests match local files. Both Apple bundles are now version 1.0.0 (101).
-Build 101 is uploaded and live App Store Connect status confirms external IN_BETA_TESTING
-in the existing External group.
+uploaded asset digests match local files. Build 101 was uploaded and live App Store Connect status
+confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
+version 1.0.0 (108), prepared for an internal TestFlight release after merging the token-balances,
+watch-only portfolio, persistent price SWR, and 24-hour price-expiry work into `main`. Local release
+preflight and the optimized iOS build pass; archive/upload and Apple processing are pending.
 
 Protocol version 3 requires one-time Chrome-profile pairing before native approval. The extension
 stores a non-exportable P-256 signing CryptoKey in its origin-owned IndexedDB; the helper stores only

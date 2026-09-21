@@ -8823,3 +8823,22 @@ Verification:
 - `stupid-app build`: passed. `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and
   launched; accessibility inspection confirmed native and token values still render normally.
 - `git diff --check`: passed. Physical-device acceptance was not run.
+
+## 2026-09-21 — Token-balances merge and internal TestFlight build 108 preparation
+
+### Summary
+
+- Committed the 24-hour cache expiry as `ba5ca39` and fast-forwarded `main` from `448bc36` to include
+  the complete token-balances worktree. The merge includes tracked ERC-20 search/import, watch-only
+  accounts, the paged USD portfolio, native ETH aggregation, persistent SWR, and price expiry.
+- `stupid-app release new-build` selected unused build 108. `stupid-app release bump --build-number 108`
+  synchronized the containing app and Safari extension to 1.0.0 (108) for internal TestFlight.
+
+### Verification
+
+- The merged source is identical to the tested worktree: 389 Swift Testing tests, 14 XCTest cases,
+  Swift formatting/linting, and the preferred simulator reinstall/launch passed as recorded above.
+- `stupid-app release preflight`: READY, both Apple bundles 1.0.0 (108).
+- `stupid-app doctor`: zero failures and warnings with CLI 0.0.18 / Swift 6.4 / Xcode 27 / iOS SDK 27.
+- `stupid-app build --configuration release`: passed.
+- Distribution archive, upload, and Apple's internal-beta processing are the remaining release steps.
