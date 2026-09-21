@@ -32,6 +32,14 @@ public enum Hex {
     if !cleaned.count.isMultiple(of: 2) { cleaned.insert("0", at: cleaned.startIndex) }
     return data(cleaned)
   }
+
+  /// Canonical JSON-RPC quantity for a big-endian magnitude: minimal hex with no leading zero
+  /// digit, `0x0` for zero. Returns nil when the value does not fit a 256-bit word.
+  public static func quantity(_ bytes: [UInt8]) -> String? {
+    guard bytes.count <= 32 else { return nil }
+    let hex = encode(bytes).drop(while: { $0 == "0" })
+    return hex.isEmpty ? "0x0" : "0x" + hex
+  }
 }
 
 /// Ethereum account keys derived through the vendored secp256k1 target.

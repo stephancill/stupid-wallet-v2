@@ -510,6 +510,7 @@ import SwiftUI
   }
 
   private func appLabel(_ origin: String) -> String {
+    if origin == WalletService.walletOriginatedOrigin { return "Wallet" }
     if let host = URL(string: origin)?.host, !host.isEmpty { return host }
     return origin.isEmpty ? "Unknown App" : origin
   }

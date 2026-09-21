@@ -772,6 +772,38 @@ account toolbar (copy address and the account menu).
   of failing, because that file is only a positive verification cache that is re-checked on chain.
   Previously a legacy cache file made RPC override saves fail with "could not be saved".
 
+### App-Initiated Send
+
+The token screen carries a floating, compact Liquid Glass action group (`Send`) pinned near the
+bottom edge above the home indicator. On iOS 26 the action uses the system glass button style; on
+earlier supported systems it falls back to a bordered capsule. Swap joins the same group when it is
+implemented, and only `Send` exists today.
+
+Send presents a wallet-owned sheet with a flat per-chain asset picker (native currency of every
+included network plus every non-zero tracked ERC-20, each row labelled with its network), a decimal
+amount field with the available balance, and a recipient field that renders the deterministic
+squircle blockie inline once a valid 20-byte address is entered. Choosing an asset is a concrete
+chain + contract/native target, so a grouped home symbol never hides which chain is being spent.
+Watch-only accounts can open the sheet but the submit stays disabled with an explicit watch-only
+notice; they never reach the signer.
+
+Submitting runs one native transaction pipeline rather than a dapp approval:
+`WalletService.sendTransaction` canonicalizes the intent, resolves missing nonce/gas/fee fields,
+validates the prepared transaction, signs the canonical digest through the account resolver (a fresh
+`LAContext` device-owner prompt for the protected key), broadcasts with
+`eth_sendRawTransaction`, verifies the node-returned hash, and records the submitted transaction in
+the shared activity database. It holds the same per-account/per-chain submission claim as a dapp
+send, so app and dapp sends cannot race the same pending nonce. Native sends carry the amount as
+`value`; ERC-20 sends call `transfer(address,uint256)` on the token contract with zero value.
+Wallet-owned sends are recorded with the reserved origin `wallet` and no pending request, so they
+never enter the dapp approval queue; activity renders that origin as `Wallet`. Amounts convert
+through decimal-string arithmetic (`TokenTransfer.rawUnits`) and reject more precision than the
+asset supports rather than truncating.
+
+Deferred for the send surface: ENS/name resolution for the recipient, a native "Max" affordance
+(which must subtract gas), swapping, and physical-device/network-verified broadcast acceptance. The
+sheet and core send path are covered hermetically; a live broadcast has not been run from the app UI.
+
 `RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
 App Group. Both the app and Safari handler construct their resolver from this store, and
 the editor displays exactly one effective endpoint per chain. The user may replace it or
@@ -1079,6 +1111,8 @@ The first usable milestone includes:
 - Display the account address and aggregate native-token balance across included networks.
 - Manually import and display tracked ERC-20 balances on Home, with shared Settings → Tokens
   management and account-specific stale-while-revalidate caches.
+- Send the native currency or a tracked ERC-20 from the Home token screen through a wallet-owned
+  sheet and the shared native transaction pipeline.
 - Import public addresses as watch-only accounts for the containing-app balance and portfolio views.
 - Authenticated private-key backup with explicit warnings and no persistent plaintext.
 - Connect, list, and disconnect authorized sites.

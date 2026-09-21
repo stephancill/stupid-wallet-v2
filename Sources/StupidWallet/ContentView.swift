@@ -14,6 +14,7 @@ import SwiftUI
     @State private var showConnectedApps = false
     @State private var showSettingsSheet = false
     @State private var showAccountPicker = false
+    @State private var showSendSheet = false
     @State private var showCopyCheckmark = false
     @State private var expandedSymbols: Set<String> = []
     @State private var currentPage: String? = ContentView.balancePage
@@ -100,6 +101,10 @@ import SwiftUI
       .sheet(isPresented: $showAccountPicker) {
         AccountPickerView(vm: vm)
       }
+      .sheet(isPresented: $showSendSheet) {
+        SendView(vm: vm)
+          .id(vm.addressHex.lowercased())
+      }
       .task(id: vm.addressHex) {
         await vm.refreshBalance()
       }
@@ -112,6 +117,7 @@ import SwiftUI
         showActivity = false
         showConnectedApps = false
         showSettingsSheet = false
+        showSendSheet = false
       }
     }
 
@@ -244,6 +250,27 @@ import SwiftUI
       }
       .frame(maxWidth: .infinity)
       .background(Color(.systemBackground))
+      .safeAreaInset(edge: .bottom, spacing: 0) { sendToolbar }
+    }
+
+    /// Floating wallet-owned actions for the token screen. Swap joins the same group when
+    /// implemented.
+    private var sendToolbar: some View {
+      HStack(spacing: 10) {
+        Spacer(minLength: 0)
+        Button {
+          showSendSheet = true
+        } label: {
+          Label("Send", systemImage: "arrow.up")
+            .font(.subheadline.weight(.semibold))
+        }
+        .floatingGlassButtonStyle()
+        .controlSize(.small)
+        .accessibilityIdentifier("home.send")
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, 16)
+      .padding(.bottom, 20)
     }
 
     private var balanceBlock: some View {
@@ -495,6 +522,18 @@ import SwiftUI
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+    }
+  }
+
+  extension View {
+    /// Liquid Glass on iOS 26, with a bordered capsule on earlier supported systems.
+    @ViewBuilder
+    fileprivate func floatingGlassButtonStyle() -> some View {
+      if #available(iOS 26.0, *) {
+        buttonStyle(.glass).buttonBorderShape(.capsule)
+      } else {
+        buttonStyle(.bordered).buttonBorderShape(.capsule)
+      }
     }
   }
 #else

@@ -9028,3 +9028,65 @@ Verification:
 ### Follow-Up
 
 - External TestFlight distribution of this build has not been requested.
+
+## 2026-09-21 — Home send action and wallet-owned sends
+
+### Summary
+
+- Added a wallet-owned Send action to the Home token screen. It is a compact, floating Liquid Glass
+  pill pinned near the bottom edge above the home indicator, centered, rather than a full-width bar.
+  It uses the iOS 26 system glass button style (`.buttonStyle(.glass)`) and falls back to a bordered
+  capsule on earlier supported systems. Swap is intentionally not rendered yet; it joins the same
+  floating group when implemented.
+- Send opens a sheet with a flat per-chain asset picker (every included network's native currency
+  plus every non-zero tracked ERC-20, each row labelled with its network and available balance), a
+  decimal amount field, and a recipient field that renders the deterministic squircle blockie inline
+  once a valid 20-byte address is present. Selecting an asset resets the amount. A grouped home
+  symbol never hides which chain is being spent because each picker row is one concrete target.
+- Watch-only accounts can open the sheet; the submit stays disabled and the sheet states that the
+  account is watch-only and cannot sign or send.
+- Added `WalletService.sendTransaction` for app-initiated sends. It canonicalizes the intent,
+  resolves missing nonce/gas/fee fields through the shared resolver, validates the prepared
+  transaction, signs the canonical digest through the account resolver (fresh device-owner
+  authentication for the protected key), broadcasts via `eth_sendRawTransaction`, verifies the
+  node-returned hash against the signed bytes, and records the submitted transaction in the shared
+  activity database. It holds the same per-account/per-chain submission claim as a dapp send.
+- Refactored the private broadcast step into a shared `submitRawTransaction` so dapp approvals and
+  wallet-owned sends use one submission and hash-verification path.
+- Added `TokenTransfer` (`rawUnits(fromDecimal:decimals:)` and ERC-20
+  `transfer(address,uint256)` calldata, selector `0xa9059cbb`) and `Hex.quantity(_:)`. Native sends
+  carry the amount as `value` with empty data; ERC-20 sends target the token contract with zero
+  value. Amounts use exact decimal-string arithmetic and reject more precision than the asset
+  supports instead of truncating.
+- Wallet-owned sends use the reserved origin `wallet` and create no pending request, so they never
+  enter the dapp approval queue; the activity detail renders that origin as `Wallet`.
+
+### Why
+
+- The token screen previously had no bottom action; Send is the first wallet-owned transaction entry
+  point in the containing app and must reuse the existing canonical validation/resolution/signing/
+  broadcast pipeline rather than reimplementing transaction handling.
+- A floating glass pill matches the platform's current action treatment and keeps the token list
+  legible; the flat per-chain picker avoids ambiguous grouped targets.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` on the changed Swift files: passed.
+- `swift test`: 401 Swift Testing tests in 44 suites and 14 XCTest cases passed. Nine new tests cover
+  ERC-20 calldata/selector/amount conversion, canonical quantities, a native send (fee resolution,
+  broadcast, activity recording, and no pending-queue entry), ERC-20 send calldata/destination
+  recording, invalid-recipient rejection before RPC, an account without a key failing as notReady,
+  and a structured broadcast error surfacing with no activity.
+- `stupid-app build` passed and the preferred simulator reinstalled and launched.
+- Simulator acceptance inspected the floating glass Send pill, the sheet's asset/amount/recipient
+  sections, the flat per-chain asset picker (ETH, USDC, POL, HIGHER across networks with balances and
+  a selection checkmark), the inline recipient blockie, and the watch-only notice. No funded
+  key-backed account exists on the simulator, so no live send was executed.
+
+### Limitations
+
+- No network- or physical-device-verified broadcast was run from the app UI; the send path is proven
+  hermetically with a real signer and a stubbed RPC, matching the existing transaction-submission
+  test boundary.
+- The recipient accepts only a `0x` address (no ENS), there is no native "Max" affordance, and Swap
+  is not implemented.

@@ -388,6 +388,66 @@ public actor WalletService {
       account: account, origin: origin, profileID: profileID)
   }
 
+  /// Origin recorded for wallet-owned (app-initiated) sends that have no dapp requester.
+  public static let walletOriginatedOrigin = "wallet"
+
+  /// App-initiated send. Unlike a dapp approval there is no pending record or popup binding: the
+  /// app owns the exact intent, but the transaction still runs through the one canonical
+  /// validation, resolution, signing, and broadcast pipeline and requires fresh device-owner
+  /// authentication at signing time. Returns the broadcast transaction hash.
+  public func sendTransaction(
+    account: String,
+    chainID: String,
+    to: String,
+    value: String = "0x0",
+    data: String = "0x"
+  ) async throws -> String {
+    try ensureRegistryReady()
+    guard let normalizedChain = ChainStore.normalize(chainID) else {
+      throw WalletError.invalidParams
+    }
+    guard let signer = try? accountResolver.signer(address: account), signer.hasKey() else {
+      throw WalletError.notReady
+    }
+    let intent = JSONValue.array([
+      .object([
+        "from": .string(account),
+        "to": .string(to),
+        "value": .string(value),
+        "data": .string(data),
+      ])
+    ])
+    let canonical = try canonicalizeTransaction(
+      params: intent, account: account, chainID: normalizedChain)
+    try Self.validateTransactionIntent(canonical, account: account, chainID: normalizedChain)
+
+    guard
+      let submissionClaim = submissionLock.claim(account: account, chainID: normalizedChain)
+    else { throw WalletError.queued }
+    defer { submissionClaim.release() }
+
+    var record = WalletPendingRequest(
+      kind: .send, method: "eth_sendTransaction", origin: Self.walletOriginatedOrigin,
+      chainId: normalizedChain, account: account, params: canonical, payloadDigest: "",
+      bindingVersion: 2)
+    record = try await resolveTransaction(record)
+    let resolved = record.resolvedParams ?? record.params
+    try Self.validatePreparedTransaction(resolved, account: account, chainID: normalizedChain)
+    let signable = try RequestExecutor.signableDigest(for: record)
+    let signature: [UInt8]
+    do {
+      signature = try signer.signDigest(signable)
+    } catch {
+      throw WalletError.authCancelled
+    }
+    let raw = try RequestExecutor.signedTransaction(signature: signature, for: record)
+    let hash = try await submitRawTransaction(raw, chainID: normalizedChain)
+    if let nonce = Self.transactionObject(resolved)?["nonce"]?.stringValue {
+      try? await activityStore.recordTransaction(request: record, hash: hash, nonce: nonce)
+    }
+    return hash
+  }
+
   public func disconnectReviewed(account: String, origin: String, profileID: String?) async throws {
     try ensureRegistryReady()
     try await connectedSites.disconnectReviewed(
@@ -2318,57 +2378,63 @@ public actor WalletService {
     }
   }
 
-  private func broadcast(
-    rawTransaction: [UInt8], record: inout WalletPendingRequest, callBundleID: String? = nil
-  ) async throws -> JSONValue {
+  /// Submits raw signed bytes to `eth_sendRawTransaction` and verifies the node-returned hash
+  /// against the exact signed bytes. Shared by dapp approvals and wallet-owned sends; it never
+  /// touches a pending record or activity store.
+  private func submitRawTransaction(
+    _ rawTransaction: [UInt8], chainID: String
+  ) async throws -> String {
     let response: RPCResponse
     do {
       response = try await rpcClient.call(
-        url: resolver.resolve(chainID: record.chainId),
+        url: resolver.resolve(chainID: chainID),
         method: "eth_sendRawTransaction",
         params: .array([.string("0x" + Hex.encode(rawTransaction))]))
     } catch {
-      record.status = .failed
-      record.error = Self.transportError
-      try await store.insert(record)
       throw WalletError.rpc(Self.transportError)
     }
     switch response {
     case .result(.string(let transactionHash)) where Hex.data(transactionHash)?.count == 32:
       let expectedHash = "0x" + Hex.encode(Keccak.keccak256(rawTransaction))
       guard transactionHash.caseInsensitiveCompare(expectedHash) == .orderedSame else {
-        let error = JSONValue.object([
-          "code": .number(-32603),
-          "message": .string("RPC returned a mismatched transaction hash"),
-        ])
-        record.status = .failed
-        record.error = error
-        try await store.insert(record)
-        throw WalletError.rpc(error)
+        throw WalletError.rpc(
+          .object([
+            "code": .number(-32603),
+            "message": .string("RPC returned a mismatched transaction hash"),
+          ]))
       }
-      if let nonce = Self.transactionObject(record.resolvedParams ?? record.params)?["nonce"]?
-        .stringValue
-      {
-        try? await activityStore.recordTransaction(
-          request: record, hash: expectedHash, nonce: nonce,
-          callBundleID: record.kind == .batch ? (callBundleID ?? expectedHash) : nil)
-      }
-      return .string(expectedHash)
+      return expectedHash
     case .result:
-      let error = JSONValue.object([
-        "code": .number(-32603),
-        "message": .string("Invalid eth_sendRawTransaction result"),
-      ])
-      record.status = .failed
-      record.error = error
-      try await store.insert(record)
-      throw WalletError.rpc(error)
+      throw WalletError.rpc(
+        .object([
+          "code": .number(-32603),
+          "message": .string("Invalid eth_sendRawTransaction result"),
+        ]))
     case .error(let error):
+      throw WalletError.rpc(error)
+    }
+  }
+
+  private func broadcast(
+    rawTransaction: [UInt8], record: inout WalletPendingRequest, callBundleID: String? = nil
+  ) async throws -> JSONValue {
+    let hash: String
+    do {
+      hash = try await submitRawTransaction(rawTransaction, chainID: record.chainId)
+    } catch WalletError.rpc(let error) {
       record.status = .failed
       record.error = error
       try await store.insert(record)
       throw WalletError.rpc(error)
     }
+    if let nonce = Self.transactionObject(record.resolvedParams ?? record.params)?["nonce"]?
+      .stringValue
+    {
+      try? await activityStore.recordTransaction(
+        request: record, hash: hash, nonce: nonce,
+        callBundleID: record.kind == .batch ? (callBundleID ?? hash) : nil)
+    }
+    return .string(hash)
   }
 
   private static let transportError = JSONValue.object([
