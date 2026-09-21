@@ -629,11 +629,12 @@ final class SearchHTTPStub: @unchecked Sendable {
     set { lock.withLock { handler = newValue } }
   }
 
-  func client() -> StupidTokensClient {
+  func client(now: @escaping @Sendable () -> Date = { Date() }) -> StupidTokensClient {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [SearchURLProtocol.self]
     return StupidTokensClient(
-      session: URLSession(configuration: configuration), baseURL: URL(string: "https://\(host)")!)
+      session: URLSession(configuration: configuration), baseURL: URL(string: "https://\(host)")!,
+      now: now)
   }
 
   func close() {

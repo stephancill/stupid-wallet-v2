@@ -8794,3 +8794,32 @@ Verification:
 - A previously uncached identity requires its first successful price fetch. The interrupted-refresh
   dimming state is covered by deterministic model tests and the SwiftUI binding; the simulator smoke
   check inspected the completed refresh. Physical-device acceptance was not run.
+
+## 2026-09-21 — Expire cached portfolio prices after 24 hours
+
+### Summary
+
+- Cached prices and their 24-hour changes now become unavailable exactly 24 hours after the last
+  priced catalog response. Expired holdings show `—` and are excluded from the USD total and change;
+  their token/native amounts, symbols, decimals, and icons remain available.
+- Added a receipt timestamp to the in-memory `PriceQuote` and preserve it through short-lived memory
+  hits, stale fallback merges, `PortfolioPriceEntry` persistence, and hydration. Previously the store
+  stamped an in-memory fallback as new when saving it, which would have defeated a durable expiry.
+  Existing persisted entries use their stored `updatedAt`; the persisted schema is unchanged.
+- Both the catalog client and the balance model apply the cutoff. A cancellable next-expiry task also
+  updates a portfolio left visible without waiting for another refresh. Account changes and model
+  teardown cancel that task. Successful price responses restore values and begin a new window.
+- The window measures local time since receipt of a priced catalog response, including a returned
+  stale-status price, rather than claiming to measure the upstream market-data timestamp.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` on the six changed Swift files: passed.
+- `swift test --filter 'PortfolioSWRTests|TokenSearchTests'`: passed for the initial expiry changes.
+- `swift test`: 389 Swift Testing tests in 42 suites and 14 XCTest cases passed, including three new
+  regressions for the exact 24-hour boundary, cold and live model expiry, memory-cache and null-response
+  timestamp preservation, failed-refresh persistence, fresh-price recovery, and automatic visible
+  expiry without a network request. Injected clocks avoid waiting a real day; all requests are stubbed.
+- `stupid-app build`: passed. `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and
+  launched; accessibility inspection confirmed native and token values still render normally.
+- `git diff --check`: passed. Physical-device acceptance was not run.

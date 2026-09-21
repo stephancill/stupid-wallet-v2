@@ -414,6 +414,10 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   Hydrate before network awaits, test with a new model/service/catalog client, and keep `isRefreshing`
   active through the price request so cached rows remain dimmed after RPC batches finish. Null prices
   and failed native reads retain last successes; successful zero balances must still remove holdings.
+  Cached prices and changes expire at 24 hours from the last priced catalog response. Follow the same
+  `updatedAt` through client memory, fallback merges, disk writes, and hydration: saving a fallback
+  with the current time would renew it indefinitely. Expiry removes prices/changes from display and
+  aggregation while retaining metadata and amounts; a visible portfolio also schedules its next expiry.
 - A native holding that shows the letter placeholder instead of a coin logo is a catalog metadata
   problem, not a wallet rendering bug: Home now reads `imageUrl` from the `native` identity in the bulk
   `/v1/prices` response, and `/v1/search` lists only ERC-20s, so a native currency never appears there.

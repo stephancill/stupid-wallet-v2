@@ -30,6 +30,8 @@ public struct PriceRequest: Sendable, Hashable {
 /// One catalog identity's USD price, reported 24-hour change, and display metadata. The metadata is
 /// carried on the same bulk prices response so the home screen needs no per-token metadata request.
 public struct PriceQuote: Sendable, Equatable {
+  static let maximumCacheAge: TimeInterval = 24 * 60 * 60
+
   /// The USD price, or nil when the catalog has no current price (for example a stale source).
   public let priceUSD: String?
   /// Signed 24-hour change in percent, e.g. `4.25` or `-0.01`, when the catalog reports one.
@@ -38,18 +40,29 @@ public struct PriceQuote: Sendable, Equatable {
   public let symbol: String?
   public let decimals: UInt8?
   public let imageURL: URL?
+  /// When this price was received from the catalog; cache reads and fallback merges preserve it.
+  public let updatedAt: Date
 
   public var hasMetadata: Bool { symbol != nil || decimals != nil || imageURL != nil }
 
   public init(
     priceUSD: String?, change24h: String? = nil, symbol: String? = nil, decimals: UInt8? = nil,
-    imageURL: URL? = nil
+    imageURL: URL? = nil, updatedAt: Date = Date()
   ) {
     self.priceUSD = priceUSD
     self.change24h = change24h
     self.symbol = symbol
     self.decimals = decimals
     self.imageURL = imageURL
+    self.updatedAt = updatedAt
+  }
+
+  func valid(at now: Date) -> PriceQuote {
+    guard now < updatedAt.addingTimeInterval(Self.maximumCacheAge) else {
+      return PriceQuote(
+        priceUSD: nil, symbol: symbol, decimals: decimals, imageURL: imageURL, updatedAt: updatedAt)
+    }
+    return self
   }
 }
 
@@ -134,6 +147,7 @@ public actor StupidTokensClient {
   private let cacheLifetime: TimeInterval
   private let cacheLimit: Int
   private let priceLifetime: TimeInterval
+  private let now: @Sendable () -> Date
   private var cache: [String: (expiresAt: Date, results: [TokenSearchResult])] = [:]
   private var priceCache: [PriceRequest: (expiresAt: Date, quote: PriceQuote?)] = [:]
   private var lastKnownPrices: [PriceRequest: PriceQuote] = [:]
@@ -144,7 +158,8 @@ public actor StupidTokensClient {
     timeout: TimeInterval = 15,
     cacheLifetime: TimeInterval = 60,
     cacheLimit: Int = 64,
-    priceLifetime: TimeInterval = 60
+    priceLifetime: TimeInterval = 60,
+    now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.session = session
     self.baseURL = baseURL
@@ -152,6 +167,7 @@ public actor StupidTokensClient {
     self.cacheLifetime = cacheLifetime
     self.cacheLimit = cacheLimit
     self.priceLifetime = priceLifetime
+    self.now = now
   }
 
   /// Case-insensitive name/symbol substring or exact address search on one chain.
@@ -225,13 +241,13 @@ public actor StupidTokensClient {
   /// Bulk USD prices and display metadata for the requested identities, keyed by request. The
   /// catalog returns its last known price for any freshness status, so an identity with a quoted
   /// price or usable metadata is present and one with no known price is absent. The last known price
-  /// is also retained across refreshes, so a later response with no price never blanks a value already
-  /// shown. Requests are sent in the catalog's canonical order, 50 per call.
+  /// is retained across refreshes for up to 24 hours. Requests are sent in the catalog's canonical
+  /// order, 50 per call.
   public func prices(for requests: [PriceRequest]) async -> [PriceRequest: PriceQuote] {
     var resolved: [PriceRequest: PriceQuote] = [:]
     var missing: [PriceRequest] = []
     for request in Set(requests) {
-      guard let cached = priceCache[request], cached.expiresAt > Date() else {
+      guard let cached = priceCache[request], cached.expiresAt > now() else {
         missing.append(request)
         continue
       }
@@ -252,7 +268,7 @@ public actor StupidTokensClient {
           }
           if batch.cacheable.contains(request) {
             priceCache[request] = (
-              Date().addingTimeInterval(batch.cacheLifetime), batch.quotes[request]
+              now().addingTimeInterval(batch.cacheLifetime), batch.quotes[request]
             )
           }
         }
@@ -264,7 +280,10 @@ public actor StupidTokensClient {
       guard let last = lastKnownPrices[request] else { continue }
       resolved[request] = Self.merging(resolved[request], with: last)
     }
-    return resolved
+    let date = now()
+    return resolved.mapValues { $0.valid(at: date) }.filter {
+      $0.value.priceUSD != nil || $0.value.hasMetadata
+    }
   }
 
   /// Retains the most recent quote that carried a price, for stale-while-revalidate display.
@@ -279,7 +298,7 @@ public actor StupidTokensClient {
     return PriceQuote(
       priceUSD: last.priceUSD, change24h: last.change24h,
       symbol: quote.symbol ?? last.symbol, decimals: quote.decimals ?? last.decimals,
-      imageURL: quote.imageURL ?? last.imageURL)
+      imageURL: quote.imageURL ?? last.imageURL, updatedAt: last.updatedAt)
   }
 
   private struct PriceBatch {
@@ -315,6 +334,7 @@ public actor StupidTokensClient {
     var quotes: [PriceRequest: PriceQuote] = [:]
     var cacheable: Set<PriceRequest> = []
     let requested = Set(requests)
+    let receivedAt = now()
     for entry in entries {
       guard case .object(let object) = entry,
         case .number(let chainNumber)? = object["chainId"], chainNumber.rounded() == chainNumber,
@@ -338,7 +358,7 @@ public actor StupidTokensClient {
         change24h: status == "ok" ? Self.change24h(from: object) : nil,
         symbol: object["symbol"]?.stringValue,
         decimals: Self.decimals(from: object["decimals"]),
-        imageURL: Self.imageURL(from: object["imageUrl"]))
+        imageURL: Self.imageURL(from: object["imageUrl"]), updatedAt: receivedAt)
       if price != nil || quote.hasMetadata { quotes[key] = quote }
       // A concrete price or a definitive miss is stable enough to cache; a response that retains no
       // price is retried instead of cached as a miss.

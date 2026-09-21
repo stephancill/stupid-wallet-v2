@@ -13,16 +13,18 @@ struct PortfolioPriceEntry: Codable, Sendable, Equatable {
   let decimals: UInt8?
   let updatedAt: Date
 
-  init(quote: PriceQuote, updatedAt: Date = Date()) {
+  init(quote: PriceQuote) {
     priceUSD = quote.priceUSD
     change24h = quote.change24h
     symbol = quote.symbol
     decimals = quote.decimals
-    self.updatedAt = updatedAt
+    updatedAt = quote.updatedAt
   }
 
   var quote: PriceQuote {
-    PriceQuote(priceUSD: priceUSD, change24h: change24h, symbol: symbol, decimals: decimals)
+    PriceQuote(
+      priceUSD: priceUSD, change24h: change24h, symbol: symbol, decimals: decimals,
+      updatedAt: updatedAt)
   }
 }
 

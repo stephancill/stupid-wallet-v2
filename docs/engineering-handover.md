@@ -724,12 +724,19 @@ account toolbar (copy address and the account menu).
   nulls it only when no price is known, so the wallet treats `priceUsd` as availability and `status`
   as freshness: a `stale`, `price_unavailable`, `upstream_error`, or `rate_limited` entry still shows
   its retained price. The wallet remembers the last priced quote per identity for the session and
-  persists account-bound prices in `tokens.json`, so a later response with no price never blanks a
-  value already shown, including after relaunch. Responses that carry a price (any
+  persists account-bound prices in `tokens.json`, retaining them for up to 24 hours after receipt of a
+  priced catalog response, including after relaunch. Cache hits, null responses, and failed refreshes
+  preserve the original receipt timestamp rather than extending that window. At 24 hours the price
+  and its retained change become unavailable: the holding shows `—` and contributes to neither the
+  USD total nor the portfolio change. Balances and display metadata remain available. Expiry is checked
+  on hydration and every portfolio rebuild; a cancellable task at the next expiry also updates an
+  already-visible portfolio without another network request. A new priced response starts a new
+  24-hour window; this is local cache age, not a limit on the catalog's underlying source timestamp.
+  Responses that carry a price (any
   status) or a definitive `not_found` are cached in memory for at most 60 seconds, bounded by HTTP
   freshness (`Cache-Control`, `Age`, and `Date`); a response that retains no price is retried rather
   than cached as a miss. The normal HTTP cache still respects the service's retry window. A value is
-  shown as `—` only when no price has ever been known. Each entry's `priceChange.h24`, a signed percent
+  shown as `—` when no price is known or its cached price has expired. Each entry's `priceChange.h24`, a signed percent
   string, is used only for an `ok` status, since the service withholds changes for every other status;
   entries without a usable change contribute a price but no change. Account selection synchronously
   hydrates the holdings, ordering, total, and change from cached balances and quotes before any network

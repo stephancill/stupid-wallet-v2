@@ -41,8 +41,18 @@ public final class WalletBalanceModel: ObservableObject {
   private var nativeBalances: [String: [UInt8]] = [:]
   private var priceQuotes: [String: PriceQuote] = [:]
   private var iconCache: [String: URL?] = [:]
+  private let now: @Sendable () -> Date
+  private var priceExpiryTask: Task<Void, Never>?
 
-  public init(service: WalletBalanceService = WalletBalanceService()) { self.service = service }
+  public init(
+    service: WalletBalanceService = WalletBalanceService(),
+    now: @escaping @Sendable () -> Date = { Date() }
+  ) {
+    self.service = service
+    self.now = now
+  }
+
+  deinit { priceExpiryTask?.cancel() }
 
   /// Full two-decimal USD display of the portfolio total, or nil when nothing is priced.
   public var portfolioTotalDisplay: String? {
@@ -58,6 +68,8 @@ public final class WalletBalanceModel: ObservableObject {
   public func selectAccount(_ address: String) {
     let normalized = address.lowercased()
     guard account != normalized else { return }
+    priceExpiryTask?.cancel()
+    priceExpiryTask = nil
     active?.task.cancel()
     active = nil
     account = normalized
@@ -223,6 +235,8 @@ public final class WalletBalanceModel: ObservableObject {
 
   /// Rebuild from the selected account's latest balances and retained prices without awaiting HTTP.
   private func publishPortfolio(context: BalanceContext) {
+    let date = now()
+    priceQuotes = priceQuotes.mapValues { $0.valid(at: date) }
     var holdings: [PortfolioHolding] = []
     for network in context.networks where network.includeInBalance {
       guard let wei = nativeBalances[network.id], wei.contains(where: { $0 != 0 })
@@ -271,6 +285,23 @@ public final class WalletBalanceModel: ObservableObject {
     portfolioGroups = groups
     portfolioTotalUSD = PortfolioGroup.total(of: groups)
     portfolioChange = PortfolioGroup.totalChange(of: groups)
+    schedulePriceExpiry(context: context, date: date)
+  }
+
+  private func schedulePriceExpiry(context: BalanceContext, date: Date) {
+    priceExpiryTask?.cancel()
+    priceExpiryTask = nil
+    guard
+      let expiry = priceQuotes.values.filter({ $0.priceUSD != nil })
+        .map({ $0.updatedAt.addingTimeInterval(PriceQuote.maximumCacheAge) }).min()
+    else { return }
+    priceExpiryTask = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(max(0, expiry.timeIntervalSince(date)))) } catch {
+        return
+      }
+      guard !Task.isCancelled, let self, self.account == context.account else { return }
+      self.publishPortfolio(context: context)
+    }
   }
 
   private func etherRows(context: BalanceContext, balances: [String: [UInt8]]) -> [NativeBalanceRow]

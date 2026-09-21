@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 
@@ -204,13 +205,138 @@ struct PortfolioSWRTests {
     #expect(try Data(contentsOf: file) == corrupt)
   }
 
-  @MainActor private func model(environment: BalanceEnvironment, catalog: SearchHTTPStub)
+  @Test("prices expire at 24 hours across session fallback, persistence, and relaunch")
+  @MainActor func priceExpiry() async throws {
+    let clock = PortfolioTestClock()
+    let receivedAt = clock.date
+    let catalog = SearchHTTPStub(responseHeaders: ["Cache-Control": "no-cache"])
+    defer { catalog.close() }
+    catalog.respond = { _ in (200, priceBody(nativePrice: "1000", tokenPrice: "2")) }
+    let environment = try BalanceEnvironment(tokenSearch: catalog.client(now: { clock.date }))
+    defer { environment.close() }
+    let token = try environment.addToken()
+    environment.stub.respond = { request in try balanceBody(request: request) }
+    let wallet = WalletBalanceModel(service: environment.service, now: { clock.date })
+    wallet.selectAccount(environment.accounts[0])
+    await wallet.refresh()
+    #expect(wallet.portfolioTotalDisplay == "$1,002.5")
+
+    catalog.respond = { _ in (503, Data()) }
+    clock.advance(seconds: 86_399)
+    await wallet.refresh()
+    #expect(wallet.portfolioTotalDisplay == "$1,002.5")
+    let retained = try environment.service.tokens.load().portfolios[wallet.account]
+    #expect(retained?.prices[token.id]?.updatedAt == receivedAt)
+    let beforeExpiry = model(environment: environment, catalog: catalog, now: { clock.date })
+    beforeExpiry.selectAccount(environment.accounts[0])
+    #expect(beforeExpiry.portfolioTotalDisplay == "$1,002.5")
+
+    clock.advance(seconds: 1)
+    await wallet.refresh()
+    #expect(wallet.portfolioTotalUSD == nil)
+    #expect(wallet.portfolioChange == nil)
+    #expect(wallet.portfolioHoldings.count == 2)
+    #expect(wallet.portfolioHoldings.allSatisfy { $0.valueUSD == nil && $0.change24h == nil })
+    #expect(wallet.portfolioGroups.map(\.symbol) == ["ETH", "USDC"])
+    #expect(wallet.nativeTotal == "1.000000")
+    let afterExpiry = model(environment: environment, catalog: catalog, now: { clock.date })
+    afterExpiry.selectAccount(environment.accounts[0])
+    #expect(afterExpiry.portfolioTotalUSD == nil)
+    await afterExpiry.refresh()
+    #expect(afterExpiry.portfolioTotalUSD == nil)
+
+    catalog.respond = { _ in (200, priceBody(nativePrice: "2000", tokenPrice: "4")) }
+    await wallet.refresh()
+    #expect(wallet.portfolioTotalDisplay == "$2,005")
+    #expect(wallet.portfolioChange != nil)
+    let recovered = try environment.service.tokens.load().portfolios[wallet.account]
+    #expect(recovered?.prices[token.id]?.updatedAt == clock.date)
+  }
+
+  @Test("session cache hits and null-price fallbacks do not renew the 24-hour clock")
+  func sessionPriceExpiry() async throws {
+    let clock = PortfolioTestClock()
+    let receivedAt = clock.date
+    let catalog = SearchHTTPStub()
+    defer { catalog.close() }
+    let client = catalog.client(now: { clock.date })
+    let request = try #require(PriceRequest(chainID: "1", address: "native"))
+    catalog.respond = { _ in (200, priceBody(nativePrice: "1000", tokenPrice: nil)) }
+    #expect(await client.prices(for: [request])[request]?.updatedAt == receivedAt)
+    clock.advance(seconds: 30)
+    #expect(await client.prices(for: [request])[request]?.updatedAt == receivedAt)
+    #expect(catalog.requests.count == 1)
+    catalog.respond = { _ in (200, priceBody(nativePrice: nil, tokenPrice: nil)) }
+    clock.advance(seconds: 86_369)
+    let retained = await client.prices(for: [request])[request]
+    #expect(retained?.priceUSD == "1000")
+    #expect(retained?.updatedAt == receivedAt)
+    clock.advance(seconds: 1)
+    let expired = await client.prices(for: [request])[request]
+    #expect(expired?.priceUSD == nil)
+    #expect(expired?.change24h == nil)
+    #expect(expired?.symbol == "ETH")
+    #expect(expired?.decimals == 18)
+  }
+
+  @Test("a visible portfolio expires cached prices without another refresh")
+  @MainActor func visiblePriceExpiry() async throws {
+    let clock = PortfolioTestClock()
+    let catalog = SearchHTTPStub(responseHeaders: ["Cache-Control": "no-cache"])
+    defer { catalog.close() }
+    catalog.respond = { _ in (200, priceBody(nativePrice: "1000", tokenPrice: "2")) }
+    let environment = try BalanceEnvironment(tokenSearch: catalog.client(now: { clock.date }))
+    defer { environment.close() }
+    _ = try environment.addToken()
+    let wallet = WalletBalanceModel(service: environment.service, now: { clock.date })
+    wallet.selectAccount(environment.accounts[0])
+    await wallet.refresh()
+    catalog.respond = { _ in (503, Data()) }
+    clock.advance(seconds: 86_399)
+    await wallet.refresh()
+    #expect(wallet.portfolioTotalUSD != nil)
+    let requestCount = catalog.requests.count
+    let (expired, continuation) = AsyncStream<Bool>.makeStream()
+    let observation = wallet.$portfolioTotalUSD.sink { value in
+      if value == nil { continuation.yield(true) }
+    }
+    let deadline = Task {
+      do { try await Task.sleep(for: .seconds(5)) } catch { return }
+      continuation.yield(false)
+    }
+    defer {
+      observation.cancel()
+      deadline.cancel()
+      continuation.finish()
+    }
+    clock.advance(seconds: 1)
+    var iterator = expired.makeAsyncIterator()
+    #expect(await iterator.next() == true)
+    #expect(wallet.portfolioChange == nil)
+    #expect(catalog.requests.count == requestCount)
+  }
+
+  @MainActor private func model(
+    environment: BalanceEnvironment, catalog: SearchHTTPStub,
+    now: @escaping @Sendable () -> Date = { Date() }
+  )
     -> WalletBalanceModel
   {
     WalletBalanceModel(
       service: WalletBalanceService(
         directory: environment.directory, client: environment.stub.client,
-        networkStore: environment.networks, tokenSearch: catalog.client()))
+        networkStore: environment.networks, tokenSearch: catalog.client(now: now)), now: now)
+  }
+}
+
+private final class PortfolioTestClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = Date(timeIntervalSince1970: 2_000_000_000)
+
+  var date: Date { lock.withLock { value } }
+
+  func advance(seconds: TimeInterval) {
+    lock.withLock { value = value.addingTimeInterval(seconds) }
   }
 }
 

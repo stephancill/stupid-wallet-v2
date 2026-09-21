@@ -134,9 +134,7 @@ public struct TokenStore: Sendable {
         let id = "\(request.chainID):\(request.address)"
         let retained = portfolio.prices[id]
         let merged = retained.map { StupidTokensClient.merging(quote, with: $0.quote) } ?? quote
-        portfolio.prices[id] = PortfolioPriceEntry(
-          quote: merged,
-          updatedAt: quote.priceUSD == nil ? (retained?.updatedAt ?? Date()) : Date())
+        portfolio.prices[id] = PortfolioPriceEntry(quote: merged)
       }
       if payload.portfolios == nil { payload.portfolios = [:] }
       payload.portfolios?[account.lowercased()] = portfolio
