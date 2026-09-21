@@ -687,7 +687,10 @@ then the value-ordered holdings, and
 keeps the account's tracked-token errors. The holdings render as plain asset rows without grouped
 section backgrounds; importing tokens lives in Settings → Tokens, so the token screen has no Add
 Token action. Each page fills the viewport exactly, including the bottom safe area, so no part of the
-next page peeks in at rest.
+next page peeks in at rest. A settled portfolio with no holdings shows a native empty state (`No
+tokens`) in place of the list and a `$0.00` total; an unpriceable or unavailable total still shows
+`—`. A refresh that is still in flight or has failed keeps its existing presentation instead of
+claiming the wallet is empty.
 
 One caret follows the seam between the pages, starting at the bottom of the landing screen and
 ending at the top of the token screen, above the USD total. The total has no visible heading; its

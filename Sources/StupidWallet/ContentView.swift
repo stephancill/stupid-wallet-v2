@@ -128,6 +128,20 @@ import SwiftUI
 
     private var hasHoldings: Bool { !vm.balances.portfolioHoldings.isEmpty }
 
+    /// A settled, successful portfolio with nothing in it. Loading and failed refreshes keep their
+    /// existing presentation instead of claiming the wallet is empty.
+    private var showsEmptyPortfolio: Bool {
+      vm.balances.portfolioGroups.isEmpty && !vm.balances.isRefreshing && vm.balances.error == nil
+    }
+
+    /// An empty portfolio is worth exactly nothing; only an unpriceable or failed total is unknown.
+    private var portfolioValue: (text: String, accessibility: String) {
+      if let display = vm.balances.portfolioTotalDisplay { return (display, display) }
+      guard showsEmptyPortfolio else { return ("—", "Unavailable") }
+      let zero = DecimalValue.usd("0") ?? "$0.00"
+      return (zero, zero)
+    }
+
     private var walletView: some View {
       ScrollViewReader { proxy in
         ScrollView(.vertical) {
@@ -225,12 +239,12 @@ import SwiftUI
         // Reserve the page caret's touch area so it never overlaps the total.
         Color.clear.frame(height: 44)
         VStack(alignment: .leading, spacing: 2) {
-          Text(vm.balances.portfolioTotalDisplay ?? "—")
+          Text(portfolioValue.text)
             .font(.system(size: 30, weight: .semibold))
             .lineLimit(1)
             .minimumScaleFactor(0.5)
             .accessibilityLabel("Portfolio value")
-            .accessibilityValue(vm.balances.portfolioTotalDisplay ?? "Unavailable")
+            .accessibilityValue(portfolioValue.accessibility)
           if let change = vm.balances.portfolioChangeDisplay {
             Text(change)
               .font(.subheadline.weight(.medium))
@@ -249,6 +263,19 @@ import SwiftUI
           ForEach(vm.balances.portfolioGroups) { group in
             groupRow(group)
               .opacity(vm.balances.isRefreshing ? 0.6 : 1)
+          }
+          if showsEmptyPortfolio {
+            ContentUnavailableView {
+              Label("No tokens", systemImage: "tray")
+            } description: {
+              Text(
+                "Track an ERC-20 in Settings → Tokens. Native balances appear for networks included in your total balance."
+              )
+            }
+            .padding(.vertical, 40)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .accessibilityIdentifier("portfolio.empty")
           }
           if let error = vm.balances.error {
             Text(error).foregroundStyle(.red)

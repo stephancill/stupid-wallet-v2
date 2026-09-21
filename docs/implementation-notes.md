@@ -9522,3 +9522,43 @@ Verification:
   Available unit. A screenshot confirmed the inline controls and dollar Available layout, with Max
   still immediately left of the symbol. No transaction was signed or broadcast.
 - `git diff --check`: passed.
+
+## 2026-09-21 — Empty portfolio state
+
+### Summary
+
+- Added a native empty state to the home portfolio for a wallet with no holdings: a `No tokens`
+  title with guidance to track an ERC-20 in Settings → Tokens and to include networks for native
+  balances. It renders inside the holdings list so pull-to-refresh, the total header, the page caret
+  and the floating Send action keep working.
+- The header total now reads `$0.00` for a settled empty portfolio rather than `—`/`Unavailable`,
+  which read like a failed refresh beside `No tokens`. An unpriceable or genuinely unavailable total
+  is unchanged, and the portfolio's failure semantics were not modified.
+- The empty state is shown only when the portfolio has no groups, no refresh is in flight and the
+  last refresh reported no error, so a cold launch or a failed refresh cannot claim an empty wallet.
+- Updated the handover and the repository debugging guidance.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` on the changed files: passed.
+- Before this feature, the merged Send/ENS work was rebased onto `main` (which had already changed
+  USD rendering to exactly two decimals). Two `SendAmountInput` expectations were aligned with the
+  merged two-decimal display. `swift test`: 429 Swift Testing tests in 48 suites and 14 XCTest cases
+  passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>` passed; the app
+  was reinstalled and launched.
+- Simulator acceptance used a zero-balance watch-only account as the home account: the portfolio
+  showed `$0.00`, the `No tokens` empty state and its guidance, with no `Unavailable` text and the
+  Send action still present. Switching to a funded watch-only account showed its real total and
+  holding rows with no empty state. Screenshots confirmed both layouts.
+- The in-flight-refresh and failed-refresh variants of the gate were not directly observed; local
+  refreshes complete too quickly to catch reliably through the accessibility tree. Those semantics
+  are enforced by the predicate and by the existing model tests that keep cold failures unavailable
+  rather than zero.
+
+### Limitations
+
+- The empty state distinguishes "settled and empty" from "not loaded or failed" using the model's
+  refresh and error state rather than an explicit loaded flag, which the balance model does not
+  expose.
+- No physical-device acceptance was run for this change.

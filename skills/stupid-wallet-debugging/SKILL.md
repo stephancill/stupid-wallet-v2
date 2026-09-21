@@ -172,6 +172,11 @@ https://app.uniswap.org/swap?chain=base&inputCurrency=<token>&outputCurrency=NAT
   automatically align its separator to that label, leaving only a short trailing line. Set the row's
   `.alignmentGuide(.listRowSeparatorLeading) { _ in 0 }` explicitly (and the adjacent information row
   when needed), then verify the inset-width separator visually with both empty and populated input.
+- A settled-empty list is not the same as a not-yet-loaded one. Gate an empty state on "no rows,
+  not refreshing, and no refresh error" so a cold or failed refresh never claims the wallet is empty,
+  and keep the empty state inside the scrolling container so pull-to-refresh still works. When the
+  empty state is the page's whole content, check the surrounding summary too: a nil total rendered as
+  `—` undermined a `No tokens` state until the settled-empty case rendered its real `$0.00`.
 
 ### 2. Locate The Boundary
 
