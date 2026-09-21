@@ -9035,7 +9035,7 @@ Verification:
 
 - Added a wallet-owned Send action to the Home token screen. It is a floating Liquid Glass pill
   pinned near the bottom edge above the home indicator, centered, rather than a full-width bar. It
-  uses regular text sizing and the system's default button padding, takes the iOS 26 system glass
+  uses a larger text size and generous padding (tuned during review), takes the iOS 26 system glass
   button style (`.buttonStyle(.glass)`), and falls back to a bordered capsule on earlier supported
   systems. Swap is intentionally not rendered yet; it joins the same
   floating group when implemented.
