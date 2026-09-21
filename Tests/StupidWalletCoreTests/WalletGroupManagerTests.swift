@@ -564,7 +564,8 @@ struct WalletGroupManagerTests {
       group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
       _ = try environment.manager.deriveAccount(groupID: group.id)
     }
-    let service = WalletBalanceService(directory: environment.directory)
+    let service = WalletBalanceService(
+      directory: environment.directory, tokenSearch: offlineTokenSearch())
     let removedAccount = group.accounts[0].address
     let context = try service.context(account: removedAccount)
     let token = try WalletToken(

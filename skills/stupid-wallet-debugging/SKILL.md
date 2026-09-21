@@ -408,6 +408,13 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   app's memory-cache lifetime, and do not cache transient nulls as permanent catalog misses. The
   service canonicalizes full `chainId:address` strings lexicographically, not by numeric chain ID;
   a 308 to the sorted URL is expected for a non-canonical request.
+- A native holding that shows the letter placeholder instead of a coin logo is a catalog metadata
+  problem, not a wallet rendering bug: native icons come from `GET /v1/tokens/{chainId}/native`
+  (`imageUrl`), and `/v1/search` lists only ERC-20s, so a native currency never appears there.
+  Confirm the raw field with a direct public `curl` before touching view code. `StupidTokensClient`
+  caches metadata in memory for an hour and URLSession also caches the response (the service sends
+  `Cache-Control: public, max-age=60, stale-while-revalidate=3600`), so a catalog fix can stay hidden
+  in a running app; force-quit and relaunch before re-diagnosing.
 - Reproduce a failing passthrough call with the exact original method spelling and params.
 - Compare native behavior with a direct public-safe request:
 
@@ -489,7 +496,10 @@ cast receipt <hash> --rpc-url https://evm.stupidtech.net/v1/8453 --json
 3. Format changed Swift with `swift format --in-place`.
 4. Format/lint extension JavaScript with the repository's established `oxfmt`/`oxlint`
    commands and run `node --check` on changed scripts.
-5. Run `swift test`.
+5. Run `swift test`. Balance and catalog tests must inject a stub `StupidTokensClient`; never let a
+   test construct `WalletBalanceService` without one, because the default `.shared` catalog client
+   makes real HTTP calls and turns the suite flaky. `BalanceEnvironment` defaults to an offline client
+   for this reason; pass a `SearchHTTPStub` client only when a test needs catalog data.
 6. Run `stupid-app doctor` when packaging, entitlements, extension loading, or device
    behavior is involved.
 7. Reinstall and launch with:

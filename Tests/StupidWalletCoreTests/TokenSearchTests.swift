@@ -265,67 +265,20 @@ struct TokenSearchTests {
     #expect(MarketCapFormatter.compact("-5") == nil)
   }
 
-  @Test("catalog icons resolve once and reject a mismatched token")
-  func clientIcon() async throws {
-    let stub = SearchHTTPStub()
-    defer { stub.close() }
-    let client = stub.client()
-    let address = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-    let icon = URL(string: "https://example.com/usdc.png")
-
-    stub.respond = { _ in
-      (
-        200,
-        metadata(chain: 1, address: address, symbol: "USDC", image: "https://example.com/usdc.png")
-      )
-    }
-    #expect(await client.imageURL(chainID: "1", address: address.uppercased()) == icon)
-    #expect(await client.imageURL(chainID: "1", address: address) == icon)
-    #expect(stub.requests.count == 1)
-    let path = try #require(stub.requests.first?.url?.path)
-    #expect(path == "/v1/tokens/1/\(address)")
-
-    stub.respond = { _ in (404, Data(#"{"error":{"code":"not_found"}}"#.utf8)) }
-    #expect(await client.imageURL(chainID: "8453", address: address) == nil)
-
-    stub.respond = { _ in
-      (
-        200,
-        metadata(
-          chain: 1, address: "0x6b175474e89094c44da98b954eedeac495271d0f", symbol: "DAI",
-          image: "https://example.com/wrong.png")
-      )
-    }
-    #expect(await client.imageURL(chainID: "10", address: address) == nil)
-
-    stub.respond = { _ in (200, metadata(chain: 1, address: address, symbol: "USDC", image: nil)) }
-    #expect(await client.imageURL(chainID: "42161", address: address) == nil)
-
-    #expect(await client.imageURL(chainID: "1", address: "0x1234") == nil)
-  }
-
-  @Test("native metadata and bulk prices use the catalog endpoints")
+  @Test("bulk prices carry each identity's price and display metadata")
   func clientNativeAndPrices() async throws {
     let stub = SearchHTTPStub()
     defer { stub.close() }
     let client = stub.client()
 
-    stub.respond = { request in
-      if request.url?.path.hasSuffix("/native") == true {
-        return (200, metadata(chain: 1, address: "native", symbol: "ETH", decimals: 18))
-      }
-      return (
+    stub.respond = { _ in
+      (
         200,
         Data(
-          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"2622.6440903517046"},{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","status":"ok","priceUsd":"0.9997420860108598"},{"chainId":10,"address":"0x4200000000000000000000000000000000000042","status":"not_found","priceUsd":null}]}"#
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"2622.6440903517046","symbol":"ETH","decimals":18,"imageUrl":"https://example.com/eth.png","priceChange":{"h1":"1.2","h24":"4.248456574507254","d7":"6.5"}},{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","status":"ok","priceUsd":"0.9997420860108598","symbol":"USDC","decimals":6,"priceChange":{"h24":"-0.00661178995570606"}},{"chainId":10,"address":"0x4200000000000000000000000000000000000042","status":"not_found","priceUsd":null}]}"#
             .utf8)
       )
     }
-
-    let native = try #require(await client.tokenMetadata(chainID: "1", address: "native"))
-    #expect(native.symbol == "ETH")
-    #expect(native.decimals == 18)
-    #expect(native.imageURL == nil)
 
     let nativeRequest = try #require(PriceRequest(chainID: "1", address: "native"))
     let usdc = try #require(
@@ -333,8 +286,15 @@ struct TokenSearchTests {
     let missing = try #require(
       PriceRequest(chainID: "10", address: "0x4200000000000000000000000000000000000042"))
     let prices = await client.prices(for: [nativeRequest, usdc, missing, nativeRequest])
-    #expect(prices[nativeRequest] == "2622.6440903517046")
-    #expect(prices[usdc] == "0.9997420860108598")
+    #expect(prices[nativeRequest]?.priceUSD == "2622.6440903517046")
+    #expect(prices[nativeRequest]?.change24h == "4.248456574507254")
+    #expect(prices[nativeRequest]?.symbol == "ETH")
+    #expect(prices[nativeRequest]?.decimals == 18)
+    #expect(prices[nativeRequest]?.imageURL == URL(string: "https://example.com/eth.png"))
+    #expect(prices[usdc]?.priceUSD == "0.9997420860108598")
+    #expect(prices[usdc]?.change24h == "-0.00661178995570606")
+    #expect(prices[usdc]?.symbol == "USDC")
+    #expect(prices[usdc]?.decimals == 6)
     #expect(prices[missing] == nil)
 
     // The request carries canonical identities and is cached after the first call.
@@ -350,6 +310,81 @@ struct TokenSearchTests {
 
     #expect(PriceRequest(chainID: "not-a-chain", address: "native") == nil)
     #expect(PriceRequest(chainID: "1", address: "0x1234") == nil)
+  }
+
+  @Test("a stale identity contributes metadata without caching a price")
+  func staleMetadata() async throws {
+    let stub = SearchHTTPStub()
+    defer { stub.close() }
+    let client = stub.client()
+    let request = try #require(PriceRequest(chainID: "1", address: "native"))
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"stale","priceUsd":null,"symbol":"ETH","decimals":18,"imageUrl":"https://example.com/eth.png"}]}"#
+            .utf8)
+      )
+    }
+    let quote = await client.prices(for: [request])[request]
+    #expect(quote?.priceUSD == nil)
+    #expect(quote?.symbol == "ETH")
+    #expect(quote?.decimals == 18)
+    #expect(quote?.imageURL == URL(string: "https://example.com/eth.png"))
+    #expect(stub.requests.count == 1)
+    // Transient outcomes are not cached, so the next call re-requests.
+    _ = await client.prices(for: [request])
+    #expect(stub.requests.count == 2)
+  }
+
+  @Test("a stale price is shown and cached, with changes withheld")
+  func stalePrice() async throws {
+    let stub = SearchHTTPStub()
+    defer { stub.close() }
+    let client = stub.client()
+    let request = try #require(PriceRequest(chainID: "1", address: "native"))
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"stale","priceUsd":"2600","symbol":"ETH","decimals":18,"priceChange":{"h24":"4.2"}}]}"#
+            .utf8)
+      )
+    }
+    let quote = await client.prices(for: [request])[request]
+    #expect(quote?.priceUSD == "2600")
+    #expect(quote?.symbol == "ETH")
+    #expect(quote?.change24h == nil)
+    #expect(stub.requests.count == 1)
+    _ = await client.prices(for: [request])
+    #expect(stub.requests.count == 1)
+  }
+
+  @Test("a later response with no price keeps the last known price")
+  func staleWhileRevalidate() async throws {
+    let stub = SearchHTTPStub(responseHeaders: ["Cache-Control": "no-store"])
+    defer { stub.close() }
+    let client = stub.client()
+    let request = try #require(PriceRequest(chainID: "1", address: "native"))
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"2600"}]}"#
+            .utf8)
+      )
+    }
+    #expect(await client.prices(for: [request])[request]?.priceUSD == "2600")
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"price_unavailable","priceUsd":null}]}"#
+            .utf8)
+      )
+    }
+    #expect(await client.prices(for: [request])[request]?.priceUSD == "2600")
+    #expect(stub.requests.count == 2)
   }
 
   @Test(
@@ -377,8 +412,8 @@ struct TokenSearchTests {
             .utf8)
       )
     }
-    #expect(await client.prices(for: [request])[request] == "2600")
-    #expect(await client.prices(for: [request])[request] == "2600")
+    #expect(await client.prices(for: [request])[request]?.priceUSD == "2600")
+    #expect(await client.prices(for: [request])[request]?.priceUSD == "2600")
     #expect(stub.requests.count == 2)
   }
 
@@ -402,7 +437,7 @@ struct TokenSearchTests {
             .utf8)
       )
     }
-    #expect(await client.prices(for: [request])[request] == "2600")
+    #expect(await client.prices(for: [request])[request]?.priceUSD == "2600")
     #expect(stub.requests.count == 4)
   }
 
@@ -428,7 +463,7 @@ struct TokenSearchTests {
             .utf8)
       )
     }
-    #expect(await client.prices(for: [request])[request] == "2600")
+    #expect(await client.prices(for: [request])[request]?.priceUSD == "2600")
     stub.respond = { _ in
       (
         200,
@@ -437,7 +472,7 @@ struct TokenSearchTests {
             .utf8)
       )
     }
-    #expect(await client.prices(for: [request])[request] == "2700")
+    #expect(await client.prices(for: [request])[request]?.priceUSD == "2700")
     #expect(stub.requests.count == 2)
   }
 
@@ -527,15 +562,6 @@ struct TokenSearchTests {
     #expect(stub.requests.isEmpty)
   }
 
-}
-
-private func metadata(
-  chain: Int, address: String, symbol: String, decimals: Int = 6, image: String? = nil
-) -> Data {
-  let imageField = image.map { ",\"imageUrl\":\"\($0)\"" } ?? ""
-  return Data(
-    "{\"chainId\":\(chain),\"address\":\"\(address)\",\"name\":\"\(symbol)\",\"symbol\":\"\(symbol)\",\"decimals\":\(decimals)\(imageField)}"
-      .utf8)
 }
 
 private func searchBody(_ entries: [String]) -> Data {

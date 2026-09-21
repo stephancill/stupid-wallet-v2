@@ -8416,3 +8416,305 @@ Verification:
 
 The service can still return genuinely stale or unavailable prices; this change corrects wallet-side
 cache recovery rather than changing upstream freshness policy. Physical-device acceptance was not run.
+
+## 2026-09-21 — Home token list flattened to plain asset rows
+
+Removed the grouped section styling and the Add Token action from the Home token screen.
+
+- `ContentView.tokenScreen` no longer wraps the holdings in a `Section`, drops the Add Token section,
+  and uses `.listStyle(.plain)` instead of `.insetGrouped`, so the portfolio groups render as plain
+  full-width asset rows with no section card background. The tracked-token error row remains,
+  inline, when present.
+- Removed the now-unused `showAddToken` state, its sheet, and its account-change reset from
+  `ContentView`. Token import stays reachable through Settings → Tokens, which keeps its own
+  Add Token action and grouped list unchanged.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict Sources/StupidWallet/ContentView.swift`:
+  passed.
+- `swift test`: 372 Swift Testing tests in 41 suites and 14 XCTest cases passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed; final
+  sources reinstalled and launched.
+- Simulator check on the selected account: the token screen shows the USD total over the same
+  value-ordered holdings with no section card background and no Add Token row. Physical-device
+  acceptance was not run for this presentation change.
+
+## 2026-09-21 — 24-hour price change on the portfolio total and holding rows
+
+Home's token screen now shows each holding's 24-hour price change under its value, and the
+portfolio's combined change under the USD total. Rows show the signed percent; the total shows the
+signed USD amount and percent, e.g. `+$1,393,000 (+4.24%)`. A gain renders green; a loss or flat
+change renders in the secondary label colour (not red), and a holding with no usable change renders
+no line.
+
+- The catalog's `GET /v1/prices` entries already carry `priceChange.h24` as a signed percent string.
+  `StupidTokensClient.prices(for:)` now returns a `PriceQuote` per identity (`priceUSD` plus optional
+  `change24h`) instead of a bare price string, and caches both together. Entries without a usable
+  change still contribute a price. `WalletBalanceService.prices` and `WalletBalanceModel` thread the
+  quote through to `PortfolioHolding.change24h`.
+- `PortfolioGroup.change24h` is the true value-weighted change, not an average of percentages: it sums
+  the current value of priced holdings and divides by the sum of each holding's value discounted by
+  its own change (`1 + change/100`), assuming unchanged balances over the window. `PortfolioGroup`
+  exposes this per group and, via `PortfolioChange`, the same computation across every group as the
+  signed USD amount and percent for the total. Holdings with no price or no change are excluded from
+  both sides and never fabricate a change.
+- `DecimalValue` gained exact `subtract`, `divide` (long division, truncated to a requested number of
+  fraction digits), `signedSubtract`, `percentageChange`, `signed`, `signedPercent`, `signedUSD`, and
+  a decimal-point shift helper. No floating point was introduced; percent display uses two fraction
+  digits.
+- `ContentView.tokenScreen` renders the total's change as a green or secondary subtitle under the
+  total and each row's change under its value in the same styling. The accessibility labels include
+  the change.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict` for the changed files: passed. The
+  recursive lint still reports pre-existing line-length and indentation issues in
+  `EIP712.swift`, `ActivityStore.swift`, and `EthereumPrimitivesTests.swift`, which this change did
+  not touch.
+- `swift test`: 377 Swift Testing tests in 41 suites and 14 XCTest cases passed. New coverage proves
+  exact subtraction and division (including zero-divisor rejection), signed percent/USD formatting
+  and signed subtraction, percent change and its zero-baseline/null cases, price-quote parsing of
+  positive and negative `priceChange.h24`, and value-weighted group/total change including the case
+  where only some holdings report a change.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. On the
+  selected all-ETH account the simulator showed `+$1,393,000 (+4.24%)` in green under the total and
+  `+4.24%` under the ETH row, matching the catalog's `4.248456574507254` change. Physical-device
+  acceptance was not run.
+
+## 2026-09-21 — Grouped holding caret moved inline with the network label
+
+The expand/collapse caret on a multi-network holding row moved from the trailing edge of the row to
+sit inline with the network count label, at a smaller text style (`4 networks ⌄`). The row value and
+24-hour change stay right-aligned; single-network rows still show no caret. `ContentView.groupLabel`
+now draws the caret in the leading `HStack` beside `group.networkLabel`, and the trailing caret is
+removed.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict Sources/StupidWallet/ContentView.swift`:
+  passed.
+- `swift test`: 377 Swift Testing tests in 41 suites and 14 XCTest cases passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. The
+  simulator showed the grouped ETH row with `4 networks ⌄` inline and no caret on the single-network
+  POL row. Physical-device acceptance was not run.
+
+## 2026-09-21 — Native token icons resolved from catalog native metadata
+
+Investigated reported missing images on native holdings (ETH, POL). The wallet was not dropping the
+icon: the Stupid Tokens catalog returned `imageUrl: null` for `GET /v1/tokens/{chainId}/native`, and
+native currencies never appear in `/v1/search`, so `PortfolioHolding.iconURL` was legitimately nil and
+the row fell back to the letter placeholder. The catalog has since been fixed and now returns an
+`imageUrl` per native currency (for example the Ethereum asset-platform logo for `1:native`).
+
+No wallet code change was required: `WalletBalanceService.nativeToken` already resolves the native
+currency through the same `tokenMetadata` path and passes `imageURL` into the holding. The fix was
+verified by force-quitting and relaunching the simulator app, confirming the ETH holding now renders
+the Ethereum logo. Because the client caches metadata in memory for an hour and URLSession also caches
+the response (`Cache-Control: public, max-age=60, stale-while-revalidate=3600`), a catalog-side change
+can remain hidden in an already-running app until relaunch or cache expiry.
+
+Follow-up: `fetchTokenMetadata` treats any failure as a cacheable absent result, so a transient
+outage can hide a token or native icon for up to an hour. That negative caching is a candidate to
+soften separately from this fix.
+
+Verification:
+
+- Direct public `curl` to `https://tokens.stupidtech.net/v1/tokens/{1,10,137,8453,42161,56}/native`
+  returned a non-null `imageUrl` for each currency.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed (no source
+  change; reinstall and force-quit/relaunch). The simulator showed the Ethereum logo on the ETH
+  holding in place of the previous letter placeholder.
+- Updated `docs/engineering-handover.md` and the `stupid-wallet-debugging` skill to record the native
+  icon source and the metadata-cache caveat.
+
+## 2026-09-21 — ETH-only home total and an Advanced network section
+
+Two changes to the home total-balance screen (the breakdown under the big balance), not the token
+screen.
+
+- The breakdown now groups the included networks by their native currency symbol and keeps only ETH.
+  `WalletBalanceModel.nativeGroups` publishes one `NativeBalanceGroup` whose header shows the summed
+  ETH balance and whose rows are the contributing ETH networks; the popover renders the header and
+  indenteds its network rows. `nativeRows` is now the ETH-only flat list.
+- The home total itself is ETH-only: the aggregate sums the included networks whose catalog native
+  symbol is ETH. A network whose symbol is known and is not ETH (for example POL) is excluded; a
+  network whose native symbol the catalog does not know still counts, so a catalog gap never hides a
+  balance. Native metadata and the aggregate are resolved before the price fetch so the home balance
+  never waits on the price service. The aggregate and rows are computed in `refreshPortfolio`;
+  `finish` no longer computes or persists the native total.
+- The network detail screen's Include in Total Balance control moved into a collapsed-by-default
+  "Advanced" section placed last on the page. It is styled like the page's other section titles with
+  a chevron (right when collapsed, down when expanded) that toggles the section, so it reads like a
+  Mail-style disclosure rather than a boxed row.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict` for the changed files: passed.
+- `swift test`: 378 Swift Testing tests in 41 suites and 14 XCTest cases passed. A new
+  `TokenBalanceTests` case drives a catalog stub that reports ETH on chain 1 and POL on chain 8453 and
+  proves the total, `nativeRows`, and `nativeGroups` keep only the ETH network.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. The
+  simulator showed the breakdown as an `ETH` header over the Ethereum, Base, Arbitrum, and Optimism
+  rows with Polygon dropped, and the network detail's last section as an `ADVANCED` title with a
+  chevron that expands to the Include in Total Balance toggle. Physical-device acceptance was not run.
+
+## 2026-09-21 — Deterministic tests with an offline token catalog
+
+Removed test flakiness caused by real catalog HTTP. `WalletBalanceService` defaults its
+`StupidTokensClient` to `.shared`, and `BalanceEnvironment` (used across the balance and token-search
+tests) passed `nil`, so any refresh that resolved native metadata or fetched prices reached
+`https://tokens.stupidtech.net` over the network. A slow or failing response could change the
+aggregate and make an assertion fail intermittently.
+
+- `TestSupport` gained `OfflineCatalogURLProtocol`, which answers every catalog request with 404 and
+  no body, and `offlineTokenSearch()`, which returns a `StupidTokensClient` on that stub session.
+  Metadata then resolves to nil and prices to none without any network access.
+- `BalanceEnvironment` now defaults `tokenSearch` to `offlineTokenSearch()`, so tests that do not care
+  about catalog data are deterministic; tests that do pass a `SearchHTTPStub` client explicitly, as
+  the ETH-only aggregate test already does. `WalletGroupManagerTests`' balance-service construction
+  also injects the offline client.
+
+Verification: `swift test` passed eight consecutive runs (378 tests in 41 suites) with no issue
+reported, where the same suite previously failed intermittently. `swift format lint --strict` for the
+changed test files passed. Updated the `stupid-wallet-debugging` skill to require injecting a stub
+catalog client in balance/catalog tests.
+
+## 2026-09-21 — Home holdings no longer navigate on tap
+
+A tracked ERC-20 holding with a single network rendered as a `NavigationLink` to its token detail
+screen, so adding a custom token made its home row navigate on tap. The Home holdings rows are
+presentation only now: `ContentView.groupRow` renders every ungrouped row as a plain label, and only
+a grouped row's caret expands its per-chain distribution. Token detail and removal remain in
+Settings → Tokens, which keeps its own navigation.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict Sources/StupidWallet/ContentView.swift`:
+  passed.
+- `swift test`: 378 Swift Testing tests in 41 suites and 14 XCTest cases passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. The
+  simulator showed the holdings list with grouped rows expanding and no `NavigationLink` on
+  ungrouped rows. Physical-device acceptance was not run.
+
+## 2026-09-21 — Home refresh folds catalog metadata into the bulk prices call
+
+The home refresh made one catalog request per included network for native metadata and one per tracked
+token for its icon, although `GET /v1/prices` already returns each identity's `symbol`, `decimals`,
+and `imageUrl` alongside its price. The refresh now resolves all of it from that single call.
+
+- `PriceQuote` carries optional `priceUSD` plus `symbol`, `decimals`, and `imageURL`. `prices(for:)`
+  returns a quote when an identity has a price or usable metadata, and caches only stable outcomes
+  (`ok` or `not_found`). A transient status such as `stale` still contributes its metadata for the
+  symbol, decimals, and icon, but is not cached, so the next refresh retries it.
+- `WalletBalanceModel.refreshPortfolio` builds all price requests (native currencies plus non-zero
+  tracked tokens), makes one `prices` call, and uses the returned metadata for native symbols,
+  decimals, and icons, the ETH-only classification, and token row icons. The per-network
+  `nativeToken` fetches, the `refreshPortfolio` per-token `tokenIcon` fetches, and the hydrated
+  `resolveIcons` burst are removed. `WalletBalanceService.nativeToken`/`tokenIcon` and
+  `StupidTokensClient.tokenMetadata`/`imageURL`/`fetchTokenMetadata` and the metadata cache are
+  deleted as unused.
+- Catalog requests per home refresh drop from `1 + includedNetworks + trackedTokens` to a single
+  chunked prices call. RPC reads remain one JSON-RPC batch per network, capped at 50 reads and four
+  concurrent batches.
+
+Investigation of the reported missing USDC balances on Ethereum and Base: the persisted balances were
+present in `tokens.json`; `/v1/prices` returned `status: "stale"` with `priceUsd: null` for those two
+identities while Polygon and Arbitrum were `ok` at that moment (the service withholds a source price
+older than five minutes). The wallet correctly showed `—` rather than relabelling a stale price. This
+is upstream freshness, not a batching or wallet defect; a later refresh returns a current price.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict` for the changed files: passed.
+- `swift test`: 378 Swift Testing tests in 41 suites and 14 XCTest cases passed. The bulk-prices test
+  now asserts symbol/decimals/icon come back with the price, and a new test proves a `stale` identity
+  returns metadata without a price and is re-requested rather than cached.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. The home
+  token screen and Settings → Tokens rendered the ETH/POL native icons, USDC rows, values, and 24-hour
+  changes from the single prices call.
+
+## 2026-09-21 — Home chevrons always visible
+
+The landing screen's two disclosure chevrons no longer disappear. The page caret (down on the landing
+screen, up on the token screen) was gated on a non-zero tracked holding; it is now always rendered,
+and the token header always reserves its 44-point touch area so it never overlaps the total. The
+balance's detail chevron was gated on a non-empty breakdown and the balance button was disabled when
+empty; the chevron is always shown and the button is always tappable, so tapping with no rows opens
+the popover's short explanation (loading, no networks included, or balances unavailable).
+
+Also answered: the landing screen's balance breakdown is the ETH-only native aggregate (symbols for
+POL are known and non-ETH), so POL is deliberately excluded from both the total and that breakdown per
+the earlier ETH-only decision. POL still appears as a holding on the token screen, which lists every
+included network's native currency.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict Sources/StupidWallet/ContentView.swift`:
+  passed.
+- `swift test`: 378 Swift Testing tests in 41 suites and 14 XCTest cases passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. The
+  landing screen showed both the balance chevron beside the total and the bottom page caret; the token
+  screen showed POL as a separate holding.
+
+## 2026-09-21 — Flattened the ETH balance breakdown
+
+The landing screen's balance breakdown is ETH-only, so the `ETH` group header and the indentation of
+its network rows were redundant. The popover now renders the included ETH networks as a flat list of
+rows, ordered by descending balance, matching the pre-grouping layout.
+
+- `ContentView` iterates `WalletBalanceModel.nativeRows` (the flat ETH rows) directly, and
+  `WalletViewModel` exposes `networkRows` instead of `networkGroups`.
+- `NativeBalanceGroup` and `WalletBalanceModel.nativeGroups` are removed as unused, along with the
+  group construction in `updateNativeAggregate`. `NativeBalanceRow` reverts to `Sendable` only.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict` for the changed files: passed.
+- `swift test`: 378 Swift Testing tests in 41 suites and 14 XCTest cases passed; the ETH-only
+  aggregate test now asserts the flat `nativeRows`.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. The
+  simulator's breakdown listed Ethereum, Base, Arbitrum One, and Optimism as flat rows with no header
+  or indent.
+
+## 2026-09-21 — Show the catalog's last known price and keep it (SWR)
+
+The catalog now returns its last known `priceUsd` for every status and nulls it only when no price is
+ever known, but `StupidTokensClient` only accepted `ok`, so a `stale`, `price_unavailable`,
+`upstream_error`, or `rate_limited` entry rendered `—` even though a price was present. That is why
+USDC on Ethereum and Base intermittently showed no value while Polygon and Arbitrum did.
+
+- `fetchPrices` now takes `priceUsd` whenever it parses, for any status. `status` is treated as
+  freshness only; `priceChange.h24` is taken only for `ok` because the service withholds changes for
+  every other status. A response with a price (any status) or a definitive `not_found` is cached; a
+  response that retains no price is retried rather than cached as a miss.
+- The client remembers the most recent quote that carried a price per identity for the session and
+  uses it when a later refresh returns no price, so a price already shown is never blanked
+  (stale-while-revalidate). Metadata from the fresh response is preferred, with the price and change
+  falling back to the remembered quote.
+- The total/row 24-hour change is now shown only when every priced holding reports one. A partial
+  aggregate misrepresented the portfolio: with the dominant holdings stale (change withheld) and one
+  small `ok` holding, the total change had displayed that small holding's change as the whole
+  portfolio's.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict` for the changed files: passed.
+- `swift test`: 380 Swift Testing tests in 41 suites and 14 XCTest cases passed. New coverage proves a
+  stale price is shown and cached with its change withheld, and that a later response with no price
+  keeps the last known price; the change-hiding rule is covered by the partial-coverage test.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. The token
+  screen showed ETH, USDC, POL, and HIGHER values (USDC back to its full four-network total), row
+  changes for the `ok` holdings, and no total change while a priced holding lacked one.
+
+## 2026-09-21 — Portfolio change computed from the covered holdings
+
+Relaxed the previous full-coverage rule for the 24-hour change per review feedback. `PortfolioGroup`
+again computes a group's and the total's change over the priced holdings that report one, leaving a
+priced holding with no change out of both sides of the ratio; the change line disappears only when no
+holding reports a change. This keeps the total change visible while some holdings are stale, at the
+cost that the covered subset may not be the whole portfolio.
+
+Verification: `swift test` passed 380 tests in 41 suites and 14 XCTest cases; the partial-coverage test
+asserts the subset value again. `swift format lint --strict` passed for the changed files.

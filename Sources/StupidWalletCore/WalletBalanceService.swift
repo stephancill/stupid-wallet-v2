@@ -120,18 +120,9 @@ public struct WalletBalanceService: Sendable {
     return try await searchCatalog(context: context, query: trimmed)
   }
 
-  /// The catalog display icon for a tracked token, or nil when the catalog has none.
-  public func tokenIcon(chainID: String, address: String) async -> URL? {
-    await tokenSearch.imageURL(chainID: chainID, address: address)
-  }
-
-  /// Catalog metadata for a chain's native currency, used for its display symbol and icon.
-  public func nativeToken(chainID: String) async -> TokenSearchResult? {
-    await tokenSearch.tokenMetadata(chainID: chainID, address: "native")
-  }
-
-  /// USD prices for the requested tokens, keyed by request. Unpriced tokens are absent.
-  public func prices(for requests: [PriceRequest]) async -> [PriceRequest: String] {
+  /// Bulk USD prices, 24-hour changes, and display metadata for the requested tokens, keyed by
+  /// request. Tokens without a current price or usable metadata are absent.
+  public func prices(for requests: [PriceRequest]) async -> [PriceRequest: PriceQuote] {
     await tokenSearch.prices(for: requests)
   }
 

@@ -11,7 +11,7 @@ final class WalletViewModel: ObservableObject {
   @Published var addressHex = ""
   @Published var walletGroups: [WalletGroup] = []
   var balance: String? { balances.nativeTotal }
-  var networkBalances: [NativeBalanceRow] { balances.nativeRows }
+  var networkRows: [NativeBalanceRow] { balances.nativeRows }
   @Published var chainID = ChainStore.defaultChainID
   var includedNetworkCount: Int { balances.includedNetworkCount }
   @Published var isSaving = false

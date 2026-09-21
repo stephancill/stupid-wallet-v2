@@ -15,7 +15,6 @@ import SwiftUI
     @State private var showSettingsSheet = false
     @State private var showAccountPicker = false
     @State private var showCopyCheckmark = false
-    @State private var showAddToken = false
     @State private var expandedSymbols: Set<String> = []
     @State private var currentPage: String? = ContentView.balancePage
 
@@ -101,9 +100,6 @@ import SwiftUI
       .sheet(isPresented: $showAccountPicker) {
         AccountPickerView(vm: vm)
       }
-      .sheet(isPresented: $showAddToken) {
-        NavigationView { AddTokenView(balances: vm.balances) }
-      }
       .task(id: vm.addressHex) {
         await vm.refreshBalance()
       }
@@ -116,7 +112,6 @@ import SwiftUI
         showActivity = false
         showConnectedApps = false
         showSettingsSheet = false
-        showAddToken = false
       }
     }
 
@@ -146,7 +141,7 @@ import SwiftUI
         .ignoresSafeArea(.container, edges: .bottom)
         .overlayPreferenceValue(TokenPageBoundsKey.self) { anchor in
           GeometryReader { geometry in
-            if hasHoldings, let anchor {
+            if let anchor {
               let bounds = geometry[anchor]
               let progress = min(max(1 - bounds.minY / max(bounds.height, 1), 0), 1)
               let onTokenPage = progress >= 0.5
@@ -169,7 +164,7 @@ import SwiftUI
           }
         }
       }
-      .onChange(of: vm.networkBalances.isEmpty) { _, isEmpty in
+      .onChange(of: vm.networkRows.isEmpty) { _, isEmpty in
         if isEmpty { showBalanceDetails = false }
       }
       .onChange(of: hasHoldings) { _, hasHoldings in
@@ -206,34 +201,37 @@ import SwiftUI
     /// Revealed screen: total value over the value-ordered holdings.
     private var tokenScreen: some View {
       VStack(spacing: 0) {
-        if hasHoldings {
-          Color.clear.frame(height: 44)
+        // Reserve the page caret's touch area so it never overlaps the total.
+        Color.clear.frame(height: 44)
+        VStack(alignment: .leading, spacing: 2) {
+          Text(vm.balances.portfolioTotalDisplay ?? "—")
+            .font(.system(size: 30, weight: .semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .accessibilityLabel("Portfolio value")
+            .accessibilityValue(vm.balances.portfolioTotalDisplay ?? "Unavailable")
+          if let change = vm.balances.portfolioChangeDisplay {
+            Text(change)
+              .font(.subheadline.weight(.medium))
+              .foregroundStyle(changeColor(change))
+              .accessibilityLabel("24 hour change")
+              .accessibilityValue(change)
+          }
         }
-        Text(vm.balances.portfolioTotalDisplay ?? "—")
-          .font(.system(size: 30, weight: .semibold))
-          .lineLimit(1)
-          .minimumScaleFactor(0.5)
-          .accessibilityLabel("Portfolio value")
-          .accessibilityValue(vm.balances.portfolioTotalDisplay ?? "Unavailable")
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.horizontal)
-          .padding(.top, 4)
-          .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
 
         List {
-          Section {
-            ForEach(vm.balances.portfolioGroups) { group in
-              groupRow(group)
-            }
+          ForEach(vm.balances.portfolioGroups) { group in
+            groupRow(group)
           }
           if let error = vm.balances.error {
-            Section { Text(error).foregroundStyle(.red) }
-          }
-          Section {
-            Button("Add Token") { showAddToken = true }
+            Text(error).foregroundStyle(.red)
           }
         }
-        .listStyle(.insetGrouped)
+        .listStyle(.plain)
         .refreshable { await vm.refreshBalance() }
       }
       .frame(maxWidth: .infinity)
@@ -257,25 +255,23 @@ import SwiftUI
             } else {
               ProgressView()
             }
-            if !vm.networkBalances.isEmpty {
-              Image(systemName: showBalanceDetails ? "chevron.up" : "chevron.down")
-                .foregroundStyle(.secondary)
-            }
+            Image(systemName: showBalanceDetails ? "chevron.up" : "chevron.down")
+              .foregroundStyle(.secondary)
           }
         }
         .buttonStyle(.plain)
-        .disabled(vm.networkBalances.isEmpty)
         .popover(
           isPresented: $showBalanceDetails,
           attachmentAnchor: .rect(.bounds),
           arrowEdge: .top
         ) {
           Group {
-            if !vm.networkBalances.isEmpty {
+            if !vm.networkRows.isEmpty {
               VStack(alignment: .leading, spacing: 0) {
-                ForEach(vm.networkBalances) { network in
+                ForEach(vm.networkRows) { network in
                   HStack(spacing: 6) {
                     Text(network.name)
+                    Spacer(minLength: 12)
                     Text(network.balance.map { "♦ \($0)" } ?? "Unavailable")
                       .foregroundStyle(.secondary)
                   }
@@ -315,11 +311,6 @@ import SwiftUI
           groupLabel(group, expandable: true)
         }
         .buttonStyle(.plain)
-      } else if let tokenID = group.holdings.first.flatMap({ $0.address == nil ? nil : $0.id }) {
-        NavigationLink(destination: TokenDetailView(tokenID: tokenID, balances: vm.balances)) {
-          groupLabel(group, expandable: false)
-        }
-        .buttonStyle(.plain)
       } else {
         groupLabel(group, expandable: false)
       }
@@ -346,22 +337,37 @@ import SwiftUI
         TokenIconView(iconURL: group.iconURL, symbol: group.symbol)
         VStack(alignment: .leading, spacing: 3) {
           Text(group.symbol).foregroundStyle(.primary)
-          Text(group.networkLabel).font(.subheadline).foregroundStyle(.secondary)
+          HStack(spacing: 4) {
+            Text(group.networkLabel).font(.subheadline).foregroundStyle(.secondary)
+            if expandable {
+              Image(
+                systemName: expandedSymbols.contains(group.symbol) ? "chevron.up" : "chevron.down"
+              )
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+            }
+          }
         }
         Spacer(minLength: 12)
-        Text(group.valueDisplay ?? "—")
-          .foregroundStyle(group.valueDisplay == nil ? .secondary : .primary)
-          .lineLimit(1)
-          .minimumScaleFactor(0.7)
-        if expandable {
-          Image(systemName: expandedSymbols.contains(group.symbol) ? "chevron.up" : "chevron.down")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        VStack(alignment: .trailing, spacing: 3) {
+          Text(group.valueDisplay ?? "—")
+            .foregroundStyle(group.valueDisplay == nil ? .secondary : .primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+          if let change = group.changeDisplay {
+            Text(change)
+              .font(.subheadline)
+              .foregroundStyle(changeColor(change))
+          }
         }
       }
       .padding(.vertical, 4)
       .contentShape(Rectangle())
       .accessibilityElement(children: .combine)
+    }
+
+    private func changeColor(_ display: String) -> Color {
+      display.hasPrefix("+") ? .green : .secondary
     }
 
     private var homeAccountName: String? {

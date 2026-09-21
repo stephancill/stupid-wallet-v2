@@ -364,6 +364,30 @@ struct TokenBalanceTests {
     #expect(model.rows.allSatisfy { !$0.isCached })
   }
 
+  @Test("the home total and breakdown keep only ETH-native networks")
+  @MainActor func etherOnlyAggregate() async throws {
+    let catalog = SearchHTTPStub()
+    defer { catalog.close() }
+    catalog.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"1000","symbol":"ETH","decimals":18},{"chainId":8453,"address":"native","status":"ok","priceUsd":"1","symbol":"POL","decimals":18}]}"#
+            .utf8)
+      )
+    }
+    let environment = try BalanceEnvironment(tokenSearch: catalog.client())
+    defer { environment.close() }
+    // Both included networks report the same native balance, but only Ethereum's is ETH.
+    try environment.networks.setIncluded(true, chainID: "8453")
+    let model = WalletBalanceModel(service: environment.service)
+    model.selectAccount(environment.accounts[0])
+    await model.refresh()
+    #expect(model.nativeTotal == "1.000000")
+    #expect(model.nativeRows.map(\.id) == ["1"])
+    #expect(model.nativeRows.first?.balance == "1.000000")
+  }
+
   @Test("a completed network publishes token rows while a different network is still waiting")
   @MainActor func progressiveResults() async throws {
     let environment = try BalanceEnvironment()
@@ -574,7 +598,7 @@ struct BalanceEnvironment {
     }
     service = WalletBalanceService(
       directory: directory, client: stub.client, networkStore: networks,
-      tokenSearch: tokenSearch)
+      tokenSearch: tokenSearch ?? offlineTokenSearch())
   }
 
   @discardableResult func addToken(

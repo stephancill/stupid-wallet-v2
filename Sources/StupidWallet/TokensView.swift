@@ -143,7 +143,8 @@ import SwiftUI
     @State private var message: String?
     @State private var error: String?
     @State private var pendingCandidate: TokenCandidate?
-    @State private var isAdding = false
+    @State private var addingIDs: Set<String> = []
+    @State private var addTask: Task<Void, Never>?
     @State private var lookup: Task<Void, Never>?
     @State private var generation = UUID()
     @State private var initialized = false
@@ -253,7 +254,9 @@ import SwiftUI
         if let marketCap = candidate.marketCapDisplay {
           Text(marketCap).foregroundStyle(.secondary)
         }
-        if candidate.isTracked {
+        if addingIDs.contains(candidate.id), !candidate.isTracked {
+          ProgressView().accessibilityLabel("Adding")
+        } else if candidate.isTracked {
           Image(systemName: "checkmark")
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.secondary)
@@ -383,26 +386,32 @@ import SwiftUI
     }
 
     private func confirmAdd(_ candidate: TokenCandidate) {
-      guard !isAdding, !candidate.isTracked else { return }
+      guard !candidate.isTracked, !addingIDs.contains(candidate.id) else { return }
       pendingCandidate = candidate
     }
 
+    /// Adds one candidate. Imports are serialized so each captures a current token revision, but
+    /// the balance refresh runs independently and never blocks adding the next token.
     private func add(_ candidate: TokenCandidate) {
       pendingCandidate = nil
-      isAdding = true
       error = nil
-      Task {
-        defer { isAdding = false }
+      addingIDs.insert(candidate.id)
+      let previous = addTask
+      addTask = Task {
+        await previous?.value
         do {
           let context = try balances.service.context(account: balances.account)
           let imported = try await balances.service.inspect(
             context: context, chainID: candidate.chainID, address: candidate.address)
           try balances.service.add(imported: imported, context: context)
+          addingIDs.remove(candidate.id)
+          guard !Task.isCancelled else { return }
           if let index = candidates.firstIndex(where: { $0.id == candidate.id }) {
             candidates[index].isTracked = true
           }
-          await balances.refresh()
+          Task { await balances.refresh() }
         } catch {
+          addingIDs.remove(candidate.id)
           guard !Task.isCancelled else { return }
           self.error = error.localizedDescription
         }

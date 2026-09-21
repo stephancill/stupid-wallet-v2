@@ -27,6 +27,32 @@ public struct PriceRequest: Sendable, Hashable {
   }
 }
 
+/// One catalog identity's USD price, reported 24-hour change, and display metadata. The metadata is
+/// carried on the same bulk prices response so the home screen needs no per-token metadata request.
+public struct PriceQuote: Sendable, Equatable {
+  /// The USD price, or nil when the catalog has no current price (for example a stale source).
+  public let priceUSD: String?
+  /// Signed 24-hour change in percent, e.g. `4.25` or `-0.01`, when the catalog reports one.
+  public let change24h: String?
+  /// Catalog display metadata, present for identities the catalog knows.
+  public let symbol: String?
+  public let decimals: UInt8?
+  public let imageURL: URL?
+
+  public var hasMetadata: Bool { symbol != nil || decimals != nil || imageURL != nil }
+
+  public init(
+    priceUSD: String?, change24h: String? = nil, symbol: String? = nil, decimals: UInt8? = nil,
+    imageURL: URL? = nil
+  ) {
+    self.priceUSD = priceUSD
+    self.change24h = change24h
+    self.symbol = symbol
+    self.decimals = decimals
+    self.imageURL = imageURL
+  }
+}
+
 /// One catalog match from the Stupid Tokens search API. This is discovery metadata only:
 /// canonical token metadata is always read on chain before a token can be imported.
 public struct TokenSearchResult: Sendable, Equatable, Identifiable {
@@ -91,8 +117,10 @@ public enum MarketCapFormatter {
 /// Keyless read client for `https://tokens.stupidtech.net`.
 ///
 /// The service is free and unauthenticated and asks callers to cache responses, so identical
-/// searches, metadata, and prices are served from bounded in-memory caches. Price caching also
-/// respects the response's HTTP freshness; a transient failure is not a cached missing price.
+/// searches and prices are served from bounded in-memory caches. A bulk prices response carries each
+/// identity's display metadata as well, so the home screen resolves native symbols, decimals, and
+/// icons from the same call. Price caching also respects the response's HTTP freshness; a transient
+/// failure is not a cached missing price.
 public actor StupidTokensClient {
   public static let defaultBaseURL = URL(string: "https://tokens.stupidtech.net")!
   public static let shared = StupidTokensClient()
@@ -105,11 +133,10 @@ public actor StupidTokensClient {
   private let timeout: TimeInterval
   private let cacheLifetime: TimeInterval
   private let cacheLimit: Int
-  private let metadataLifetime: TimeInterval
   private let priceLifetime: TimeInterval
   private var cache: [String: (expiresAt: Date, results: [TokenSearchResult])] = [:]
-  private var metadata: [String: (expiresAt: Date, token: TokenSearchResult?)] = [:]
-  private var priceCache: [PriceRequest: (expiresAt: Date, price: String?)] = [:]
+  private var priceCache: [PriceRequest: (expiresAt: Date, quote: PriceQuote?)] = [:]
+  private var lastKnownPrices: [PriceRequest: PriceQuote] = [:]
 
   public init(
     session: URLSession = .shared,
@@ -117,7 +144,6 @@ public actor StupidTokensClient {
     timeout: TimeInterval = 15,
     cacheLifetime: TimeInterval = 60,
     cacheLimit: Int = 64,
-    metadataLifetime: TimeInterval = 3600,
     priceLifetime: TimeInterval = 60
   ) {
     self.session = session
@@ -125,7 +151,6 @@ public actor StupidTokensClient {
     self.timeout = timeout
     self.cacheLifetime = cacheLifetime
     self.cacheLimit = cacheLimit
-    self.metadataLifetime = metadataLifetime
     self.priceLifetime = priceLifetime
   }
 
@@ -197,38 +222,23 @@ public actor StupidTokensClient {
     return results
   }
 
-  /// Catalog metadata for one token or a chain's native currency, cached in memory.
-  public func tokenMetadata(chainID: String, address: String) async -> TokenSearchResult? {
-    guard let chain = ChainStore.normalize(chainID),
-      let normalized = Self.normalizeTokenAddress(address)
-    else { return nil }
-    let key = "\(chain)|\(normalized)"
-    if let cached = metadata[key], cached.expiresAt > Date() { return cached.token }
-    let token = await fetchTokenMetadata(chainID: chain, address: normalized)
-    if metadata.count >= cacheLimit {
-      metadata = metadata.filter { $0.value.expiresAt > Date() }
-    }
-    if metadata.count >= cacheLimit { metadata.removeAll() }
-    metadata[key] = (Date().addingTimeInterval(metadataLifetime), token)
-    return token
-  }
-
-  /// The catalog icon for one token, or nil when the catalog has none or does not know it.
-  public func imageURL(chainID: String, address: String) async -> URL? {
-    await tokenMetadata(chainID: chainID, address: address)?.imageURL
-  }
-
-  /// USD prices for the requested tokens, keyed by request. Tokens without a usable price are
-  /// absent. Requests are sent in the catalog's canonical order, 50 per call.
-  public func prices(for requests: [PriceRequest]) async -> [PriceRequest: String] {
-    var resolved: [PriceRequest: String] = [:]
+  /// Bulk USD prices and display metadata for the requested identities, keyed by request. The
+  /// catalog returns its last known price for any freshness status, so an identity with a quoted
+  /// price or usable metadata is present and one with no known price is absent. The last known price
+  /// is also retained across refreshes, so a later response with no price never blanks a value already
+  /// shown. Requests are sent in the catalog's canonical order, 50 per call.
+  public func prices(for requests: [PriceRequest]) async -> [PriceRequest: PriceQuote] {
+    var resolved: [PriceRequest: PriceQuote] = [:]
     var missing: [PriceRequest] = []
     for request in Set(requests) {
       guard let cached = priceCache[request], cached.expiresAt > Date() else {
         missing.append(request)
         continue
       }
-      if let price = cached.price { resolved[request] = price }
+      if let quote = cached.quote {
+        resolved[request] = quote
+        remember(quote, for: request)
+      }
     }
     var index = 0
     let ordered = missing.sorted { "\($0.chainID):\($0.address)" < "\($1.chainID):\($1.address)" }
@@ -236,21 +246,47 @@ public actor StupidTokensClient {
       let chunk = Array(ordered[index..<min(index + 50, ordered.count)])
       if let batch = await fetchPrices(chunk) {
         for request in chunk {
-          let price = batch.prices[request]
-          if let price { resolved[request] = price }
-          if price != nil || batch.notFound.contains(request) {
-            priceCache[request] = (Date().addingTimeInterval(batch.cacheLifetime), price)
+          if let quote = batch.quotes[request] {
+            resolved[request] = quote
+            remember(quote, for: request)
+          }
+          if batch.cacheable.contains(request) {
+            priceCache[request] = (
+              Date().addingTimeInterval(batch.cacheLifetime), batch.quotes[request]
+            )
           }
         }
       }
       index += 50
     }
+    // Stale-while-revalidate: keep showing the last known price when this refresh has none.
+    for request in Set(requests) where resolved[request]?.priceUSD == nil {
+      guard let last = lastKnownPrices[request] else { continue }
+      resolved[request] = Self.merging(resolved[request], with: last)
+    }
     return resolved
   }
 
+  /// Retains the most recent quote that carried a price, for stale-while-revalidate display.
+  private func remember(_ quote: PriceQuote, for request: PriceRequest) {
+    guard quote.priceUSD != nil else { return }
+    lastKnownPrices[request] = quote
+  }
+
+  /// A quote's own metadata with a fallback quote's price and change.
+  private static func merging(_ quote: PriceQuote?, with last: PriceQuote) -> PriceQuote {
+    guard let quote, quote.priceUSD == nil else { return quote ?? last }
+    return PriceQuote(
+      priceUSD: last.priceUSD, change24h: last.change24h,
+      symbol: quote.symbol ?? last.symbol, decimals: quote.decimals ?? last.decimals,
+      imageURL: quote.imageURL ?? last.imageURL)
+  }
+
   private struct PriceBatch {
-    let prices: [PriceRequest: String]
-    let notFound: Set<PriceRequest>
+    /// Quotes with a price or usable metadata; absent when the catalog does not know the identity.
+    let quotes: [PriceRequest: PriceQuote]
+    /// Requests whose outcome is stable enough to cache: a price or a definitive not-found.
+    let cacheable: Set<PriceRequest>
     let cacheLifetime: TimeInterval
   }
 
@@ -276,8 +312,8 @@ public actor StupidTokensClient {
       root["currency"]?.stringValue == "usd",
       case .array(let entries)? = root["prices"]
     else { return nil }
-    var prices: [PriceRequest: String] = [:]
-    var notFound: Set<PriceRequest> = []
+    var quotes: [PriceRequest: PriceQuote] = [:]
+    var cacheable: Set<PriceRequest> = []
     let requested = Set(requests)
     for entry in entries {
       guard case .object(let object) = entry,
@@ -287,13 +323,26 @@ public actor StupidTokensClient {
         let address = object["address"]?.stringValue,
         let key = PriceRequest(chainID: chain, address: address), requested.contains(key)
       else { continue }
-      if object["status"]?.stringValue == "not_found" {
-        notFound.insert(key)
-      } else if object["status"]?.stringValue == "ok",
-        let price = object["priceUsd"]?.stringValue, DecimalValue.parse(price) != nil
-      {
-        prices[key] = price
+      let status = object["status"]?.stringValue
+      // The catalog returns its last known price for any status; only a shared budget or a source
+      // failure with no known price leaves it null.
+      let price: String?
+      if let raw = object["priceUsd"]?.stringValue, DecimalValue.parse(raw) != nil {
+        price = raw
+      } else {
+        price = nil
       }
+      // Price changes are withheld for every non-ok status.
+      let quote = PriceQuote(
+        priceUSD: price,
+        change24h: status == "ok" ? Self.change24h(from: object) : nil,
+        symbol: object["symbol"]?.stringValue,
+        decimals: Self.decimals(from: object["decimals"]),
+        imageURL: Self.imageURL(from: object["imageUrl"]))
+      if price != nil || quote.hasMetadata { quotes[key] = quote }
+      // A concrete price or a definitive miss is stable enough to cache; a response that retains no
+      // price is retried instead of cached as a miss.
+      if price != nil || status == "not_found" { cacheable.insert(key) }
     }
     let directives = (http.value(forHTTPHeaderField: "Cache-Control") ?? "")
       .lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -314,21 +363,15 @@ public actor StupidTokensClient {
       let currentAge = max(elapsed, age.isFinite ? max(0, age) : maximumAge)
       lifetime = min(lifetime, max(0, maximumAge - currentAge))
     }
-    return PriceBatch(prices: prices, notFound: notFound, cacheLifetime: lifetime)
+    return PriceBatch(quotes: quotes, cacheable: cacheable, cacheLifetime: lifetime)
   }
 
-  private func fetchTokenMetadata(chainID: String, address: String) async -> TokenSearchResult? {
-    let url = baseURL.appendingPathComponent("v1/tokens/\(chainID)/\(address)")
-    var request = URLRequest(url: url)
-    request.httpMethod = "GET"
-    request.setValue("application/json", forHTTPHeaderField: "Accept")
-    request.timeoutInterval = timeout
-    guard let (data, response) = try? await session.data(for: request),
-      let http = response as? HTTPURLResponse, http.statusCode == 200,
-      data.count <= Self.maximumResponseBytes,
-      let parsed = try? JSONValue.parse(data)
+  /// The catalog's signed 24-hour percent change, or nil when absent or unusable.
+  static func change24h(from entry: [String: JSONValue]) -> String? {
+    guard case .object(let change)? = entry["priceChange"],
+      let raw = change["h24"]?.stringValue
     else { return nil }
-    return Self.result(from: parsed, chainID: chainID)
+    return DecimalValue.signed(raw)
   }
 
   /// Accepts a contract address or the catalog's `native` literal.

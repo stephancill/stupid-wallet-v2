@@ -52,6 +52,7 @@ import SwiftUI
     @Environment(\.dismiss) private var dismiss
     @State private var overrideURL: URL?
     @State private var includeInBalance: Bool
+    @State private var showAdvanced = false
     @State private var showEditRPCSheet = false
     @State private var showChainIDAsHex = false
     @State private var showDeleteConfirmation = false
@@ -90,16 +91,6 @@ import SwiftUI
         }
 
         Section {
-          Toggle("Include in Total Balance", isOn: $includeInBalance)
-            .onChange(of: includeInBalance) { _, included in
-              try? NetworkStore().setIncluded(included, chainID: network.id)
-              onChange()
-            }
-        } footer: {
-          Text("Balances on included networks are added to the total on the home screen.")
-        }
-
-        Section {
           Text(effectiveURL.absoluteString)
             .foregroundStyle(.secondary)
             .lineLimit(1)
@@ -111,6 +102,34 @@ import SwiftUI
 
         Section {
           Button("Delete Network", role: .destructive) { showDeleteConfirmation = true }
+        }
+
+        // Styled like the page's other section titles, with a Mail-style disclosure chevron.
+        Section {
+          if showAdvanced {
+            Toggle("Include in Total Balance", isOn: $includeInBalance)
+              .onChange(of: includeInBalance) { _, included in
+                try? NetworkStore().setIncluded(included, chainID: network.id)
+                onChange()
+              }
+            Text("Native ETH balances on included networks are added to the home total.")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+          }
+        } header: {
+          Button {
+            withAnimation(.snappy) { showAdvanced.toggle() }
+          } label: {
+            HStack(spacing: 4) {
+              Text("Advanced")
+              Image(systemName: showAdvanced ? "chevron.down" : "chevron.right")
+                .font(.caption2.weight(.bold))
+              Spacer()
+            }
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .foregroundStyle(.secondary)
         }
       }
       .navigationTitle(network.name)

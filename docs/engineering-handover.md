@@ -447,19 +447,27 @@ Networks list and RPC detail/editor; authenticated
 Private Key reveal; and Activity list/detail. The implementation keeps the old native
 labels, spacing, forms, inset-grouped lists, typography, and SF Symbols while using the new
 core boundaries. Networks now has one unified configured-network list, a manually populated
-Add Network sheet, per-network deletion, and a per-network Include in Total Balance setting.
+Add Network sheet, per-network deletion, and a per-network Include in Total Balance setting inside a
+collapsed-by-default Advanced section. That section is styled like the screen's other section titles
+(same caption style) with a Mail-style disclosure chevron and is placed last on the network detail
+screen.
 Deletion clears the network's custom RPC state, tracked tokens, and every account's token cache
 on that network; deleting the selected network selects the first
 remaining configured network when one exists. The home balance is
-the full-width sum of native wei balances from every included network; individual RPC
+the sum of native wei balances from every included network whose native currency is ETH; an included
+network whose catalog native symbol is known and is not ETH (for example POL) is excluded, while a
+network whose native symbol the catalog does not know still counts so a catalog gap never hides a
+balance. Individual RPC
 failures do not discard successful balances, while a complete included-network outage retains
-the cached total or shows unavailable when there is no cache. Expanding the aggregate balance lists
-every included network with a
-non-zero balance as an individual row, using the same fetch results as the total. Rows are
+the cached total or shows unavailable when there is no cache. Expanding the aggregate balance lists the
+included ETH networks as flat rows, each with its own balance, using the same fetch results as the
+total. Rows are
 ordered by descending full-width wei balance and render as compact left-aligned network and balance
-rows without a separator bullet.
-Zero and unavailable balances are omitted; when no non-zero rows exist, the expansion
-affordance is hidden and disabled. Activity details show persisted transaction calldata and signed
+rows without a separator bullet; because the aggregate is already ETH-only there is no grouping header
+or indentation.
+Zero and unavailable balances are omitted. The balance's disclosure chevron is always shown: when no
+group rows exist, tapping it opens a short explanation (loading, no networks included, or balances
+unavailable) instead of a list. Activity details show persisted transaction calldata and signed
 message content as multiline text; when a matching ERC-7730 clear-signing descriptor is cached,
 the transaction's decoded fields render in a dedicated "Clear signing" section above the raw data.
 Existing stored content remains readable; migration does not use
@@ -556,15 +564,14 @@ must use a watch-aware shared core when sharing that registry; the previously di
 
 ### Tracked ERC-20 Balances
 
-Home displays manually tracked tokens below the native total, with symbol, configured network name,
-and balance, followed by Add Token. Settings → Tokens sits alongside Networks and manages the same
-installation-wide watchlist. The list starts empty; importing discovers a token by name, symbol, or contract address. Token identity is normalized decimal chain ID plus lowercase contract address.
-Balances are separately keyed by normalized account and token identity. Home hides tokens whose
+Home's token screen (see Home Value Portfolio) displays the value-ordered portfolio holdings, and
+Settings → Tokens sits alongside Networks and manages the same installation-wide watchlist. The list
+starts empty; importing discovers a token by name, symbol, or contract address. Token identity is
+normalized decimal chain ID plus lowercase contract address.
+Balances are separately keyed by normalized account and token identity. Home hides holdings whose
 last successful raw balance is zero; loading or unavailable balances without a cache remain visible.
-When no token rows are visible, the native total is vertically centered with Add Token at the bottom.
-Settings → Tokens retains the full tracked list, including zero balances, for management. Home rows
-show the token icon and the account's compact balance; the Settings rows are the same rows without the
-balance, because that screen manages tracking. Rows sort
+Settings → Tokens retains the full tracked list, including zero balances, for management and is where
+tokens are imported. Settings rows sort
 by symbol, network name, then stable token ID. Compact amounts truncate to six decimal
 places, with tiny positive values shown as `<0.000001`. Token details are titled Token; a Details
 section shows the stored symbol, network, decimals, and the middle-truncated contract address, and a
@@ -598,10 +605,10 @@ Clipboard access uses the standard system pasteboard behavior.
   network picker and validates the address on chain on the selected network, which keeps importing
   tokens the catalog does not list. Changing the network reloads that single-chain validation, and a
   non-contract address reports that no ERC-20 token was found on that network.
-- Tracked rows show the catalog icon when one exists. Icons are resolved per token from
-  `GET /v1/tokens/{chainId}/{address}` and cached in memory for an hour; a token the catalog does not
-  know, or an icon that is still loading, shows a letter placeholder instead. Icons are display-only
-  and are never persisted.
+- Tracked rows and native holdings show the catalog icon when one exists. The home screen takes icons
+  (and native symbols and decimals) from the same bulk prices response, and a token the catalog does
+  not know, or an icon that is still loading, shows a letter placeholder instead. Icons are
+  display-only and are never persisted.
 - The catalog is discovery metadata only. Canonical symbol, decimals, and balance always come from
   the on-chain read at import, so catalog metadata is never persisted and a missing or stale catalog
   entry never blocks importing a token by address.
@@ -629,7 +636,8 @@ response IDs rather than array order, preserves structured per-call errors and n
 duplicate/unknown/ambiguous IDs. Missing responses fail only the missing reads. A server that refuses
 batching produces an error; there is no silent sequential retry. All calls use the existing default
 RPC resolver and deliberate user overrides. Include in Total Balance gates only native reads and
-native aggregation; tracked tokens still display and refresh on excluded networks.
+native aggregation, and that aggregate is ETH-only; tracked tokens still display and refresh on
+excluded networks.
 
 `TokenStore` persists versioned definitions, raw 32-byte balances, timestamps, endpoint provenance,
 watchlist revision, and refresh IDs in one durably replaced App Group `tokens.json`, protected by
@@ -661,15 +669,18 @@ Token-specific physical-device acceptance remains separate from the existing sig
 Home pages vertically between two full screens, like a short-video feed, using a paging scroll view
 so the transition follows the finger with native scrolling physics. The landing screen centres the
 native balance; the token screen leads with the total USD value, then the value-ordered holdings, and
-keeps the Add Token action and the account's tracked-token errors. Each page fills the viewport
-exactly, including the bottom safe area, so no part of the next page peeks in at rest.
+keeps the account's tracked-token errors. The holdings render as plain asset rows without grouped
+section backgrounds; importing tokens lives in Settings → Tokens, so the token screen has no Add
+Token action. Each page fills the viewport exactly, including the bottom safe area, so no part of the
+next page peeks in at rest.
 
 One caret follows the seam between the pages, starting at the bottom of the landing screen and
 ending at the top of the token screen, above the USD total. The total has no visible heading; its
 accessibility label is Portfolio value. The caret's position and downward-to-upward rotation
 follow the actual scroll geometry, including partial and reversed drags; there is no second caret.
-It appears only once some tracked holding has a non-zero balance, and tapping it pages in the
-indicated direction. The token header reserves the caret's 44-point touch area. Swiping works natively
+It is always present, and tapping it pages in the
+indicated direction. The token header always reserves the caret's 44-point touch area. Swiping works
+natively
 in both directions: the landing screen has no inner scroll view, so a drag anywhere pages it, and on
 the token screen the list scrolls normally while the rest of the page still pages back. Both screens render the same
 account toolbar (copy address and the account menu).
@@ -678,7 +689,8 @@ account toolbar (copy address and the account menu).
   currency of every network included in the total balance. Native holdings therefore follow the
   existing Include in Total Balance rule; tracked tokens on excluded networks still appear.
 - Rows group holdings by symbol, case-insensitively, so the same token or native currency on several
-  networks is one row. A grouped row's caret expands the per-chain distribution, and each
+  networks is one row. A grouped row shows a small caret inline beside the network label (for example
+  `4 networks ⌄`) that expands the per-chain distribution, and each
   distribution row shows the network and its own value. Groups and their members are ordered by
   value, with unpriced holdings last.
 - Watch-only accounts are read-only addresses, so every balance, price, and portfolio value works for
@@ -687,19 +699,36 @@ account toolbar (copy address and the account menu).
   significant figures with grouping separators (`$7,914`, `$2.468`). Amounts, prices, and values are
   decimal-string arithmetic in `DecimalValue`; no floating point is used. A holding the catalog
   cannot price shows `—` and is excluded from the total.
-- Prices come from the cacheable `GET /v1/prices?tokens=chainId:address,...` endpoint, up to 50
+- Rows show the 24-hour price change as a signed percent (`+4.25%`, `-0.01%`) directly under the
+  value. The total's change is the signed USD amount and percent (`+$1,393,000 (+4.24%)`). A gain
+  renders green; a loss or flat change renders in the secondary label colour, never red. A row's
+  change is the value-weighted change of its holdings: the current priced value over the sum of each
+  holding's value discounted by its own change, so it is a true portfolio change rather than an
+  average of percentages. The same computation across every holding produces the total's change.
+  A priced holding that reports no change (the catalog withholds `h24` for any non-`ok` status) is left
+  out of both sides of the ratio; when no holding reports a change, no change line is shown.
+- Prices, symbols, decimals, and icons come from one cacheable
+  `GET /v1/prices?tokens=chainId:address,...` call per refresh, up to 50
   identities per request with the native currency expressed as the literal address `native`.
+  Each entry carries `symbol`, `decimals`, and `imageUrl`, so the home screen makes no separate
+  per-network native-metadata or per-token icon requests.
   Requests are sorted lexicographically by the full `chainId:address` identity, matching the service's
-  canonical URL without a redirect. Successful prices and catalog `not_found` results are cached in
-  memory for at most 60 seconds, bounded by HTTP freshness (`Cache-Control`, `Age`, and `Date`).
-  Transient `stale`, `price_unavailable`, `upstream_error`, and `rate_limited` results, and failed or
-  malformed requests, are not cached as missing prices by the wallet. The normal HTTP cache still
-  respects the service's retry window. Only `ok` statuses contribute a price; the service deliberately
-  returns null after a source price becomes older than five minutes, so a genuinely unavailable
-  value still displays `—` until a successful refresh. Values are fetched after the balances are
-  already on screen, so a slow or failed price refresh never delays the balance display.
+  canonical URL without a redirect. The catalog returns its last known `priceUsd` for every status and
+  nulls it only when no price is known, so the wallet treats `priceUsd` as availability and `status`
+  as freshness: a `stale`, `price_unavailable`, `upstream_error`, or `rate_limited` entry still shows
+  its retained price. The wallet also remembers the last priced quote per identity for the session, so
+  a later response with no price never blanks a value already shown. Responses that carry a price (any
+  status) or a definitive `not_found` are cached in memory for at most 60 seconds, bounded by HTTP
+  freshness (`Cache-Control`, `Age`, and `Date`); a response that retains no price is retried rather
+  than cached as a miss. The normal HTTP cache still respects the service's retry window. A value is
+  shown as `—` only when no price has ever been known. Each entry's `priceChange.h24`, a signed percent
+  string, is used only for an `ok` status, since the service withholds changes for every other status;
+  entries without a usable change contribute a price but no change. Values are fetched after the
+  balances are already on screen, so a
+  slow or failed price refresh never delays the balance display.
 - The revealed rows are presentation only: they read the same tracked balances as the rest of the
-  app, and a token row still navigates to its detail screen. Raw token amounts are no longer
+  app, and tapping a holding never navigates. Only a grouped row's caret expands its per-chain
+  distribution. Token detail and removal stay in Settings → Tokens. Raw token amounts are no longer
   displayed anywhere; the list shows values instead.
 - `Simple7702AccountDeploymentStore` treats an unrecognized deployments cache shape as empty instead
   of failing, because that file is only a positive verification cache that is re-checked on chain.

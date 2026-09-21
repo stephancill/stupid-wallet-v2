@@ -42,6 +42,37 @@ extension URLSession {
   }()
 }
 
+/// Answers every token-catalog request with 404 so tests never reach the network.
+final class OfflineCatalogURLProtocol: URLProtocol {
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+  override func startLoading() {
+    guard let url = request.url,
+      let response = HTTPURLResponse(
+        url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)
+    else {
+      client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+      return
+    }
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: Data())
+    client?.urlProtocolDidFinishLoading(self)
+  }
+
+  override func stopLoading() {}
+}
+
+/// An offline catalog client for tests: metadata resolves to nil and prices to none, with no real
+/// HTTP. Each call returns a client with its own stub session.
+func offlineTokenSearch() -> StupidTokensClient {
+  let configuration = URLSessionConfiguration.ephemeral
+  configuration.protocolClasses = [OfflineCatalogURLProtocol.self]
+  return StupidTokensClient(
+    session: URLSession(configuration: configuration),
+    baseURL: URL(string: "https://tokens.invalid")!)
+}
+
 func jsonObject(_ value: [String: Any]) -> Data {
   try! JSONSerialization.data(withJSONObject: value)
 }
