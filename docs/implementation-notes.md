@@ -9033,10 +9033,11 @@ Verification:
 
 ### Summary
 
-- Added a wallet-owned Send action to the Home token screen. It is a compact, floating Liquid Glass
-  pill pinned near the bottom edge above the home indicator, centered, rather than a full-width bar.
-  It uses the iOS 26 system glass button style (`.buttonStyle(.glass)`) and falls back to a bordered
-  capsule on earlier supported systems. Swap is intentionally not rendered yet; it joins the same
+- Added a wallet-owned Send action to the Home token screen. It is a floating Liquid Glass pill
+  pinned near the bottom edge above the home indicator, centered, rather than a full-width bar. It
+  uses regular text sizing and the system's default button padding, takes the iOS 26 system glass
+  button style (`.buttonStyle(.glass)`), and falls back to a bordered capsule on earlier supported
+  systems. Swap is intentionally not rendered yet; it joins the same
   floating group when implemented.
 - Send opens a sheet with a flat per-chain asset picker (every included network's native currency
   plus every non-zero tracked ERC-20, each row labelled with its network and available balance), a

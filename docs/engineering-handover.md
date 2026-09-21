@@ -774,9 +774,10 @@ account toolbar (copy address and the account menu).
 
 ### App-Initiated Send
 
-The token screen carries a floating, compact Liquid Glass action group (`Send`) pinned near the
-bottom edge above the home indicator. On iOS 26 the action uses the system glass button style; on
-earlier supported systems it falls back to a bordered capsule. Swap joins the same group when it is
+The token screen carries a floating Liquid Glass action group (`Send`) pinned near the
+bottom edge above the home indicator. On iOS 26 the action uses the system glass button style with
+regular text sizing and default button padding; on earlier supported systems it falls back to a
+bordered capsule. Swap joins the same group when it is
 implemented, and only `Send` exists today.
 
 Send presents a wallet-owned sheet with a flat per-chain asset picker (native currency of every

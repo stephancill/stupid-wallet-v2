@@ -262,10 +262,9 @@ import SwiftUI
           showSendSheet = true
         } label: {
           Label("Send", systemImage: "arrow.up")
-            .font(.subheadline.weight(.semibold))
+            .font(.body.weight(.semibold))
         }
         .floatingGlassButtonStyle()
-        .controlSize(.small)
         .accessibilityIdentifier("home.send")
         Spacer(minLength: 0)
       }
