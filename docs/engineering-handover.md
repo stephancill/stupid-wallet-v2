@@ -90,10 +90,11 @@ grouped picker, with existing pairing retained. Live switch/disconnect mutation 
 GitHub prerelease `chrome-v0.0.7-beta.1` publishes the previous artifacts from `c499181`; all four
 uploaded asset digests match local files. Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
-version 1.0.0 (109), live for internal TestFlight, carrying the token-balances merge (watch-only
-accounts, custom tokens, the USD portfolio, persistent price SWR, 24-hour price and change expiry) and
-the layout and portfolio-change fixes. Build 108 was the preceding internal build. No external beta
-has been submitted for either. The Safari extension manifest is 0.1.57.
+version 1.0.0 (110), live for internal TestFlight, carrying the token-balances merge (watch-only
+accounts, custom tokens, the USD portfolio, persistent price SWR, 24-hour price and change expiry), the
+layout and portfolio-change fixes, and always-two-decimal USD values. Builds 108 and 109 were the
+preceding internal builds. No external beta has been submitted for any of them. The Safari extension
+manifest is 0.1.57.
 
 Protocol version 3 requires one-time Chrome-profile pairing before native approval. The extension
 stores a non-exportable P-256 signing CryptoKey in its origin-owned IndexedDB; the helper stores only

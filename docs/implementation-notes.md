@@ -9003,3 +9003,28 @@ Verification:
 ### Follow-Up
 
 - Percentage displays already padded to two decimals and were not changed.
+
+## 2026-09-21 — Internal TestFlight build 1.0.0 (110)
+
+### Summary
+
+- Released `main` to internal TestFlight as 1.0.0 (110), adding the always-two-decimal USD display on
+  top of build 109. `stupid-app release new-build` selected unused build 110 and `release bump
+  --build-number 110` synchronized the containing app and Safari extension.
+- Kept the high-level What to Test note: "Watch-only addresses and custom tokens".
+
+### Verification
+
+- `stupid-app release preflight`: READY, both Apple bundles 1.0.0 (110).
+- `stupid-app doctor`: zero failures and warnings with CLI 0.0.18 / Swift 6.4 / Xcode 27 / iOS SDK 27.
+- `stupid-app release archive`: IPA SHA-256
+  `917727f269af5b27b0272006bcf1fa6731648973c1958e68c67b1e93b01c13bd`. The packaged app and Safari
+  extension both report 1.0.0 (110) with `DTXcode` 2700, `DTXcodeBuild` 27A266a, `DTSDKName`
+  iphoneos27.0, and `DTSDKBuild`/`DTPlatformBuild` 24A430; the packaged extension manifest is 0.1.57.
+- `stupid-app release upload --wait`: upload COMPLETE, processing `VALID`, internal `IN_BETA_TESTING`.
+  `release status --live` confirms the same live state; external beta is `READY_FOR_BETA_SUBMISSION`
+  and no external submission was made.
+
+### Follow-Up
+
+- External TestFlight distribution of this build has not been requested.
