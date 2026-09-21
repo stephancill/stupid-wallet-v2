@@ -4,11 +4,8 @@ import Foundation
 ///
 /// Values are plain decimal strings (for example `2629.256297515841`). Every operation is exact
 /// integer digit arithmetic; no floating point is involved. Division truncates toward zero to a
-/// requested number of fraction digits. Display values are rounded to four significant figures.
+/// requested number of fraction digits. Display values are rounded to at most two decimal places.
 public enum DecimalValue {
-  /// Significant figures used for USD display.
-  public static let displaySignificantDigits = 4
-
   /// Numeric comparison of two decimal strings. Unparsable input compares equal.
   public static func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {
     guard let left = parse(lhs), let right = parse(rhs) else { return .orderedSame }
@@ -57,26 +54,16 @@ public enum DecimalValue {
       integer: parsed.integer, fraction: String(parsed.fraction.prefix(max(0, fractionDigits))))
   }
 
-  /// Rounds half-up to a number of significant digits.
-  public static func significant(_ value: String, digits: Int) -> String? {
-    guard digits > 0, let parsed = parse(value) else { return nil }
-    let digitString = Array(parsed.integer + parsed.fraction)
-    guard let firstNonZero = digitString.firstIndex(where: { $0 != "0" }) else { return "0" }
-    guard digitString.count - firstNonZero > digits else {
-      return render(integer: parsed.integer, fraction: parsed.fraction)
-    }
-    var kept = String(digitString[firstNonZero..<(firstNonZero + digits)])
-    let droppedCount = digitString.count - (firstNonZero + digits)
-    if digitString[firstNonZero + digits] >= "5" { kept = addDigits(kept, "1") }
-    return render(digits: kept, scale: parsed.fraction.count - droppedCount)
-  }
-
-  /// Four-significant-figure USD display with grouping separators, or nil when unparsable.
+  /// Full USD display with grouping separators, rounded half-up to at most two decimal places, or
+  /// nil when unparsable. Examples: `$12.34`, `$1,234.57`, `$34,400,000`, `$0`.
   public static func usd(_ value: String) -> String? {
-    guard let parsed = parse(value) else { return nil }
-    if parsed.integer == "0", parsed.fraction.isEmpty { return "$0.00" }
-    guard let rounded = significant(value, digits: displaySignificantDigits),
-      let parts = parse(rounded)
+    guard parse(value) != nil,
+      // Round to cents half-up: add half a cent to the value scaled by 100, truncate, then rescale.
+      let scaled = multiplyingByPowerOfTen(value, 2),
+      let shifted = sum([scaled, "0.5"]),
+      let cents = truncating(shifted, fractionDigits: 0),
+      let dollars = multiplyingByPowerOfTen(cents, -2),
+      let parts = parse(dollars)
     else { return nil }
     let fraction = parts.fraction.isEmpty ? "" : ".\(parts.fraction)"
     return "$\(grouped(parts.integer))\(fraction)"

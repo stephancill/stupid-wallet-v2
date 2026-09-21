@@ -46,10 +46,10 @@ struct PortfolioTests {
     #expect(groups[0].networkLabel == "2 networks")
     #expect(!groups[1].isGrouped)
     #expect(groups[1].networkLabel == "Ethereum")
-    #expect(groups[1].valueDisplay == "$4,346")
+    #expect(groups[1].valueDisplay == "$4,345.68")
     #expect(groups[2].valueDisplay == nil)
     #expect(PortfolioGroup.total(of: groups) == "15345.6789")
-    #expect(PortfolioGroup.total(of: groups).flatMap(DecimalValue.usd) == "$15,350")
+    #expect(PortfolioGroup.total(of: groups).flatMap(DecimalValue.usd) == "$15,345.68")
     #expect(PortfolioGroup.total(of: []) == nil)
   }
 

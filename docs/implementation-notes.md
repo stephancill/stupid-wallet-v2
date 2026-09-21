@@ -8718,3 +8718,36 @@ cost that the covered subset may not be the whole portfolio.
 
 Verification: `swift test` passed 380 tests in 41 suites and 14 XCTest cases; the partial-coverage test
 asserts the subset value again. `swift format lint --strict` passed for the changed files.
+
+## 2026-09-21 — Compact four-significant-figure USD display
+
+USD values previously used four significant figures with thousands separators (`$1,235,000`). They now
+render compactly with a magnitude suffix chosen from the rounded value: `$12.34`, `$1.234k`, `$1.234M`,
+`$12.34M`, `$1.234B`, `$1.234T`. `DecimalValue.usd` rounds to four significant figures, divides by the
+suffix power, and appends the unit, so a value that rounds up across a boundary moves to the next unit
+(`999.95` -> `$1k`). The total, row values, and the total change's USD amount all use this display;
+`MarketCapFormatter.compact` for search-result market caps is unchanged.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict` for the changed files: passed.
+- `swift test`: 380 Swift Testing tests in 41 suites and 14 XCTest cases passed, including the new
+  compact-format cases and the updated portfolio value displays.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. The token
+  screen showed compact values such as `$34.42M`, `$83.94k`, and `$2.728k`.
+
+## 2026-09-21 — USD display shows the full dollar amount to two decimals
+
+Replaced the four-significant-figure USD display with the full dollar amount: `DecimalValue.usd` now
+rounds half-up to at most two decimal places (adding half a cent, truncating, and rescaling) and groups
+the integer part, so values read `$12.34`, `$1,234.57`, `$34,400,000`, and `$0`. The compact magnitude
+suffixes and the now-unused `significant` helper and `displaySignificantDigits` constant are removed;
+`MarketCapFormatter.compact` for search-result market caps is unchanged. This supersedes the compact
+display recorded earlier today.
+
+Verification:
+
+- `swift format --in-place` and `swift format lint --strict` for the changed files: passed.
+- `swift test`: 380 Swift Testing tests in 41 suites and 14 XCTest cases passed, with the two-decimal
+  cases and updated portfolio value displays.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed.

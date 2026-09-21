@@ -43,7 +43,7 @@ public final class WalletBalanceModel: ObservableObject {
 
   public init(service: WalletBalanceService = WalletBalanceService()) { self.service = service }
 
-  /// Four-significant-figure USD display of the portfolio total, or nil when nothing is priced.
+  /// Full two-decimal USD display of the portfolio total, or nil when nothing is priced.
   public var portfolioTotalDisplay: String? {
     portfolioTotalUSD.flatMap(DecimalValue.usd)
   }
