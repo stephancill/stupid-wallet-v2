@@ -20,8 +20,6 @@
 	<string>1.0.0</string>
 	<key>CFBundleVersion</key>
 	<string>7</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Face ID is used to authorize signing and access protected wallet keys.</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPointIdentifier</key>
@@ -29,5 +27,7 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>StupidWalletSafari.SafariWebExtensionHandler</string>
 	</dict>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID is used to authorize signing and access protected wallet keys.</string>
 </dict>
 </plist>

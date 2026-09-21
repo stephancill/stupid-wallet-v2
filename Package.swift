@@ -21,6 +21,11 @@ let package = Package(
     ),
   ],
   targets: [
+    .target(
+      name: "ENSNormalize",
+      path: "Sources/ENSNormalize",
+      exclude: ["data", "LICENSE"]
+    ),
     .executableTarget(
       name: "StupidWalletChromeProofHost", dependencies: ["StupidWalletCore"],
       path: "ChromeExtension/proofs/LifecycleHost"),
@@ -36,7 +41,7 @@ let package = Package(
     ),
     .target(
       name: "StupidWalletCore",
-      dependencies: ["CSecp256k1"],
+      dependencies: ["CSecp256k1", "ENSNormalize"],
       linkerSettings: [.linkedLibrary("sqlite3")]
     ),
     .target(

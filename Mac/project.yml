@@ -10,6 +10,20 @@ settings:
     CLANG_ENABLE_MODULES: YES
     ENABLE_DEBUG_DYLIB: NO
 targets:
+  ENSNormalize:
+    type: framework.static
+    platform: iOS
+    sources:
+      - path: ../Sources/ENSNormalize
+        excludes:
+          - data
+          - LICENSE
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.stupidtech.ENSNormalize
+        PRODUCT_MODULE_NAME: ENSNormalize
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
   StupidWalletCore:
     type: framework
     platform: iOS
@@ -19,6 +33,7 @@ targets:
         excludes:
           - include
     dependencies:
+      - target: ENSNormalize
       - sdk: libsqlite3.tbd
     settings:
       base:
@@ -35,6 +50,7 @@ targets:
           - ENABLE_MODULE_ECDH=1
   StupidWalletSafariExt:
     type: app-extension
+    productName: StupidWalletSafari
     platform: iOS
     sources:
       - path: ../Sources/StupidWalletSafari
@@ -52,6 +68,7 @@ targets:
         CFBundleDisplayName: "stupid wallet"
         CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "7"
+        NSFaceIDUsageDescription: Face ID is used to authorize signing and access protected wallet keys.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.Safari.web-extension
           NSExtensionPrincipalClass: StupidWalletSafari.SafariWebExtensionHandler
@@ -71,6 +88,7 @@ targets:
         PROVISIONING_PROFILE_SPECIFIER: "StupidWallet-Mac-NativeMessaging co.za.stephancill.stupid-wallet.extension Development"
   StupidWalletApp:
     type: application
+    productName: StupidWallet
     platform: iOS
     sources:
       - path: ../Sources/StupidWallet
@@ -84,6 +102,7 @@ targets:
         CFBundleDisplayName: "stupid wallet"
         CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "7"
+        NSFaceIDUsageDescription: Face ID is used to authorize signing and access protected wallet keys.
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
     settings:

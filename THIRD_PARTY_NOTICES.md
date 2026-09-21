@@ -62,7 +62,26 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FO
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## Deprecation / no-other-dependencies policy
+## ENSIP-15 Name Normalization
 
-No other runtime dependency is vendored or imported. Apple system frameworks supply
-Foundation/URLSession, Security, LocalAuthentication, and SwiftUI.
+- **Provenance:** <https://github.com/adraffy/ENSNormalize.swift>
+- **Pinned revision:** `v1.0.1` → `d848cc56f5ba8a9cb60dc26b61c96ca51509ef52`.
+- **License:** MIT, Copyright (c) 2025 Andrew Raffensperger. The complete license is retained at
+  `Sources/ENSNormalize/LICENSE`.
+- **Copied subset:** the Swift normalization implementation and its `nf.bin` / `spec.bin` tables in
+  `Sources/ENSNormalize/`. Upstream package, build scripts, string convenience extensions and test
+  fixtures are not runtime dependencies. The copied normalizer has no transitive dependencies.
+- **Purpose:** ENSIP-15 validation and normalization of recipient names, including Unicode and emoji.
+  It does not fetch records, access keys, or sign. RPC, namehash, DNS framing, and CCIP-Read are
+  project-owned Swift code using the existing native core.
+- **Local adaptation:** `ENSIP15` and `NF` read byte-identical embedded tables instead of
+  `Bundle.module`. `scripts/embed-ens-normalization-data.py` generates `NormalizationData.swift` from
+  the copied binary tables and records their SHA-256 digests. This keeps all build targets independent
+  of an additional runtime resource bundle. Swift formatting is applied; a folder-scoped formatter
+  rule retains upstream's constant and normalization-function names for auditability.
+- **Data provenance:** Unicode 17.0.0; upstream normalization specification hash
+  `4febc8f5d285cbf80d2320fb0c1777ac25e378eb72910c34ec963d0a4e319c84`.
+
+## System Frameworks
+
+Apple system frameworks supply Foundation/URLSession, Security, LocalAuthentication, and SwiftUI.
