@@ -14,7 +14,7 @@ import SwiftUI
     @State private var showConnectedApps = false
     @State private var showSettingsSheet = false
     @State private var showAccountPicker = false
-    @State private var showSendSheet = false
+    @State private var sendSelection: SendSelection?
     @State private var showCopyCheckmark = false
     @State private var expandedSymbols: Set<String> = []
     @State private var currentPage: String? = ContentView.balancePage
@@ -101,8 +101,8 @@ import SwiftUI
       .sheet(isPresented: $showAccountPicker) {
         AccountPickerView(vm: vm)
       }
-      .sheet(isPresented: $showSendSheet) {
-        SendView(vm: vm)
+      .sheet(item: $sendSelection) { selection in
+        SendView(vm: vm, initialAssetID: selection.assetID, initialAssetSearch: selection.symbol)
           .id(vm.addressHex.lowercased())
       }
       .task(id: vm.addressHex) {
@@ -117,7 +117,7 @@ import SwiftUI
         showActivity = false
         showConnectedApps = false
         showSettingsSheet = false
-        showSendSheet = false
+        sendSelection = nil
       }
     }
 
@@ -153,6 +153,8 @@ import SwiftUI
               let bounds = geometry[anchor]
               let progress = min(max(1 - bounds.minY / max(bounds.height, 1), 0), 1)
               let onTokenPage = progress >= 0.5
+              let sendProgress = max(2 * progress - 1, 0)
+              let sendOpacity = sendProgress * sendProgress * (3 - 2 * sendProgress)
               // Resolve the moving seam here, without publishing per-frame state to the holdings list.
               pageCaret(
                 progress: progress,
@@ -168,6 +170,13 @@ import SwiftUI
                 x: geometry.size.width / 2,
                 y: max(22, min(bounds.minY, geometry.size.height - 30))
               )
+
+              sendToolbar
+                .opacity(sendOpacity)
+                .allowsHitTesting(sendProgress > 0)
+                .accessibilityHidden(sendProgress == 0)
+                .padding(.bottom, -geometry.safeAreaInsets.bottom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
           }
         }
@@ -250,7 +259,8 @@ import SwiftUI
       }
       .frame(maxWidth: .infinity)
       .background(Color(.systemBackground))
-      .safeAreaInset(edge: .bottom, spacing: 0) { sendToolbar }
+      // Reserve the floating actions' height while their visible copy stays in the viewport overlay.
+      .safeAreaInset(edge: .bottom, spacing: 0) { sendToolbar.hidden() }
     }
 
     /// Floating wallet-owned actions for the token screen. Swap joins the same group when
@@ -259,7 +269,7 @@ import SwiftUI
       HStack(spacing: 10) {
         Spacer(minLength: 0)
         Button {
-          showSendSheet = true
+          sendSelection = SendSelection()
         } label: {
           Label("Send", systemImage: "arrow.up")
             .font(.title3.weight(.semibold))
@@ -334,21 +344,34 @@ import SwiftUI
 
     @ViewBuilder
     private func groupRow(_ group: PortfolioGroup) -> some View {
-      if group.isGrouped {
-        Button {
-          withAnimation {
-            if expandedSymbols.contains(group.symbol) {
-              expandedSymbols.remove(group.symbol)
-            } else {
-              expandedSymbols.insert(group.symbol)
+      Group {
+        if group.isGrouped {
+          Button {
+            withAnimation {
+              if expandedSymbols.contains(group.symbol) {
+                expandedSymbols.remove(group.symbol)
+              } else {
+                expandedSymbols.insert(group.symbol)
+              }
             }
+          } label: {
+            groupLabel(group, expandable: true)
           }
-        } label: {
-          groupLabel(group, expandable: true)
+          .buttonStyle(.plain)
+        } else {
+          groupLabel(group, expandable: false)
         }
-        .buttonStyle(.plain)
-      } else {
-        groupLabel(group, expandable: false)
+      }
+      .swipeActions(edge: .trailing) {
+        Button {
+          sendSelection =
+            group.isGrouped
+            ? SendSelection(symbol: group.symbol) : SendSelection(assetID: group.holdings.first?.id)
+        } label: {
+          Label("Send", systemImage: "arrow.up")
+        }
+        .tint(.blue)
+        .accessibilityIdentifier("portfolio.send.\(group.id)")
       }
 
       if group.isGrouped, expandedSymbols.contains(group.symbol) {
@@ -364,6 +387,15 @@ import SwiftUI
           }
           .padding(.leading, 40)
           .accessibilityElement(children: .combine)
+          .swipeActions(edge: .trailing) {
+            Button {
+              sendSelection = SendSelection(assetID: holding.id)
+            } label: {
+              Label("Send", systemImage: "arrow.up")
+            }
+            .tint(.blue)
+            .accessibilityIdentifier("portfolio.send.\(holding.id)")
+          }
         }
       }
     }
@@ -412,6 +444,12 @@ import SwiftUI
       }?.label
     }
 
+  }
+
+  private struct SendSelection: Identifiable {
+    let id = UUID()
+    var assetID: String?
+    var symbol: String?
   }
 
   private struct TokenPageBoundsKey: PreferenceKey {

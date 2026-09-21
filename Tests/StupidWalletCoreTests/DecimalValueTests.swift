@@ -34,6 +34,27 @@ func display() throws {
 }
 
 struct DecimalValueTests {
+  @Test("significant-digit previews handle tiny values, full-width balances, and rounding carries")
+  func significantDigits() {
+    #expect(DecimalValue.rounded("12640.510709", significantDigits: 6) == "12640.5")
+    #expect(DecimalValue.rounded("1.234565", significantDigits: 6) == "1.23457")
+    #expect(DecimalValue.rounded("1234567.89", significantDigits: 6) == "1234570")
+    #expect(DecimalValue.rounded("0.00000123456789", significantDigits: 6) == "0.00000123457")
+    #expect(
+      DecimalValue.rounded("0.000000000000000001", significantDigits: 6) == "0.000000000000000001")
+    #expect(DecimalValue.rounded("9.999995", significantDigits: 6) == "10")
+    #expect(DecimalValue.rounded("0.009999995", significantDigits: 6) == "0.01")
+    #expect(DecimalValue.rounded("999999.5", significantDigits: 6) == "1000000")
+    #expect(DecimalValue.rounded("000.5000", significantDigits: 6) == "0.5")
+    #expect(DecimalValue.rounded("0", significantDigits: 6) == "0")
+    let maximum = "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    #expect(
+      DecimalValue.rounded(maximum, significantDigits: 6)
+        == "115792" + String(repeating: "0", count: 72))
+    #expect(DecimalValue.rounded("nope", significantDigits: 6) == nil)
+    #expect(DecimalValue.rounded("1", significantDigits: 0) == nil)
+  }
+
   @Test("values normalize without floating point")
   func parsing() throws {
     #expect(DecimalValue.compare("0", "0.000") == .orderedSame)

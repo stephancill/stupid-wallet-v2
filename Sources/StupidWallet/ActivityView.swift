@@ -432,6 +432,8 @@ import SwiftUI
 
   struct CopyableText: UIViewRepresentable {
     let value: String
+    var textStyle: UIFont.TextStyle = .body
+    var alignment: NSTextAlignment = .right
 
     func makeCoordinator() -> Coordinator {
       Coordinator(value: value)
@@ -440,7 +442,7 @@ import SwiftUI
     func makeUIView(context: Context) -> UILabel {
       let label = UILabel()
       label.textColor = .secondaryLabel
-      label.textAlignment = .right
+      label.adjustsFontForContentSizeCategory = true
       label.lineBreakMode = .byTruncatingMiddle
       label.numberOfLines = 1
       label.isUserInteractionEnabled = true
@@ -459,6 +461,8 @@ import SwiftUI
 
     func updateUIView(_ label: UILabel, context: Context) {
       label.text = value
+      label.font = .preferredFont(forTextStyle: textStyle)
+      label.textAlignment = alignment
       context.coordinator.value = value
     }
 

@@ -125,6 +125,212 @@ struct SendTransactionTests {
     }
     #expect(try await service.activities().isEmpty)
   }
+
+  @Test(
+    "native 100% reserves the total estimated fee and uses the smaller pending or displayed balance"
+  )
+  func nativeMaximum() async throws {
+    for (pending, cap, expected) in [
+      (2_000_000, 1_000_000, 916_000), (1_000_000, 2_000_000, 916_000),
+    ] {
+      let trace = SendMaximumTrace()
+      let maximum = maximumClient { request in
+        let body = try! JSONDecoder().decode(JSONValue.self, from: sendRequestBody(request))
+        trace.record(body: body)
+        switch body.nestedString(at: ["method"]) {
+        case "eth_chainId": return sendRPCResponse(result: "0x1")
+        case "eth_getBalance": return sendRPCResponse(result: "0x" + String(pending, radix: 16))
+        case "eth_gasPrice": return sendRPCResponse(result: "0x2")
+        case "eth_getCode": return sendRPCResponse(result: "0x")
+        case "eth_estimateGas": return sendRPCResponse(result: "0x5208")
+        default: return sendRPCResponse(error: "Unexpected RPC")
+        }
+      }
+      let amount = try await maximum.amount(
+        account: SendTestSigner().account, chainID: "1",
+        to: "0x000000000000000000000000000000000000dead",
+        balanceCap: TokenTransfer.bytes(fromDecimalDigits: String(cap)))
+      #expect(ABI.decimal(from: amount) == String(expected))
+      #expect(
+        trace.methods == [
+          "eth_chainId", "eth_getBalance", "eth_gasPrice", "eth_getCode", "eth_estimateGas",
+          "eth_estimateGas",
+        ])
+      #expect(trace.estimatedValues == ["0x1", Hex.quantity(amount)])
+    }
+  }
+
+  @Test("native 100% includes OP Stack data and operator fees and verifies oracle ABI")
+  func nativeMaximumOPFees() async throws {
+    let maximum = maximumClient { request in
+      let body = try! JSONDecoder().decode(JSONValue.self, from: sendRequestBody(request))
+      switch body.nestedString(at: ["method"]) {
+      case "eth_chainId": return sendRPCResponse(result: "0x2105")
+      case "eth_getBalance": return sendRPCResponse(result: "0xf4240")
+      case "eth_gasPrice": return sendRPCResponse(result: "0x2")
+      case "eth_getCode": return sendRPCResponse(result: "0x6000")
+      case "eth_estimateGas": return sendRPCResponse(result: "0x5208")
+      case "eth_call":
+        guard case .object(let object) = body, case .array(let params)? = object["params"],
+          case .object(let call)? = params.first, let data = call["data"]?.stringValue
+        else { return sendRPCResponse(error: "Missing oracle calldata") }
+        #expect(call["to"] == .string(NativeSendMaximum.gasPriceOracle))
+        let isL1 = data.hasSuffix(String(repeating: "0", count: 60) + "0200")
+        // Independent viem 2.55.19 calldata vectors.
+        #expect(
+          data
+            == (isL1
+              ? "0xf1c7a58b" + String(repeating: "0", count: 60) + "0200"
+              : "0x275aedd2" + String(repeating: "0", count: 60) + "5208"))
+        return sendRPCResponse(
+          result: "0x" + String(repeating: "0", count: 61) + (isL1 ? "3e8" : "7d0"))
+      default: return sendRPCResponse(error: "Unexpected RPC")
+      }
+    }
+    let amount = try await maximum.amount(
+      account: SendTestSigner().account, chainID: "8453",
+      to: "0x000000000000000000000000000000000000dead",
+      balanceCap: TokenTransfer.bytes(fromDecimalDigits: "1000000"))
+    #expect(ABI.decimal(from: amount) == "910000")
+  }
+
+  @Test("native maximum refines value-dependent gas without increasing a previous candidate")
+  func nativeMaximumRefinement() async throws {
+    let trace = SendMaximumTrace()
+    let maximum = maximumClient { request in
+      let body = try! JSONDecoder().decode(JSONValue.self, from: sendRequestBody(request))
+      trace.record(body: body)
+      switch body.nestedString(at: ["method"]) {
+      case "eth_chainId": return sendRPCResponse(result: "0x1")
+      case "eth_getBalance": return sendRPCResponse(result: "0x186a0")
+      case "eth_gasPrice": return sendRPCResponse(result: "0x1")
+      case "eth_getCode": return sendRPCResponse(result: "0x")
+      case "eth_estimateGas":
+        return sendRPCResponse(
+          result: ["0x5208", "0x7530", "0x4e20"][trace.estimatedValues.count - 1])
+      default: return sendRPCResponse(error: "Unexpected RPC")
+      }
+    }
+    let amount = try await maximum.amount(
+      account: SendTestSigner().account, chainID: "1",
+      to: "0x000000000000000000000000000000000000dead",
+      balanceCap: TokenTransfer.bytes(fromDecimalDigits: "100000"))
+    #expect(ABI.decimal(from: amount) == "40000")
+    #expect(trace.estimatedValues == ["0x1", "0xe290", "0x9c40"])
+  }
+
+  @Test("native maximum rejects the wrong network and unaffordable fees")
+  func nativeMaximumFailures() async throws {
+    let wrongChain = maximumClient { _ in sendRPCResponse(result: "0x2") }
+    await #expect(throws: NativeSendMaximumError.wrongChain) {
+      try await wrongChain.amount(
+        account: SendTestSigner().account, chainID: "1",
+        to: "0x000000000000000000000000000000000000dead",
+        balanceCap: [100])
+    }
+    let maximum = maximumClient { request in
+      let body = try! JSONDecoder().decode(JSONValue.self, from: sendRequestBody(request))
+      switch body.nestedString(at: ["method"]) {
+      case "eth_chainId": return sendRPCResponse(result: "0x1")
+      case "eth_getBalance": return sendRPCResponse(result: "0x64")
+      case "eth_gasPrice": return sendRPCResponse(result: "0x1")
+      case "eth_getCode": return sendRPCResponse(result: "0x")
+      case "eth_estimateGas": return sendRPCResponse(result: "0x5208")
+      default: return sendRPCResponse(error: "Unexpected RPC")
+      }
+    }
+    await #expect(throws: NativeSendMaximumError.insufficientBalance) {
+      try await maximum.amount(
+        account: SendTestSigner().account, chainID: "1",
+        to: "0x000000000000000000000000000000000000dead",
+        balanceCap: [100])
+    }
+  }
+
+  @Test("native maximum never hides a failed OP fee oracle")
+  func nativeMaximumOracleFailure() async throws {
+    let maximum = maximumClient { request in
+      let body = try! JSONDecoder().decode(JSONValue.self, from: sendRequestBody(request))
+      switch body.nestedString(at: ["method"]) {
+      case "eth_chainId": return sendRPCResponse(result: "0x1")
+      case "eth_getBalance": return sendRPCResponse(result: "0xf4240")
+      case "eth_gasPrice": return sendRPCResponse(result: "0x1")
+      case "eth_getCode": return sendRPCResponse(result: "0x6000")
+      default: return sendRPCResponse(result: "0x")
+      }
+    }
+    await #expect(throws: NativeSendMaximumError.invalidResponse) {
+      try await maximum.amount(
+        account: SendTestSigner().account, chainID: "1",
+        to: "0x000000000000000000000000000000000000dead",
+        balanceCap: TokenTransfer.bytes(fromDecimalDigits: "1000000"))
+    }
+  }
+
+  private func maximumClient(handler: @escaping @Sendable (URLRequest) -> (HTTPURLResponse, Data))
+    -> NativeSendMaximum
+  {
+    SendRPCURLProtocol.handler = handler
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [SendRPCURLProtocol.self]
+    return NativeSendMaximum(
+      resolver: RPCResolver(overrides: [
+        "1": URL(string: "https://rpc.example")!, "8453": URL(string: "https://rpc.example")!,
+      ]),
+      client: RPCClient(session: URLSession(configuration: configuration)))
+  }
+
+  @Test("native maximum bounds refinement and rejects cancellation before RPC")
+  func nativeMaximumBounds() async throws {
+    let trace = SendMaximumTrace()
+    let maximum = maximumClient { request in
+      let body = try! JSONDecoder().decode(JSONValue.self, from: sendRequestBody(request))
+      trace.record(body: body)
+      switch body.nestedString(at: ["method"]) {
+      case "eth_chainId": return sendRPCResponse(result: "0x1")
+      case "eth_getBalance": return sendRPCResponse(result: "0xf4240")
+      case "eth_gasPrice": return sendRPCResponse(result: "0x1")
+      case "eth_getCode": return sendRPCResponse(result: "0x")
+      case "eth_estimateGas":
+        return sendRPCResponse(
+          result: "0x" + String(21_000 * trace.estimatedValues.count, radix: 16))
+      default: return sendRPCResponse(error: "Unexpected RPC")
+      }
+    }
+    await #expect(throws: NativeSendMaximumError.unstableEstimate) {
+      try await maximum.amount(
+        account: SendTestSigner().account, chainID: "1",
+        to: "0x000000000000000000000000000000000000dead",
+        balanceCap: TokenTransfer.bytes(fromDecimalDigits: "1000000"))
+    }
+    #expect(trace.estimatedValues.count == 4)
+    let cancelled = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try await maximum.amount(
+        account: SendTestSigner().account, chainID: "1",
+        to: "0x000000000000000000000000000000000000dead",
+        balanceCap: [100])
+    }
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    #expect(trace.methods.count == 8)
+  }
+}
+
+private final class SendMaximumTrace: @unchecked Sendable {
+  private let lock = NSLock()
+  private var bodies: [JSONValue] = []
+  func record(body: JSONValue) { lock.withLock { bodies.append(body) } }
+  var methods: [String] { lock.withLock { bodies.compactMap { $0.nestedString(at: ["method"]) } } }
+  var estimatedValues: [String?] {
+    lock.withLock {
+      bodies.filter { $0.nestedString(at: ["method"]) == "eth_estimateGas" }.map {
+        guard case .object(let object) = $0, case .array(let params)? = object["params"],
+          case .object(let call)? = params.first
+        else { return nil }
+        return call["value"]?.stringValue
+      }
+    }
+  }
 }
 
 private final class SendRPCURLProtocol: URLProtocol {

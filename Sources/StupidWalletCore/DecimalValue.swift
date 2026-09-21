@@ -4,7 +4,8 @@ import Foundation
 ///
 /// Values are plain decimal strings (for example `2629.256297515841`). Every operation is exact
 /// integer digit arithmetic; no floating point is involved. Division truncates toward zero to a
-/// requested number of fraction digits. Display values are rounded to at most two decimal places.
+/// requested number of fraction digits. USD display rounds to cents; token previews use significant
+/// digits.
 public enum DecimalValue {
   /// Numeric comparison of two decimal strings. Unparsable input compares equal.
   public static func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {
@@ -52,6 +53,22 @@ public enum DecimalValue {
     guard let parsed = parse(value) else { return nil }
     return render(
       integer: parsed.integer, fraction: String(parsed.fraction.prefix(max(0, fractionDigits))))
+  }
+
+  /// Rounds half-up to at most the requested significant digits, without scientific notation or
+  /// padding trailing fraction zeros. Leading zeros do not count toward the precision.
+  public static func rounded(_ value: String, significantDigits: Int) -> String? {
+    guard significantDigits > 0, let parts = parse(value) else { return nil }
+    let digits = stripLeadingZeros(parts.integer + parts.fraction)
+    guard digits.count > significantDigits else {
+      return render(integer: parts.integer, fraction: parts.fraction)
+    }
+    let discardedCount = digits.count - significantDigits
+    var retained = String(digits.prefix(significantDigits))
+    if let next = digits.dropFirst(significantDigits).first, next >= "5" {
+      retained = addDigits(retained, "1")
+    }
+    return render(digits: retained, scale: parts.fraction.count - discardedCount)
   }
 
   /// Full USD display with grouping separators, rounded half-up to exactly two decimal places, or
