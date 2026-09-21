@@ -222,10 +222,12 @@ import SwiftUI
         .padding(.horizontal)
         .padding(.top, 4)
         .padding(.bottom, 12)
+        .opacity(vm.balances.isRefreshing ? 0.6 : 1)
 
         List {
           ForEach(vm.balances.portfolioGroups) { group in
             groupRow(group)
+              .opacity(vm.balances.isRefreshing ? 0.6 : 1)
           }
           if let error = vm.balances.error {
             Text(error).foregroundStyle(.red)

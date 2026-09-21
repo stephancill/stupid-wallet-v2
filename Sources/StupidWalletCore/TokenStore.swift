@@ -5,6 +5,7 @@ public struct TokenSnapshot: Sendable, Equatable {
   public let revision: UInt64
   public let tokens: [WalletToken]
   public let balances: [String: [String: TokenBalanceEntry]]
+  var portfolios: [String: PortfolioCacheEntry] = [:]
 
   public func balance(account: String, tokenID: String) -> TokenBalanceEntry? {
     balances[account.lowercased()]?[tokenID]
@@ -19,6 +20,8 @@ public struct TokenStore: Sendable {
     var tokens: [WalletToken] = []
     var balances: [String: [String: TokenBalanceEntry]] = [:]
     var refreshes: [String: UUID] = [:]
+    // Optional because shipped schema-1 stores predate persisted portfolio prices.
+    var portfolios: [String: PortfolioCacheEntry]?
   }
 
   private let fileURL: URL?
@@ -34,7 +37,8 @@ public struct TokenStore: Sendable {
     try withLock {
       let payload = try read()
       return TokenSnapshot(
-        revision: payload.revision, tokens: payload.tokens, balances: payload.balances)
+        revision: payload.revision, tokens: payload.tokens, balances: payload.balances,
+        portfolios: payload.portfolios ?? [:])
     }
   }
 
@@ -57,6 +61,9 @@ public struct TokenStore: Sendable {
       for account in payload.balances.keys {
         payload.balances[account]?.removeValue(forKey: tokenID)
       }
+      for account in (payload.portfolios ?? [:]).keys {
+        payload.portfolios?[account]?.prices.removeValue(forKey: tokenID)
+      }
       try configurationChanged(payload: &payload)
     }
   }
@@ -64,10 +71,15 @@ public struct TokenStore: Sendable {
   func remove(chainID: String) throws {
     try mutate { payload in
       let ids = Set(payload.tokens.filter { $0.chainID == chainID }.map(\.id))
-      guard !ids.isEmpty else { return }
       payload.tokens.removeAll { ids.contains($0.id) }
       for account in payload.balances.keys {
         payload.balances[account] = payload.balances[account]?.filter { !ids.contains($0.key) }
+      }
+      for (account, cached) in payload.portfolios ?? [:] {
+        var portfolio = cached
+        portfolio.nativeBalances.removeValue(forKey: chainID)
+        portfolio.prices = portfolio.prices.filter { !$0.key.hasPrefix("\(chainID):") }
+        payload.portfolios?[account] = portfolio
       }
       try configurationChanged(payload: &payload)
     }
@@ -77,6 +89,7 @@ public struct TokenStore: Sendable {
     try mutate { payload in
       payload.balances.removeValue(forKey: account.lowercased())
       payload.refreshes.removeValue(forKey: account.lowercased())
+      payload.portfolios?.removeValue(forKey: account.lowercased())
     }
   }
 
@@ -90,7 +103,8 @@ public struct TokenStore: Sendable {
   }
 
   func saveBalances(
-    account: String, revision: UInt64, refreshID: UUID, entries: [String: TokenBalanceEntry]
+    account: String, revision: UInt64, refreshID: UUID, entries: [String: TokenBalanceEntry],
+    nativeBalances: [String: TokenBalanceEntry] = [:]
   ) throws {
     try mutate { payload in
       try checkRefresh(payload: payload, account: account, revision: revision, refreshID: refreshID)
@@ -101,6 +115,31 @@ public struct TokenStore: Sendable {
       for (id, entry) in entries {
         payload.balances[account.lowercased(), default: [:]][id] = entry
       }
+      if !nativeBalances.isEmpty {
+        var portfolio = payload.portfolios?[account.lowercased()] ?? PortfolioCacheEntry()
+        portfolio.nativeBalances.merge(nativeBalances) { _, fresh in fresh }
+        if payload.portfolios == nil { payload.portfolios = [:] }
+        payload.portfolios?[account.lowercased()] = portfolio
+      }
+    }
+  }
+
+  func savePrices(
+    account: String, revision: UInt64, refreshID: UUID, quotes: [PriceRequest: PriceQuote]
+  ) throws {
+    try mutate { payload in
+      try checkRefresh(payload: payload, account: account, revision: revision, refreshID: refreshID)
+      var portfolio = payload.portfolios?[account.lowercased()] ?? PortfolioCacheEntry()
+      for (request, quote) in quotes {
+        let id = "\(request.chainID):\(request.address)"
+        let retained = portfolio.prices[id]
+        let merged = retained.map { StupidTokensClient.merging(quote, with: $0.quote) } ?? quote
+        portfolio.prices[id] = PortfolioPriceEntry(
+          quote: merged,
+          updatedAt: quote.priceUSD == nil ? (retained?.updatedAt ?? Date()) : Date())
+      }
+      if payload.portfolios == nil { payload.portfolios = [:] }
+      payload.portfolios?[account.lowercased()] = portfolio
     }
   }
 
@@ -169,6 +208,26 @@ public struct TokenStore: Sendable {
     }
     for account in payload.refreshes.keys {
       guard try WalletToken.normalizeAddress(account) == account else { throw TokenError.corrupt }
+    }
+    for (account, portfolio) in payload.portfolios ?? [:] {
+      guard try WalletToken.normalizeAddress(account) == account else { throw TokenError.corrupt }
+      for (chain, entry) in portfolio.nativeBalances {
+        guard ChainStore.normalize(chain) == chain, entry.raw.count == 32,
+          entry.updatedAt.timeIntervalSince1970.isFinite,
+          entry.endpoint.host != nil, ["https", "http"].contains(entry.endpoint.scheme)
+        else { throw TokenError.corrupt }
+      }
+      for (id, price) in portfolio.prices {
+        let parts = id.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+          let request = PriceRequest(chainID: String(parts[0]), address: String(parts[1])),
+          id == "\(request.chainID):\(request.address)",
+          request.address == "native" || ids.contains(id),
+          price.priceUSD.map({ DecimalValue.parse($0) != nil }) ?? true,
+          price.change24h.map({ DecimalValue.signed($0) != nil }) ?? true,
+          price.updatedAt.timeIntervalSince1970.isFinite
+        else { throw TokenError.corrupt }
+      }
     }
   }
 

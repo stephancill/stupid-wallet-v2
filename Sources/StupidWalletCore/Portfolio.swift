@@ -1,5 +1,31 @@
 import Foundation
 
+/// Account-bound display cache. ERC-20 amounts remain authoritative in TokenStore's balance entries.
+struct PortfolioCacheEntry: Codable, Sendable, Equatable {
+  var nativeBalances: [String: TokenBalanceEntry] = [:]
+  var prices: [String: PortfolioPriceEntry] = [:]
+}
+
+struct PortfolioPriceEntry: Codable, Sendable, Equatable {
+  let priceUSD: String?
+  let change24h: String?
+  let symbol: String?
+  let decimals: UInt8?
+  let updatedAt: Date
+
+  init(quote: PriceQuote, updatedAt: Date = Date()) {
+    priceUSD = quote.priceUSD
+    change24h = quote.change24h
+    symbol = quote.symbol
+    decimals = quote.decimals
+    self.updatedAt = updatedAt
+  }
+
+  var quote: PriceQuote {
+    PriceQuote(priceUSD: priceUSD, change24h: change24h, symbol: symbol, decimals: decimals)
+  }
+}
+
 /// One tracked holding: a token balance or a chain's native currency, with its USD value when a
 /// price is known.
 public struct PortfolioHolding: Sendable, Equatable, Identifiable {

@@ -400,20 +400,26 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   intentionally retain the last success, while successful zero balances are persisted as zero.
   Include in Total Balance affects native reads only. A pending `network-removal.json` resumes cleanup
   on the next network-store access; never edit that journal or token caches to force recovery.
-- Portfolio `—` values can be a price-service status rather than a missing balance or decimal bug.
-  Inspect `status` and `priceUsd` from `/v1/prices`: `stale` deliberately carries null after the
-  source price exceeds five minutes. A simulator's URLCache `Cache.db` can prove the actual received
+- Portfolio `—` values can mean there is no known price rather than a missing balance or decimal bug.
+  Inspect `priceUsd` from `/v1/prices`: the catalog can return a retained price for any freshness status;
+  `status` gates the 24-hour change, not price availability. A simulator's URLCache `Cache.db` can prove the actual received
   response; open it read-only and limit inspection to the price-service URLs and public status/cache
   fields. Do not dump unrelated wallet requests. Compare `Cache-Control`, `Age`, and `Date` with the
   app's memory-cache lifetime, and do not cache transient nulls as permanent catalog misses. The
   service canonicalizes full `chainId:address` strings lexicographically, not by numeric chain ID;
   a 308 to the sorted URL is expected for a non-canonical request.
+- For launch-only portfolio dashes, distinguish the catalog client's session memory from durable SWR.
+  Inspect the selected account's `tokens.json` `portfolios` entry without printing account activity:
+  cached prices alone do not restore native holdings unless per-network raw native amounts also exist.
+  Hydrate before network awaits, test with a new model/service/catalog client, and keep `isRefreshing`
+  active through the price request so cached rows remain dimmed after RPC batches finish. Null prices
+  and failed native reads retain last successes; successful zero balances must still remove holdings.
 - A native holding that shows the letter placeholder instead of a coin logo is a catalog metadata
-  problem, not a wallet rendering bug: native icons come from `GET /v1/tokens/{chainId}/native`
-  (`imageUrl`), and `/v1/search` lists only ERC-20s, so a native currency never appears there.
+  problem, not a wallet rendering bug: Home now reads `imageUrl` from the `native` identity in the bulk
+  `/v1/prices` response, and `/v1/search` lists only ERC-20s, so a native currency never appears there.
   Confirm the raw field with a direct public `curl` before touching view code. `StupidTokensClient`
-  caches metadata in memory for an hour and URLSession also caches the response (the service sends
-  `Cache-Control: public, max-age=60, stale-while-revalidate=3600`), so a catalog fix can stay hidden
+  caches priced quotes in memory for up to 60 seconds, bounded by HTTP freshness, and URLSession also
+  caches responses, so a catalog fix can stay hidden
   in a running app; force-quit and relaunch before re-diagnosing.
 - Reproduce a failing passthrough call with the exact original method spelling and params.
 - Compare native behavior with a direct public-safe request:

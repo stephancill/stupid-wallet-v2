@@ -38,8 +38,9 @@ public final class WalletBalanceModel: ObservableObject {
 
   private var active: (id: UUID, context: BalanceContext, task: Task<Void, Never>)?
   private var nativeResults: [String: NativeNetworkBalance] = [:]
+  private var nativeBalances: [String: [UInt8]] = [:]
+  private var priceQuotes: [String: PriceQuote] = [:]
   private var iconCache: [String: URL?] = [:]
-  private var portfolioRefreshID: UUID?
 
   public init(service: WalletBalanceService = WalletBalanceService()) { self.service = service }
 
@@ -63,11 +64,12 @@ public final class WalletBalanceModel: ObservableObject {
     nativeTotal = nil
     nativeRows = []
     nativeResults = [:]
+    nativeBalances = [:]
+    priceQuotes = [:]
     rows = []
     error = nil
     isRefreshing = false
     includedNetworkCount = 0
-    portfolioRefreshID = nil
     portfolioGroups = []
     portfolioHoldings = []
     portfolioTotalUSD = nil
@@ -103,13 +105,12 @@ public final class WalletBalanceModel: ObservableObject {
       isRefreshing = true
       nativeResults = [:]
       for index in rows.indices { rows[index].isLoading = true }
-      portfolioRefreshID = refreshID
       let task = Task { [weak self, service] in
         await service.fetch(context: context) { [weak self] result in
           await self?.receive(result: result, context: context, refreshID: refreshID)
         }
-        self?.finish(context: context, refreshID: refreshID)
         await self?.refreshPortfolio(context: context, refreshID: refreshID)
+        self?.finish(context: context, refreshID: refreshID)
       }
       active = (refreshID, context, task)
       await task.value
@@ -128,6 +129,7 @@ public final class WalletBalanceModel: ObservableObject {
       active = nil
       isRefreshing = false
       rows.removeAll { $0.id == tokenID }
+      try hydrate(context: service.context(account: account))
       error = nil
       Task { await refresh() }
     } catch { self.error = error.localizedDescription }
@@ -151,13 +153,25 @@ public final class WalletBalanceModel: ObservableObject {
       return $0.id < $1.id
     }
     includedNetworkCount = context.networks.filter(\.includeInBalance).count
+    let portfolio = snapshot.portfolios[account] ?? PortfolioCacheEntry()
+    nativeBalances = portfolio.nativeBalances.mapValues(\.raw)
+    let identities = Set(context.tokens.map(\.id) + context.networks.map { "\($0.id):native" })
+    priceQuotes = priceQuotes.filter { identities.contains($0.key) }
+    for (id, entry) in portfolio.prices where priceQuotes[id] == nil {
+      priceQuotes[id] = entry.quote
+    }
+    publishPortfolio(context: context)
+    nativeRows = etherRows(context: context, balances: nativeBalances)
   }
 
   private func receive(result: NetworkBalanceResult, context: BalanceContext, refreshID: UUID) {
     guard active?.id == refreshID, account == context.account, !Task.isCancelled else { return }
     do {
       try service.commit(context: context, refreshID: refreshID, result: result)
-      if let native = result.native { nativeResults[native.chainID] = native }
+      if let native = result.native {
+        nativeResults[native.chainID] = native
+        if let wei = native.wei { nativeBalances[native.chainID] = wei }
+      }
       for read in result.tokens {
         guard let index = rows.firstIndex(where: { $0.id == read.tokenID }) else { continue }
         rows[index].isLoading = false
@@ -171,41 +185,49 @@ public final class WalletBalanceModel: ObservableObject {
           rows[index].error = error.localizedDescription
         }
       }
+      publishPortfolio(context: context)
     } catch {
       self.error = error.localizedDescription
       active?.task.cancel()
     }
   }
 
-  /// Builds the value-ordered holdings, groups, and total once balances are known.
-  ///
-  /// Native holdings cover included networks, matching the existing Include in Total Balance
-  /// semantics; tracked tokens cover every configured network. One bulk prices call also carries each
-  /// identity's symbol, decimals, and icon, so the home screen makes no per-network metadata or
-  /// per-token icon requests. The home total and its breakdown are the ETH-only native aggregate.
+  /// Refresh stays active through the price request, keeping cached values visible and dimmed.
   private func refreshPortfolio(context: BalanceContext, refreshID: UUID) async {
-    let nativeNetworks = context.networks.filter(\.includeInBalance)
-    let pricedTokens = rows.compactMap { row -> (TokenBalanceRow, WalletToken)? in
-      guard let entry = row.entry, entry.raw.contains(where: { $0 != 0 }) else { return nil }
-      return (row, row.token)
-    }
-
-    var requests: [PriceRequest] = nativeNetworks.compactMap {
+    guard active?.id == refreshID, account == context.account, !Task.isCancelled else { return }
+    var requests = context.networks.filter(\.includeInBalance).compactMap {
       PriceRequest(chainID: $0.id, address: "native")
     }
-    requests += pricedTokens.compactMap {
-      PriceRequest(chainID: $0.1.chainID, address: $0.1.address)
+    requests += rows.compactMap { row in
+      guard row.entry?.raw.contains(where: { $0 != 0 }) == true else { return nil }
+      return PriceRequest(chainID: row.token.chainID, address: row.token.address)
     }
     let quotes = await service.prices(for: requests)
+    guard active?.id == refreshID, account == context.account, !Task.isCancelled else { return }
+    do {
+      try service.savePrices(context: context, refreshID: refreshID, quotes: quotes)
+    } catch {
+      self.error = error.localizedDescription
+      return
+    }
+    for (request, quote) in quotes {
+      let id = "\(request.chainID):\(request.address)"
+      priceQuotes[id] = priceQuotes[id].map { StupidTokensClient.merging(quote, with: $0) } ?? quote
+    }
+    publishPortfolio(context: context)
+    let etherRows = etherRows(context: context, balances: nativeResults.compactMapValues(\.wei))
+    updateNativeAggregate(
+      context: context, refreshID: refreshID, rows: etherRows,
+      bytes: etherRows.reduce([0]) { NativeBalanceService.add($0, $1.wei) })
+  }
 
-    var etherRows: [NativeBalanceRow] = []
-    var etherBytes: [UInt8] = [0]
+  /// Rebuild from the selected account's latest balances and retained prices without awaiting HTTP.
+  private func publishPortfolio(context: BalanceContext) {
     var holdings: [PortfolioHolding] = []
-    for network in nativeNetworks {
-      guard let wei = nativeResults[network.id]?.wei, wei.contains(where: { $0 != 0 }),
-        let request = PriceRequest(chainID: network.id, address: "native")
+    for network in context.networks where network.includeInBalance {
+      guard let wei = nativeBalances[network.id], wei.contains(where: { $0 != 0 })
       else { continue }
-      let quote = quotes[request]
+      let quote = priceQuotes["\(network.id):native"]
       let decimals = quote?.decimals ?? 18
       holdings.append(
         PortfolioHolding(
@@ -215,23 +237,16 @@ public final class WalletBalanceModel: ObservableObject {
           valueUSD: (quote?.priceUSD ?? nil).flatMap {
             PortfolioHolding.value(raw: wei, decimals: decimals, price: $0)
           }, change24h: quote?.change24h))
-      guard Self.isEther(symbol: quote?.symbol) else { continue }
-      etherBytes = NativeBalanceService.add(etherBytes, wei)
-      etherRows.append(
-        NativeBalanceRow(
-          id: network.id, name: network.name,
-          balance: NativeBalanceService.formatEther(bytes: wei), wei: wei))
     }
 
-    var iconUpdates: [String: URL] = [:]
-    for (row, token) in pricedTokens {
-      guard let entry = row.entry,
-        let request = PriceRequest(chainID: token.chainID, address: token.address)
-      else { continue }
-      let quote = quotes[request]
+    for index in rows.indices {
+      let row = rows[index]
+      let token = row.token
+      guard let entry = row.entry, entry.raw.contains(where: { $0 != 0 }) else { continue }
+      let quote = priceQuotes[token.id]
       let iconURL = quote?.imageURL ?? row.iconURL ?? iconCache[token.id] ?? nil
-      if let icon = quote?.imageURL { iconUpdates[token.id] = icon }
       iconCache[token.id] = iconURL
+      if rows[index].iconURL != iconURL { rows[index].iconURL = iconURL }
       holdings.append(
         PortfolioHolding(
           chainID: token.chainID, networkName: row.networkName, symbol: token.symbol,
@@ -242,12 +257,6 @@ public final class WalletBalanceModel: ObservableObject {
           }, change24h: quote?.change24h))
     }
 
-    guard portfolioRefreshID == refreshID, account == context.account else { return }
-    updateNativeAggregate(
-      context: context, refreshID: refreshID, rows: etherRows, bytes: etherBytes)
-    for (id, icon) in iconUpdates {
-      if let index = rows.firstIndex(where: { $0.id == id }) { rows[index].iconURL = icon }
-    }
     let groups = PortfolioGroup.groups(from: holdings)
     portfolioHoldings = holdings.sorted { lhs, rhs in
       switch (lhs.valueUSD, rhs.valueUSD) {
@@ -262,6 +271,19 @@ public final class WalletBalanceModel: ObservableObject {
     portfolioGroups = groups
     portfolioTotalUSD = PortfolioGroup.total(of: groups)
     portfolioChange = PortfolioGroup.totalChange(of: groups)
+  }
+
+  private func etherRows(context: BalanceContext, balances: [String: [UInt8]]) -> [NativeBalanceRow]
+  {
+    context.networks.compactMap { network in
+      guard network.includeInBalance,
+        Self.isEther(symbol: priceQuotes["\(network.id):native"]?.symbol),
+        let wei = balances[network.id], wei.contains(where: { $0 != 0 })
+      else { return nil }
+      return NativeBalanceRow(
+        id: network.id, name: network.name,
+        balance: NativeBalanceService.formatEther(bytes: wei), wei: wei)
+    }.sorted { NativeBalanceService.isGreater($0.wei, than: $1.wei) }
   }
 
   private func finish(context: BalanceContext, refreshID: UUID) {

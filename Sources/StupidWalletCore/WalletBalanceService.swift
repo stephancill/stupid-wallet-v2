@@ -279,9 +279,25 @@ public struct WalletBalanceService: Sendable {
         uniqueKeysWithValues: result.tokens.compactMap { read in
           (try? read.result.get()).map { (read.tokenID, $0) }
         })
+      var nativeBalances: [String: TokenBalanceEntry] = [:]
+      if let native = result.native, let wei = native.wei {
+        nativeBalances[native.chainID] = TokenBalanceEntry(
+          raw: [UInt8](repeating: 0, count: 32 - wei.count) + wei, updatedAt: Date(),
+          endpoint: context.endpoint(chainID: native.chainID))
+      }
       try tokens.saveBalances(
         account: context.account, revision: context.tokenRevision, refreshID: refreshID,
-        entries: entries)
+        entries: entries, nativeBalances: nativeBalances)
+    }
+  }
+
+  func savePrices(
+    context: BalanceContext, refreshID: UUID, quotes: [PriceRequest: PriceQuote]
+  ) throws {
+    try withCurrentContext(context) {
+      try tokens.savePrices(
+        account: context.account, revision: context.tokenRevision, refreshID: refreshID,
+        quotes: quotes)
     }
   }
 

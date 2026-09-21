@@ -592,6 +592,9 @@ final class SearchHTTPStub: @unchecked Sendable {
   private let host = UUID().uuidString.lowercased() + ".example"
   private let responseHeaders: [String: String]
   private var recorded: [URLRequest] = []
+  private var pending: [SearchURLProtocol] = []
+  private var waiter: CheckedContinuation<Void, Never>?
+  private var held = false
   private var handler: @Sendable (URLRequest) throws -> (Int, Data) = { _ in
     (200, Data(#"{"tokens":[]}"#.utf8))
   }
@@ -602,6 +605,24 @@ final class SearchHTTPStub: @unchecked Sendable {
   }
 
   var requests: [URLRequest] { lock.withLock { recorded } }
+
+  var hold: Bool {
+    get { lock.withLock { held } }
+    set { lock.withLock { held = newValue } }
+  }
+
+  func waitForRequest(after count: Int = 0) async {
+    await withCheckedContinuation { continuation in
+      let already = lock.withLock {
+        if recorded.count <= count {
+          waiter = continuation
+          return false
+        }
+        return true
+      }
+      if already { continuation.resume() }
+    }
+  }
 
   var respond: @Sendable (URLRequest) throws -> (Int, Data) {
     get { lock.withLock { handler } }
@@ -615,16 +636,38 @@ final class SearchHTTPStub: @unchecked Sendable {
       session: URLSession(configuration: configuration), baseURL: URL(string: "https://\(host)")!)
   }
 
-  func close() { SearchURLProtocol.unregister(host: host) }
+  func close() {
+    release()
+    SearchURLProtocol.unregister(host: host)
+  }
 
   func receive(_ transport: SearchURLProtocol) {
-    lock.withLock { recorded.append(transport.request) }
-    transport.complete(using: respond, headers: responseHeaders)
+    let (hold, waiter) = lock.withLock {
+      recorded.append(transport.request)
+      if held { pending.append(transport) }
+      let waiter = self.waiter
+      self.waiter = nil
+      return (held, waiter)
+    }
+    waiter?.resume()
+    if !hold { transport.complete(using: respond, headers: responseHeaders) }
+  }
+
+  func release() {
+    let values = lock.withLock {
+      held = false
+      let values = pending
+      pending = []
+      return values
+    }
+    for value in values { value.complete(using: respond, headers: responseHeaders) }
   }
 }
 
 final class SearchURLProtocol: URLProtocol {
   private static let lock = NSLock()
+  private let stateLock = NSRecursiveLock()
+  private var stopped = false
   nonisolated(unsafe) private static var stubs: [String: SearchHTTPStub] = [:]
 
   static func register(host: String, stub: SearchHTTPStub) {
@@ -647,9 +690,12 @@ final class SearchURLProtocol: URLProtocol {
     stub.receive(self)
   }
 
-  override func stopLoading() {}
+  override func stopLoading() { stateLock.withLock { stopped = true } }
 
   func complete(using handler: (URLRequest) throws -> (Int, Data), headers: [String: String]) {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    guard !stopped else { return }
     guard let url = request.url else {
       client?.urlProtocol(self, didFailWithError: URLError(.badURL))
       return

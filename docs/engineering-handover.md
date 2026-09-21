@@ -610,8 +610,9 @@ Clipboard access uses the standard system pasteboard behavior.
   not know, or an icon that is still loading, shows a letter placeholder instead. Icons are
   display-only and are never persisted.
 - The catalog is discovery metadata only. Canonical symbol, decimals, and balance always come from
-  the on-chain read at import, so catalog metadata is never persisted and a missing or stale catalog
-  entry never blocks importing a token by address.
+  the onchain read at import, so catalog metadata never replaces tracked-token definitions and a missing
+  or stale catalog entry never blocks importing a token by address. Portfolio caches retain catalog
+  prices and native display metadata separately for immediate launch-time rendering.
 
 Import reads contract code, `symbol()`, `decimals()`, and `balanceOf(selectedAccount)` in one RPC
 batch. It requires nonempty code, a valid UTF-8 ABI string symbol of at most 64 bytes, uint8 decimals,
@@ -640,11 +641,16 @@ native aggregation, and that aggregate is ETH-only; tracked tokens still display
 excluded networks.
 
 `TokenStore` persists versioned definitions, raw 32-byte balances, timestamps, endpoint provenance,
-watchlist revision, and refresh IDs in one durably replaced App Group `tokens.json`, protected by
-`tokens.lock`. Token removal atomically removes its balances for all accounts. Network removal first
+watchlist revision, refresh IDs, and account-bound portfolio caches in one durably replaced App Group
+`tokens.json`, protected by `tokens.lock`. The optional schema-1 `portfolios` field retains per-network
+native amounts plus last-known USD prices, 24-hour changes, native display symbols/decimals, and
+timestamps. Existing stores without this field start with an empty portfolio cache. ERC-20 amounts
+and canonical metadata still come from the tracked balance/definition entries; icons are not persisted.
+Token removal atomically removes its balances and prices for all accounts. Network removal first
 writes `network-removal.json`; every subsequent network read/mutation resumes cleanup before exposing
-or restoring the network. Account/group deletion removes only the deleted accounts' token caches
-through the existing recoverable lifecycle, retaining the shared watchlist.
+or restoring the network, including clearing native-only portfolio entries. Account/group deletion
+removes only the deleted accounts' token and portfolio caches through the existing recoverable
+lifecycle, retaining the shared watchlist.
 
 Balance commits recheck active registry membership/revision, network settings, exact override map,
 watchlist revision, and per-account refresh ID. Lock order is registry → networks → RPC overrides →
@@ -717,16 +723,24 @@ account toolbar (copy address and the account menu).
   canonical URL without a redirect. The catalog returns its last known `priceUsd` for every status and
   nulls it only when no price is known, so the wallet treats `priceUsd` as availability and `status`
   as freshness: a `stale`, `price_unavailable`, `upstream_error`, or `rate_limited` entry still shows
-  its retained price. The wallet also remembers the last priced quote per identity for the session, so
-  a later response with no price never blanks a value already shown. Responses that carry a price (any
+  its retained price. The wallet remembers the last priced quote per identity for the session and
+  persists account-bound prices in `tokens.json`, so a later response with no price never blanks a
+  value already shown, including after relaunch. Responses that carry a price (any
   status) or a definitive `not_found` are cached in memory for at most 60 seconds, bounded by HTTP
   freshness (`Cache-Control`, `Age`, and `Date`); a response that retains no price is retried rather
   than cached as a miss. The normal HTTP cache still respects the service's retry window. A value is
   shown as `—` only when no price has ever been known. Each entry's `priceChange.h24`, a signed percent
   string, is used only for an `ok` status, since the service withholds changes for every other status;
-  entries without a usable change contribute a price but no change. Values are fetched after the
-  balances are already on screen, so a
-  slow or failed price refresh never delays the balance display.
+  entries without a usable change contribute a price but no change. Account selection synchronously
+  hydrates the holdings, ordering, total, and change from cached balances and quotes before any network
+  wait. Balance batches progressively recompute values using the retained prices; the subsequent price
+  request replaces those quotes. The total and all holding/distribution rows use 60% opacity throughout
+  balance and price revalidation, returning to full opacity when it completes. Overlapping refreshes
+  coalesce through the price phase. Failed native reads retain their last successful portfolio amounts;
+  successful zero balances remove the holding. Price commits use the same context/revision/refresh-ID
+  guards as balance commits, and account switching cancels publication from the previous refresh.
+  A first-ever price still requires a successful fetch; a slow or failed refresh never blocks cached
+  portfolio display.
 - The revealed rows are presentation only: they read the same tracked balances as the rest of the
   app, and tapping a holding never navigates. Only a grouped row's caret expands its per-chain
   distribution. Token detail and removal stay in Settings → Tokens. Raw token amounts are no longer
@@ -1533,6 +1547,7 @@ Use the production App Group for shared non-secret state:
 - Current chain and network metadata.
 - Validated user RPC overrides.
 - Shared ERC-20 token definitions and account-specific raw balance caches (`tokens.json`).
+- Account-specific portfolio prices and per-network native amounts (also in `tokens.json`).
 - Connected-site grants keyed by normalized origin, not hostname alone.
 - Pending signing records and replay state.
 - SQLite activity database.

@@ -274,7 +274,7 @@ public actor StupidTokensClient {
   }
 
   /// A quote's own metadata with a fallback quote's price and change.
-  private static func merging(_ quote: PriceQuote?, with last: PriceQuote) -> PriceQuote {
+  static func merging(_ quote: PriceQuote?, with last: PriceQuote) -> PriceQuote {
     guard let quote, quote.priceUSD == nil else { return quote ?? last }
     return PriceQuote(
       priceUSD: last.priceUSD, change24h: last.change24h,

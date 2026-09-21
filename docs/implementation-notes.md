@@ -8751,3 +8751,46 @@ Verification:
 - `swift test`: 380 Swift Testing tests in 41 suites and 14 XCTest cases passed, with the two-decimal
   cases and updated portfolio value displays.
 - `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed.
+
+## 2026-09-21 — Persisted portfolio prices and launch-time SWR
+
+### Summary
+
+- Home now renders cached token values, native holdings, ordering, total, and 24-hour changes before
+  awaiting RPC or catalog requests. Previously token amounts were durable but prices only survived in
+  the catalog client's memory, and portfolio construction waited for the price response.
+- Added an optional account-bound `portfolios` field to the existing schema-1 `tokens.json`. It stores
+  last-known prices and changes, display symbols/decimals, timestamps, and per-network native amounts
+  with endpoint provenance. Existing stores without the field remain readable. Canonical ERC-20
+  amounts and metadata retain their existing authority, and icons remain unpersisted.
+- Cached prices continue valuing progressively refreshed balances. Null prices, unavailable catalog
+  responses, and failed native reads retain successful values; successful zero balances remove
+  holdings. Token, native-only network, and account removal also remove the applicable portfolio cache.
+- The portfolio total, grouped rows, and expanded distribution use 60% opacity throughout balance and
+  price refresh, then return to full opacity. Refresh coalescing now includes the price phase, and
+  canceled/account-switched results cannot publish or save prices. Persistence reuses the existing
+  context, revision, and refresh-ID checks and lock order.
+- Updated the handover and debugging skill with durable-price hydration and price-phase loading
+  diagnostics, including the current bulk-response native-icon source.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` on the eight changed Swift files: passed.
+- `swift test --filter 'PortfolioSWRTests|TokenBalanceTests|TokenSearchTests|PortfolioTests'` initially
+  caught an optional-dictionary assignment compile error and test expectations that incorrectly
+  required trailing decimal zeroes. Both were corrected to match Swift typing and the existing formatter.
+- `swift test`: 386 Swift Testing tests in 42 suites and 14 XCTest cases passed. Six new regression
+  tests cover fresh-service relaunch hydration, price-phase loading/coalescing, null/offline retention,
+  zero balances, account switching during prices, cleanup and late writes, old schema-1 input, and
+  corrupt-cache preservation. All balance/catalog requests in these tests are stubbed.
+- `stupid-app doctor`: zero failures and warnings, using CLI 0.0.18 and Swift 6.4 / iOS SDK 27.
+- `stupid-app build`: passed. `stupid-app run --simulator --udid <preferred-simulator>`: installed and
+  launched. Accessibility inspection and a screenshot confirmed the populated portfolio and settled
+  row presentation on the preferred simulator.
+- `git diff --check`: passed.
+
+### Limitations
+
+- A previously uncached identity requires its first successful price fetch. The interrupted-refresh
+  dimming state is covered by deterministic model tests and the SwiftUI binding; the simulator smoke
+  check inspected the completed refresh. Physical-device acceptance was not run.
