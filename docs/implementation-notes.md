@@ -8887,6 +8887,11 @@ Verification:
   `visibleAccounts` for a test origin, and `pairStatus` all returned successful responses with empty
   stderr. No wallet address was printed.
 - `SHA256SUMS` verification passes for the helper ZIP, extension ZIP, and installation guide.
+- Published GitHub prerelease `chrome-v0.0.8-beta.1` at
+  <https://github.com/stephancill/stupid-wallet-v2/releases/tag/chrome-v0.0.8-beta.1> from pushed
+  commit `8b1c3d8`, attaching exactly the helper ZIP, extension ZIP, `RELEASE-INSTALL.md`, and
+  `SHA256SUMS`. Re-downloading every uploaded asset and comparing SHA-256 against the local files
+  matched for all four, and the downloaded `SHA256SUMS` verifies the other three.
 
 ### Follow-Up
 
