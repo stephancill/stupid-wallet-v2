@@ -42,12 +42,15 @@ public struct PriceQuote: Sendable, Equatable {
   public let imageURL: URL?
   /// When this price was received from the catalog; cache reads and fallback merges preserve it.
   public let updatedAt: Date
+  /// When this change was received, when it outlived the price it arrived with. A retained change
+  /// expires on its own clock so it can never be shown longer than the price retention window.
+  public let changeUpdatedAt: Date?
 
   public var hasMetadata: Bool { symbol != nil || decimals != nil || imageURL != nil }
 
   public init(
     priceUSD: String?, change24h: String? = nil, symbol: String? = nil, decimals: UInt8? = nil,
-    imageURL: URL? = nil, updatedAt: Date = Date()
+    imageURL: URL? = nil, updatedAt: Date = Date(), changeUpdatedAt: Date? = nil
   ) {
     self.priceUSD = priceUSD
     self.change24h = change24h
@@ -55,14 +58,20 @@ public struct PriceQuote: Sendable, Equatable {
     self.decimals = decimals
     self.imageURL = imageURL
     self.updatedAt = updatedAt
+    self.changeUpdatedAt = changeUpdatedAt
   }
 
+  /// Drops an expired price and an expired change independently; metadata never expires.
   func valid(at now: Date) -> PriceQuote {
-    guard now < updatedAt.addingTimeInterval(Self.maximumCacheAge) else {
-      return PriceQuote(
-        priceUSD: nil, symbol: symbol, decimals: decimals, imageURL: imageURL, updatedAt: updatedAt)
-    }
-    return self
+    let priceValid = now < updatedAt.addingTimeInterval(Self.maximumCacheAge)
+    let changeValid =
+      change24h != nil
+      && now < (changeUpdatedAt ?? updatedAt).addingTimeInterval(Self.maximumCacheAge)
+    guard !priceValid || !changeValid else { return self }
+    return PriceQuote(
+      priceUSD: priceValid ? priceUSD : nil, change24h: changeValid ? change24h : nil,
+      symbol: symbol, decimals: decimals, imageURL: imageURL, updatedAt: updatedAt,
+      changeUpdatedAt: changeUpdatedAt)
   }
 }
 
@@ -275,10 +284,13 @@ public actor StupidTokensClient {
       }
       index += 50
     }
-    // Stale-while-revalidate: keep showing the last known price when this refresh has none.
-    for request in Set(requests) where resolved[request]?.priceUSD == nil {
+    // Stale-while-revalidate: keep the last known price and change when this refresh lacks either.
+    // A non-`ok` status returns a price without a change, which must not blank a change already shown.
+    for request in Set(requests) {
       guard let last = lastKnownPrices[request] else { continue }
-      resolved[request] = Self.merging(resolved[request], with: last)
+      let quote = resolved[request]
+      guard quote?.priceUSD == nil || quote?.change24h == nil else { continue }
+      resolved[request] = Self.merging(quote, with: last)
     }
     let date = now()
     return resolved.mapValues { $0.valid(at: date) }.filter {
@@ -287,18 +299,32 @@ public actor StupidTokensClient {
   }
 
   /// Retains the most recent quote that carried a price, for stale-while-revalidate display.
+  ///
+  /// The retained quote also carries forward a change the latest response withheld, so a non-`ok`
+  /// status cannot blank a change that was already known.
   private func remember(_ quote: PriceQuote, for request: PriceRequest) {
     guard quote.priceUSD != nil else { return }
-    lastKnownPrices[request] = quote
+    lastKnownPrices[request] =
+      lastKnownPrices[request].map { Self.merging(quote, with: $0) } ?? quote
   }
 
-  /// A quote's own metadata with a fallback quote's price and change.
+  /// A quote's own fields with a fallback quote's price and change, each keeping its own receipt time.
+  ///
+  /// The catalog withholds `priceChange.h24` for every non-`ok` status while still returning its last
+  /// known price, so a freshness flip must not discard a change the wallet already showed. Without
+  /// this, a single stale response for a dominant holding collapses the portfolio change to whatever
+  /// small holdings remain.
   static func merging(_ quote: PriceQuote?, with last: PriceQuote) -> PriceQuote {
-    guard let quote, quote.priceUSD == nil else { return quote ?? last }
+    guard let quote else { return last }
     return PriceQuote(
-      priceUSD: last.priceUSD, change24h: last.change24h,
+      priceUSD: quote.priceUSD ?? last.priceUSD,
+      change24h: quote.change24h ?? last.change24h,
       symbol: quote.symbol ?? last.symbol, decimals: quote.decimals ?? last.decimals,
-      imageURL: quote.imageURL ?? last.imageURL, updatedAt: last.updatedAt)
+      imageURL: quote.imageURL ?? last.imageURL,
+      updatedAt: quote.priceUSD != nil ? quote.updatedAt : last.updatedAt,
+      changeUpdatedAt: quote.change24h != nil
+        ? (quote.changeUpdatedAt ?? quote.updatedAt)
+        : last.change24h != nil ? (last.changeUpdatedAt ?? last.updatedAt) : nil)
   }
 
   private struct PriceBatch {

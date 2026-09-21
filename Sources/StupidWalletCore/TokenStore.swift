@@ -223,7 +223,8 @@ public struct TokenStore: Sendable {
           request.address == "native" || ids.contains(id),
           price.priceUSD.map({ DecimalValue.parse($0) != nil }) ?? true,
           price.change24h.map({ DecimalValue.signed($0) != nil }) ?? true,
-          price.updatedAt.timeIntervalSince1970.isFinite
+          price.updatedAt.timeIntervalSince1970.isFinite,
+          price.changeUpdatedAt?.timeIntervalSince1970.isFinite ?? true
         else { throw TokenError.corrupt }
       }
     }

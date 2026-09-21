@@ -546,7 +546,8 @@ watch registration first. Watch-to-key group conversion is not implemented.
 Watches use the normal home selector, label editing, native/token balance caches and USD portfolio.
 An initial watch can complete empty-installation setup without authentication; additive imports retain
 the prior home selection. Accounts, the account menu and Settings identify watches with a muted eye
-icon inline beside the shortened address (with watch-only accessibility context), and
+icon inline beside the shortened address (with watch-only accessibility context). The account menu's
+icon is deliberately smaller than the surrounding label text, and
 Settings hides Private Key and Authorizations. Tokens still use the shared manually tracked list;
 watch import does not discover all holdings automatically. Activity remains local recorded activity.
 
@@ -585,7 +586,8 @@ The contract address is copied through the standard long-press edit menu, which 
 stored address. Balance rows, timestamps, and refresh stay in the Home and Settings lists, where
 pull-to-refresh revalidates; the list does not label a retained value as cached.
 
-Add Token is a search screen. It prefills a valid contract address from the clipboard once and
+Add Token is a search screen pushed from the Tokens list, so it uses the standard back button rather
+than a Cancel control and a sheet. It prefills a valid contract address from the clipboard once and
 searches automatically after a 350 ms debounce; editing the query or changing the account cancels the
 previous search and clears its results. The search field shows an inline progress indicator while a
 search is in flight and a clear control, and an empty query shows no results and no guidance row.
@@ -603,7 +605,7 @@ Clipboard access uses the standard system pasteboard behavior.
   disabled. Rows with no catalog market cap show none.
 - Selecting a result asks for confirmation in a modal alert naming the token and its network, with
   Add Token as the emphasized default action (including the Return keyboard shortcut). The
-  import validates the token on chain, keeps the sheet open, and flips that row to its tracked state
+  import validates the token on chain, keeps the screen open, and flips that row to its tracked state
   so further tokens can be added in the same session.
 - When an exact contract address has no catalog match on any configured network, the screen shows a
   network picker and validates the address on chain on the selected network, which keeps importing
@@ -678,7 +680,8 @@ Token-specific physical-device acceptance remains separate from the existing sig
 
 Home pages vertically between two full screens, like a short-video feed, using a paging scroll view
 so the transition follows the finger with native scrolling physics. The landing screen centres the
-native balance; the token screen leads with the total USD value, then the value-ordered holdings, and
+native balance slightly above the page's midpoint; the token screen leads with the total USD value,
+then the value-ordered holdings, and
 keeps the account's tracked-token errors. The holdings render as plain asset rows without grouped
 section backgrounds; importing tokens lives in Settings → Tokens, so the token screen has no Add
 Token action. Each page fills the viewport exactly, including the bottom safe area, so no part of the
@@ -716,8 +719,10 @@ account toolbar (copy address and the account menu).
   change is the value-weighted change of its holdings: the current priced value over the sum of each
   holding's value discounted by its own change, so it is a true portfolio change rather than an
   average of percentages. The same computation across every holding produces the total's change.
-  A priced holding that reports no change (the catalog withholds `h24` for any non-`ok` status) is left
-  out of both sides of the ratio; when no holding reports a change, no change line is shown.
+  A priced holding with no known change is left out of both sides of the ratio; when no holding
+  reports a change, no change line is shown. A change is retained alongside a retained price (see
+  below), so a single non-`ok` response for a dominant holding cannot collapse the total to whatever
+  small holdings still report a change.
 - Prices, symbols, decimals, and icons come from one cacheable
   `GET /v1/prices?tokens=chainId:address,...` call per refresh, up to 50
   identities per request with the native currency expressed as the literal address `native`.
@@ -730,9 +735,13 @@ account toolbar (copy address and the account menu).
   its retained price. The wallet remembers the last priced quote per identity for the session and
   persists account-bound prices in `tokens.json`, retaining them for up to 24 hours after receipt of a
   priced catalog response, including after relaunch. Cache hits, null responses, and failed refreshes
-  preserve the original receipt timestamp rather than extending that window. At 24 hours the price
-  and its retained change become unavailable: the holding shows `—` and contributes to neither the
-  USD total nor the portfolio change. Balances and display metadata remain available. Expiry is checked
+  preserve the original receipt timestamp rather than extending that window. A retained quote also
+  carries forward the last known `h24` change when a later response withholds it, because the service
+  returns a price but no change for every non-`ok` status. The change keeps its own receipt time and
+  expires 24 hours after it was last reported, so retention never outlives the price window even while
+  fresh prices keep arriving; a new `ok` response replaces it. At 24 hours the price becomes
+  unavailable: the holding shows `—` and contributes to neither the USD total nor the portfolio change.
+  Balances and display metadata remain available. Expiry is checked
   on hydration and every portfolio rebuild; a cancellable task at the next expiry also updates an
   already-visible portfolio without another network request. A new priced response starts a new
   24-hour window; this is local cache age, not a limit on the catalog's underlying source timestamp.
@@ -741,8 +750,9 @@ account toolbar (copy address and the account menu).
   freshness (`Cache-Control`, `Age`, and `Date`); a response that retains no price is retried rather
   than cached as a miss. The normal HTTP cache still respects the service's retry window. A value is
   shown as `—` when no price is known or its cached price has expired. Each entry's `priceChange.h24`, a signed percent
-  string, is used only for an `ok` status, since the service withholds changes for every other status;
-  entries without a usable change contribute a price but no change. Account selection synchronously
+  string, is accepted only for an `ok` status, since the service withholds changes for every other
+  status; such an entry still refreshes the price and contributes its change only when one is known.
+  Account selection synchronously
   hydrates the holdings, ordering, total, and change from cached balances and quotes before any network
   wait. Balance batches progressively recompute values using the retained prices; the subsequent price
   request replaces those quotes. The total and all holding/distribution rows use 60% opacity throughout

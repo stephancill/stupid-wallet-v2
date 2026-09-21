@@ -57,7 +57,6 @@ import SwiftUI
 
   struct TokensView: View {
     @ObservedObject var balances: WalletBalanceModel
-    @State private var showAdd = false
 
     var body: some View {
       List {
@@ -69,7 +68,9 @@ import SwiftUI
             }
           }
         }
-        Section { Button("Add Token") { showAdd = true } }
+        Section {
+          NavigationLink(destination: AddTokenView(balances: balances)) { Text("Add Token") }
+        }
         if let error = balances.error { Section { Text(error).foregroundStyle(.red) } }
       }
       .listStyle(.insetGrouped)
@@ -77,7 +78,6 @@ import SwiftUI
       .navigationBarTitleDisplayMode(.inline)
       .task { await balances.refresh() }
       .refreshable { await balances.refresh() }
-      .sheet(isPresented: $showAdd) { NavigationView { AddTokenView(balances: balances) } }
     }
   }
 
@@ -133,7 +133,6 @@ import SwiftUI
 
   struct AddTokenView: View {
     @ObservedObject var balances: WalletBalanceModel
-    @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var candidates: [TokenCandidate] = []
     @State private var networks: [WalletNetwork] = []
@@ -204,9 +203,6 @@ import SwiftUI
       .listStyle(.insetGrouped)
       .navigationTitle("Add Token")
       .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-      }
       .onAppear {
         guard !initialized else { return }
         initialized = true

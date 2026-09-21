@@ -8900,3 +8900,58 @@ Verification:
   should perform. Watch tolerance therefore rests on the shared-core contract test plus the installed
   helper's use of that core, not on a live watch-present popup run.
 - Clean-machine installation and the reserved Chrome Web Store identity remain open, as before.
+
+## 2026-09-21 — Home layout polish and retained portfolio changes
+
+### Summary
+
+- Add Token is now pushed from the Tokens list instead of presented as a sheet, so the screen uses the
+  standard back button rather than a Cancel control. The search, debounce, clipboard prefill,
+  confirmation alert, and keep-the-screen-open import behaviour are unchanged.
+- The landing screen's native balance now sits slightly above the page midpoint: the centred block is
+  offset by 5.3% of the page height, which places its centre at 52% of the screen. A named constant
+  documents the bias instead of a bare fraction.
+- The watch-only eye icon in the account menu is smaller (10-point symbol) so it reads as an
+  annotation beside the shortened address. The Accounts picker and Settings identity row keep their
+  existing sizing; the picker and Settings are otherwise untouched.
+- Fixed the incoherent portfolio 24-hour change. The total was computed only over holdings whose
+  catalog `status` was `ok`, because the service withholds `priceChange.h24` for every other status.
+  A single non-`ok` response for Ethereum, which held ~99.8% of the tested portfolio, collapsed the
+  total to the remaining ~$110k of small holdings: the app displayed `+$1,527.3 (+1.41%)` under a
+  $34.5M total while the ETH row showed `+5.96%`.
+- A retained price now carries the last known change with it. `StupidTokensClient.merging` prefers each
+  field independently and the session's last-known quote keeps a change the latest response withheld,
+  so a freshness flip no longer blanks a change that was already shown. The model already merged
+  against its own retained quotes, so both layers now agree.
+- A retained change keeps its own receipt time (`changeUpdatedAt`, persisted as an optional field so
+  existing `tokens.json` files still decode). It expires 24 hours after it was last reported even while
+  fresh prices keep arriving, and the next `ok` response replaces it. This keeps the documented 24-hour
+  bound true for the change as well as the price.
+
+### Why
+
+- The reported symptom was two-fold: the ETH row's change vanished between refreshes, and the total
+  change did not correspond to the displayed portfolio. Both came from the same cause — treating a
+  withheld change as "no change" rather than reusing the change already known — and the second was
+  amplified because the affected holding dominated the portfolio.
+
+### Verification
+
+- Diagnosis was reproduced from the app's own persisted state: recomputing the covered holdings from
+  the simulator's `tokens.json` produced exactly the displayed `+$1,527.30` / `1.4132%`, with the
+  Ethereum-native entry carrying a price but no change.
+- `swift format --in-place` and `swift format lint --strict` on the changed Swift files: passed.
+- `swift test`: 392 Swift Testing tests in 42 suites and 14 XCTest cases passed. Two new regressions
+  cover a stale flip retaining a dominant holding's change (including across relaunch) and a retained
+  change expiring on its own clock while its price stays fresh.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed. Measured
+  screenshot geometry put the balance centre at 52.02% of the screen; the account menu showed the
+  smaller eye; and the token screen then read `+$1,921,691.98 (+5.88%)` under a $34,572,000.46 total
+  against the ETH row's `+5.90%`.
+
+### Follow-Up
+
+- The total change still covers only holdings with a known change. Retention makes that coherent in
+  practice, but a holding whose change has never been reported is still excluded from both sides of
+  the ratio; revisiting that would change the documented aggregation semantics.
+- Physical-device acceptance of the layout tweaks was not run.

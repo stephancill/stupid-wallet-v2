@@ -274,9 +274,10 @@ struct PortfolioSWRTests {
     clock.advance(seconds: 1)
     let expired = await client.prices(for: [request])[request]
     #expect(expired?.priceUSD == nil)
-    #expect(expired?.change24h == nil)
     #expect(expired?.symbol == "ETH")
     #expect(expired?.decimals == 18)
+    // The change arrived with the most recent response, so it keeps its own, later receipt time.
+    #expect(expired?.change24h == "25")
   }
 
   @Test("a visible portfolio expires cached prices without another refresh")
@@ -316,6 +317,68 @@ struct PortfolioSWRTests {
     #expect(catalog.requests.count == requestCount)
   }
 
+  @Test("a stale flip keeps a dominant holding's change instead of collapsing the total")
+  @MainActor func retainedChangeAcrossStaleFlip() async throws {
+    let catalog = SearchHTTPStub(responseHeaders: ["Cache-Control": "no-cache"])
+    defer { catalog.close() }
+    catalog.respond = { _ in (200, priceBody(nativePrice: "1000", tokenPrice: "2")) }
+    let environment = try BalanceEnvironment(tokenSearch: catalog.client())
+    defer { environment.close() }
+    _ = try environment.addToken()
+    environment.stub.respond = { request in try balanceBody(request: request) }
+    let wallet = WalletBalanceModel(service: environment.service)
+    wallet.selectAccount(environment.accounts[0])
+    await wallet.refresh()
+    let priced = try #require(wallet.portfolioChange)
+    #expect(priced.percent == "24.92")
+    #expect(wallet.portfolioGroups.map(\.symbol) == ["ETH", "USDC"])
+
+    // A non-`ok` status returns a price but no change for every identity.
+    catalog.respond = { _ in
+      (200, priceBody(nativePrice: "1000", tokenPrice: "2", withChanges: false))
+    }
+    await wallet.refresh()
+    #expect(wallet.portfolioChange == priced)
+    #expect(wallet.portfolioTotalDisplay == "$1,002.5")
+    #expect(wallet.portfolioGroups.allSatisfy { $0.changeDisplay != nil })
+
+    // The retained change is durable, not just session memory.
+    let relaunched = model(environment: environment, catalog: catalog)
+    relaunched.selectAccount(environment.accounts[0])
+    #expect(relaunched.portfolioChange == priced)
+  }
+
+  @Test("a retained change expires on its own 24-hour clock while its price stays fresh")
+  func retainedChangeExpiry() async throws {
+    let clock = PortfolioTestClock()
+    let receivedAt = clock.date
+    let catalog = SearchHTTPStub(responseHeaders: ["Cache-Control": "no-cache"])
+    defer { catalog.close() }
+    let client = catalog.client(now: { clock.date })
+    let request = try #require(PriceRequest(chainID: "1", address: "native"))
+    catalog.respond = { _ in (200, priceBody(nativePrice: "1000", tokenPrice: nil)) }
+    #expect(await client.prices(for: [request])[request]?.change24h == "25")
+
+    catalog.respond = { _ in
+      (200, priceBody(nativePrice: "1000", tokenPrice: nil, withChanges: false))
+    }
+    clock.advance(seconds: 60)
+    let retained = await client.prices(for: [request])[request]
+    #expect(retained?.change24h == "25")
+    #expect(retained?.priceUSD == "1000")
+
+    clock.advance(seconds: 86_339)
+    let stillRetained = await client.prices(for: [request])[request]
+    #expect(stillRetained?.change24h == "25")
+    #expect(stillRetained?.updatedAt == clock.date)
+
+    clock.advance(seconds: 1)
+    let expired = await client.prices(for: [request])[request]
+    #expect(expired?.change24h == nil)
+    #expect(expired?.priceUSD == "1000")
+    #expect(expired?.changeUpdatedAt == receivedAt)
+  }
+
   @MainActor private func model(
     environment: BalanceEnvironment, catalog: SearchHTTPStub,
     now: @escaping @Sendable () -> Date = { Date() }
@@ -340,14 +403,18 @@ private final class PortfolioTestClock: @unchecked Sendable {
   }
 }
 
-private func priceBody(nativePrice: String?, tokenPrice: String?) -> Data {
+private func priceBody(
+  nativePrice: String?, tokenPrice: String?, withChanges: Bool = true
+) -> Data {
   let native = nativePrice.map { "\"\($0)\"" } ?? "null"
   let token = tokenPrice.map { "\"\($0)\"" } ?? "null"
+  let nativeChange = withChanges ? #","priceChange":{"h24":"25"}"# : ""
+  let tokenChange = withChanges ? #","priceChange":{"h24":"0"}"# : ""
   return Data(
     """
     {"currency":"usd","prices":[
-      {"chainId":1,"address":"native","status":"ok","priceUsd":\(native),"symbol":"ETH","decimals":18,"priceChange":{"h24":"25"},"imageUrl":"https://example.com/eth.png"},
-      {"chainId":1,"address":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd","status":"ok","priceUsd":\(token),"symbol":"USDC","decimals":6,"priceChange":{"h24":"0"}}
+      {"chainId":1,"address":"native","status":"ok","priceUsd":\(native),"symbol":"ETH","decimals":18\(nativeChange),"imageUrl":"https://example.com/eth.png"},
+      {"chainId":1,"address":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd","status":"ok","priceUsd":\(token),"symbol":"USDC","decimals":6\(tokenChange)}
     ]}
     """.utf8)
 }

@@ -12,6 +12,8 @@ struct PortfolioPriceEntry: Codable, Sendable, Equatable {
   let symbol: String?
   let decimals: UInt8?
   let updatedAt: Date
+  /// Present only when the change outlived the price it arrived with. Older files omit it.
+  let changeUpdatedAt: Date?
 
   init(quote: PriceQuote) {
     priceUSD = quote.priceUSD
@@ -19,12 +21,13 @@ struct PortfolioPriceEntry: Codable, Sendable, Equatable {
     symbol = quote.symbol
     decimals = quote.decimals
     updatedAt = quote.updatedAt
+    changeUpdatedAt = quote.changeUpdatedAt
   }
 
   var quote: PriceQuote {
     PriceQuote(
       priceUSD: priceUSD, change24h: change24h, symbol: symbol, decimals: decimals,
-      updatedAt: updatedAt)
+      updatedAt: updatedAt, changeUpdatedAt: changeUpdatedAt)
   }
 }
 

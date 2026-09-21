@@ -117,6 +117,8 @@ import SwiftUI
 
     private static let balancePage = "balancePage"
     private static let tokenPage = "tokenPage"
+    /// Lifts the centred balance so it lands slightly above the page's midpoint.
+    private static let balanceVerticalBias: CGFloat = 0.053
 
     private var hasHoldings: Bool { !vm.balances.portfolioHoldings.isEmpty }
 
@@ -189,12 +191,16 @@ import SwiftUI
     }
 
     private var balanceScreen: some View {
-      VStack(spacing: 0) {
-        Spacer(minLength: 0)
-        balanceBlock
-        Spacer(minLength: 0)
+      GeometryReader { geometry in
+        VStack(spacing: 0) {
+          Spacer(minLength: 0)
+          balanceBlock
+          Spacer(minLength: 0)
+        }
+        .frame(width: geometry.size.width, height: geometry.size.height)
+        // Sit above the true vertical centre; the page caret keeps the seam it already owns.
+        .offset(y: -geometry.size.height * Self.balanceVerticalBias)
       }
-      .frame(maxWidth: .infinity)
       .background(Color(.systemBackground))
     }
 
@@ -442,7 +448,7 @@ import SwiftUI
             HStack(spacing: 4) {
               Text(displayAddress)
               if isWatchOnly {
-                Image(systemName: "eye").accessibilityLabel("Watch-only")
+                Image(systemName: "eye").font(.system(size: 10)).accessibilityLabel("Watch-only")
               }
             }
             .font(.footnote)
