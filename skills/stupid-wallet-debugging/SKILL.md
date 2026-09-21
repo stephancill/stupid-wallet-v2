@@ -82,6 +82,9 @@ generic error text and do not bypass the canonical approval protocol.
     A booted simulator with hanging launch and screenshot commands recovered after shutting down the
     target and restarting the stale CoreSimulator service, then rebuilding/installing through
     `stupid-app`. Do not erase wallet state to repair an input/launch transport failure.
+    If AXe is unavailable, tapping the on-screen keyboard keys from fresh IDB accessibility frames
+    also enters text reliably; `idb ui tap` requires integer coordinates. Re-read the field's actual
+    value and filtered rows before claiming a search passed.
 17. Device Hub's shared clipboard can overwrite `simctl pbcopy` with the host clipboard. For a
     clipboard UI test, compare the simulator value with the expected public test string without
     printing unexpected clipboard contents; synchronize that test string with host `pbcopy` when
@@ -90,8 +93,17 @@ generic error text and do not bypass the canonical approval protocol.
 18. AXe can expose a SwiftUI text-field placeholder under `AXValue` with a null `AXLabel`; target it
     with `tap --value <placeholder> --element-type TextField`. On Xcode 27 an automatic/simulator tap
     can report success without focusing the field. Use `--tap-style physical` and verify the typed
-    value from a fresh tree before continuing. Also check that a button is enabled: account selection
-    can keep the Accounts Close button disabled while its balance refresh is still finishing.
+     value from a fresh tree before continuing. Also check that a button is enabled: account selection
+     can keep the Accounts Close button disabled while its balance refresh is still finishing.
+19. On Xcode 27, `simctl pbcopy` can exit successfully while the simulator's general pasteboard
+    remains empty, leaving native text fields with AutoFill but no Paste. Confirm metadata with
+    `xcrun devicectl device pasteboard info --device <simulator>` rather than changing the field.
+    `printf %s '<public-test-text>' | xcrun devicectl device pasteboard copy --device <simulator>`
+    populated the clipboard and restored native long-press Paste in the recipient input. Use
+    `device pasteboard transfer to --device <simulator>` to copy the Mac clipboard once, or inspect
+    `device pasteboard sync-with-host --help` for a bounded sync session. Never print the user's
+    clipboard contents; verify public fixtures with equality checks. A shutdown simulator reports
+    unsupported Pasteboard capability instead of an empty clipboard; boot it before retrying.
 
 ## Stack Map
 
@@ -156,6 +168,10 @@ https://app.uniswap.org/swap?chain=base&inputCurrency=<token>&outputCurrency=NAT
   out of the parent view's state and the holdings list. Derive its direction, accessibility label,
   and tap target from the same geometry: `ScrollViewReader.scrollTo` can move the page before the
   `scrollPosition` binding reflects it. Verify both caret taps and a partial drag that snaps back.
+- A SwiftUI Form row containing a flexible TextField followed by a trailing currency label can
+  automatically align its separator to that label, leaving only a short trailing line. Set the row's
+  `.alignmentGuide(.listRowSeparatorLeading) { _ in 0 }` explicitly (and the adjacent information row
+  when needed), then verify the inset-width separator visually with both empty and populated input.
 
 ### 2. Locate The Boundary
 
@@ -394,6 +410,22 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
 
 ### 6. Verify RPC Behavior
 
+- Native Max is a read-only fee-reserved preview, not a signing or sweep proof. Inspect the pending
+  balance cap and gas estimate for the actual candidate value, not only its initial probe. OP Stack
+  execution gas alone omits L1 data and operator fees: the maximum preview includes the standard
+  oracle's upper-bound data fee and operator quote, and fails if those reads fail. Run
+  `SEND_MAXIMUM_LIVE_TESTS=1 swift test --filter NativeSendMaximumLiveTests` for public simulation
+  fixtures without signing. UI testing should edit either the token or USD input during a pending
+  Max request and verify the late reply cannot overwrite the user's amount, even when the edit
+  rounds to the same token base units. USD display rounding and passive price refreshes must never
+  change the canonical token quantity; only an explicit USD edit converts dollars back to tokens.
+- Send recipient ENS lookup always starts on Ethereum mainnet through the shared RPC resolver,
+  even when the asset is on an L2. Check the selected asset's ENSIP-11 coin type separately from
+  the RPC chain; a valid Ethereum address record does not prove a receiving record for Base.
+  Run `ENS_LIVE_TESTS=1 swift test --filter ENSLiveTests` for public read-only fixtures; the ordinary
+  test suite keeps these calls disabled. A CCIP gateway response alone is not resolution proof:
+  require the original Universal Resolver's callback to succeed, then decode its canonical result.
+  Clearing/editing input or switching the asset chain must remove selectable stale results.
 - Home token reads use `WalletBalanceModel` → `WalletBalanceService` → `RPCClient.readBatch`.
   Inspect network/override/watchlist context and per-account `tokens.json` timestamps before blaming
   formatting. Array response order is not request order; correlate IDs. Cached rows after a failure

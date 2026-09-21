@@ -764,10 +764,12 @@ account toolbar (copy address and the account menu).
   guards as balance commits, and account switching cancels publication from the previous refresh.
   A first-ever price still requires a successful fetch; a slow or failed refresh never blocks cached
   portfolio display.
-- The revealed rows are presentation only: they read the same tracked balances as the rest of the
-  app, and tapping a holding never navigates. Only a grouped row's caret expands its per-chain
-  distribution. Token detail and removal stay in Settings → Tokens. Raw token amounts are no longer
-  displayed anywhere; the list shows values instead.
+- Tapping a holding retains its existing presentation behavior; grouped rows expand their per-chain
+  distribution. Each portfolio row has a trailing swipe-to-Send action. Single-network holdings and
+  expanded network rows open Send with that exact chain/token selected. A multi-network group opens
+  directly to Send's asset search with its symbol prefilled, so the user selects the concrete network
+  holding. Token detail and removal stay in Settings → Tokens. Home's holdings list shows USD values
+  rather than raw token amounts; Send's asset picker shows token balances.
 - `Simple7702AccountDeploymentStore` treats an unrecognized deployments cache shape as empty instead
   of failing, because that file is only a positive verification cache that is re-checked on chain.
   Previously a legacy cache file made RPC override saves fail with "could not be saved".
@@ -775,18 +777,107 @@ account toolbar (copy address and the account menu).
 ### App-Initiated Send
 
 The token screen carries a floating Liquid Glass action group (`Send`) pinned near the
-bottom edge above the home indicator. On iOS 26 the action uses the system glass button style with
-a larger text size and generous padding; on earlier supported systems it falls back to a bordered
+bottom edge above the home indicator. The action lives in the viewport overlay, staying in place
+during partial and reversed drags as well as caret-driven paging. Its opacity follows a smoothstep
+curve over the portfolio half of the actual page-swipe progress: fully visible on the portfolio,
+invisible at the midpoint and throughout the balance half. The token page reserves its height so
+holdings remain clear of the action; interaction and accessibility are disabled while the fade is
+zero. On iOS 26 the action uses the system glass button style with a larger text size and generous
+padding; on earlier supported systems it falls back to a bordered
 capsule. Swap joins the same group when it is
 implemented, and only `Send` exists today.
 
-Send presents a wallet-owned sheet with a flat per-chain asset picker (native currency of every
-included network plus every non-zero tracked ERC-20, each row labelled with its network), a decimal
-amount field with the available balance, and a recipient field that renders the deterministic
-squircle blockie inline once a valid 20-byte address is entered. Choosing an asset is a concrete
+Send presents a wallet-owned sheet ordered To → Asset → Amount → Send. The To row opens a recipient
+picker; the flat per-chain asset picker lists the native currency of every included network plus
+every non-zero tracked ERC-20, each row labelled with its network. The decimal amount field shows the
+available balance. The recipient picker lists
+every active registered account under its wallet-group label, including watch-only accounts and the
+sending account. Choosing an account returns to the Send form without changing the Home account.
+A separate Address or ENS name field accepts pasted or typed non-zero 20-byte Ethereum addresses
+through the standard text-editing Paste menu, with a Use address row to confirm and return. An inline
+clear control empties the field and keeps keyboard focus. Back navigation leaves the prior recipient
+unchanged. Recipient rows show a squircle blockie, account label (or Address), and middle-truncated
+checksummed address; long-press copies the complete address through the shared native edit-menu control.
+Choosing an asset is a concrete
 chain + contract/native target, so a grouped home symbol never hides which chain is being spent.
+The picker has a native search field at the top, filtering by symbol, network, or contract address
+case-insensitively. Picker rows and the selected-asset row show the symbol on the first line, then
+`network • amount symbol`, with the holding's full USD value vertically centered on the right. Token
+amounts round half-up to at most six significant figures using exact decimal-string arithmetic; tiny
+non-zero amounts remain visible. USD values use the portfolio's grouping and two-decimal-place
+formatting. Assets retain the balance model's descending exact USD-value order, with unpriced assets
+last and displayed as `—`; filtering preserves that order.
+Selecting an asset immediately returns to the Send form with that asset chosen. The picker has no
+selected-state checkmark, and choosing the already-selected asset also returns to the form.
+The Available balance follows the selected amount field: token entry shows the holding at six
+significant figures with its symbol; USD entry shows its portfolio dollar value rounded to cents.
+It defaults to tokens, retains the last selected unit when focus leaves the amount fields, and resets
+to tokens when the asset changes. Available uses secondary subheadline typography. The watch-only
+note also uses secondary subheadline text.
+It appears as footer text directly beneath the disabled Send button.
+The amount row explicitly aligns its separator with the leading content inset instead of the trailing
+symbol. Max sits inline immediately before the token symbol; a separate USD input follows the token
+input, with Available beneath both. There are no percentage shortcuts. ERC-20 Max fills the whole
+raw token balance at full asset precision.
+Each nonempty amount input has an inline clear control. Clearing either input clears both synced
+amounts, invalidates an in-flight Max estimate, and keeps focus in the cleared field; Available keeps
+that field's unit. The token clear control precedes Max so Max remains immediately left of the symbol.
+
+`SendAmountInput` synchronizes the fields using the selected holding's available portfolio price and
+exact decimal-string arithmetic. Editing USD divides by the price and floors to whole token base
+units; editing tokens updates the USD display rounded to cents without grouping separators. The
+actively edited text retains trailing decimal separators/zeros. Updating the other field does not
+trigger a reverse conversion, so USD display rounding never changes an exact token amount or Max.
+Both inputs accept the locale decimal separator and pasted dot decimals. Invalid, oversized or
+unsupported-precision input clears the counterpart and cannot submit a stale amount. Clearing either
+field clears the other, and changing assets resets both.
+Passive price updates change only the USD display, keeping the token quantity fixed even when it was
+originally entered in dollars. A missing, zero or invalid price disables USD entry with a Price
+unavailable placeholder; token entry and Max remain usable. USD is an indicative portfolio-price
+conversion, not an exchange quote or a fee-inclusive total; tiny token amounts can display zero cents
+while retaining their exact base units.
+
+Native-currency Max requires a recipient and performs a cancellable read-only fee preview through
+`NativeSendMaximum`. It validates the RPC chain, takes the smaller of the displayed holding and the
+pending onchain balance, and reserves twice the estimated total network fee. Gas is estimated for a
+one-base-unit probe and then for the candidate amount, with up to four monotonic refinements. When the
+standard OP Stack GasPriceOracle predeploy has code, the reserve also includes its 512-byte
+`getL1FeeUpperBound` and `getOperatorFee` quotes. Arbitrum's gas estimate already incorporates its data
+fee. Oracle failures, insufficient balance and non-converging estimates fail visibly rather than
+substituting zero fees. No key, nonce, signature or broadcast is needed for this preview.
+The Max button shows progress during estimation; an edit to either amount input, asset,
+recipient, balance or account change cancels or invalidates the result. A completed native maximum
+clears when its recipient, asset or balance changes. Submission is disabled during estimation and
+uses the displayed amount unchanged, with fresh fees from the existing send pipeline. The reserve is
+an estimate, not a guaranteed exact sweep: volatile fees, value-sensitive contracts and custom chains
+with additional fee schemes can require a manual amount or a refreshed estimate.
 Watch-only accounts can open the sheet but the submit stays disabled with an explicit watch-only
 notice; they never reach the signer.
+
+ENS recipient lookup is debounced by 350 ms and cancelled when input or chain changes or the picker
+closes. Only a result bound to the current input and asset chain is selectable. The picker shows a
+small inline spinner beside the address field's clear control while a lookup is pending, with the
+target network in its accessibility label. It shows no validation or lookup-error text; invalid input or
+an unsuccessful lookup leaves no address result and no loading indicator. The picker shows the
+normalized name and checksummed receiving address before selection; Send retains the name as
+in-memory display metadata beside the canonical address. Changing to an asset on a different chain
+clears an ENS-derived recipient, and submission independently checks the resolution's chain/address
+binding. A direct address or registered-account recipient can be reused across networks.
+
+`ENSResolver` uses ENSIP-15 normalization, DNS encoding and namehash, then calls the current ENSIP-23
+Universal Resolver (`0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe`) through the shared Ethereum-mainnet
+RPC resolver and user override, validating `eth_chainId` first. Ethereum uses coin type 60; other EVM
+chains below 2^31 request their ENSIP-11 chain-specific coin type. The client never substitutes an
+Ethereum record for a missing chain record; any default-address behavior is the resolver contract's.
+Missing/zero/malformed records and wrong-chain RPC replies fail explicitly. Names must contain a dot,
+fit the 1,024-byte input/DNS bound, and have UTF-8 labels of at most 255 bytes.
+
+EIP-3668 CCIP Read supports HTTPS GET templates and POST gateways, including HTTPS-only redirects.
+Gateway data is passed back to the original Universal Resolver callback for contract verification;
+it never becomes a receiving address directly. Sender matching, four callback rounds, eight advertised
+gateways per round, 10-second request timeouts, and 1 MiB response bounds limit untrusted lookups.
+Gateway sessions are ephemeral with no cookies, credential storage or persistent cache. Resolution
+creates no pending approval, accesses no key and does not persist the entered name.
 
 Submitting runs one native transaction pipeline rather than a dapp approval:
 `WalletService.sendTransaction` canonicalizes the intent, resolves missing nonce/gas/fee fields,
@@ -801,8 +892,7 @@ never enter the dapp approval queue; activity renders that origin as `Wallet`. A
 through decimal-string arithmetic (`TokenTransfer.rawUnits`) and reject more precision than the
 asset supports rather than truncating.
 
-Deferred for the send surface: ENS/name resolution for the recipient, a native "Max" affordance
-(which must subtract gas), swapping, and physical-device/network-verified broadcast acceptance. The
+Deferred for the send surface: swapping and physical-device/network-verified broadcast acceptance. The
 sheet and core send path are covered hermetically; a live broadcast has not been run from the app UI.
 
 `RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
@@ -1303,7 +1393,7 @@ Implemented after the Secure Wallet Core gates passed:
 
 Still deferred:
 
-- ENS names and avatars.
+- Reverse ENS account-name display and avatars (forward recipient resolution is implemented).
 - Transaction simulation and richer value previews.
 - ABI and contract metadata resolution.
 - ERC-7730 clear-signing previews.
@@ -1321,6 +1411,7 @@ StupidWallet              containing iOS SwiftUI app
 WalletCore                shared value types, storage, RPC, signing, and policy
 StupidWalletSafari        native Safari Web Extension handler
 CSecp256k1                vendored C cryptographic target
+ENSNormalize             copied ENSIP-15 normalization and embedded Unicode tables
 StupidWalletTests         package unit tests where supported
 ```
 
@@ -1626,7 +1717,7 @@ even though they are not key material.
 ## Dependency Policy
 
 The target runtime dependencies are Apple system frameworks plus the vendored
-`libsecp256k1` source:
+`libsecp256k1` source and the owner-approved copied ENS normalization subset:
 
 - SwiftUI.
 - Foundation and URLSession.
@@ -1636,6 +1727,16 @@ The target runtime dependencies are Apple system frameworks plus the vendored
 - CryptoKit where it provides an exact required primitive.
 - OSLog.
 - SQLite3.
+
+`Sources/ENSNormalize` contains the required Swift sources and Unicode 17 tables from MIT-licensed
+`adraffy/ENSNormalize.swift` v1.0.1, commit `d848cc56f5ba8a9cb60dc26b61c96ca51509ef52`, with no
+transitive dependencies. Algorithms retain upstream behavior. Table loading uses generated embedded
+Swift data instead of `Bundle.module`, avoiding external-package/resource-bundle requirements in
+`stupid-app`. `scripts/embed-ens-normalization-data.py` reproduces the tables and their SHA-256
+comments. The normalizer is a SwiftPM source target and a static framework in the existing Mac test
+project; only `ENSResolver` imports it. License, provenance and adaptations are in
+`THIRD_PARTY_NOTICES.md`. Standard `swift format` applies, with a folder-scoped naming-rule exception
+for upstream identifiers.
 
 Do not add React, React Query, Vite, Tailwind, viem, Web3.swift, PromiseKit, BigInt,
 CryptoSwift, Dawn Key Management, or a general wallet SDK without a concrete reviewed
@@ -1743,7 +1844,7 @@ Exit conditions:
 
 SIWE, EIP-5792 atomic calls, and wallet-owned EIP-7702 authorization management are
 implemented behind the earlier canonical-request, native-approval, origin/profile,
-keychain-authentication, and RPC-resolution boundaries. Simulation, ENS, ABI metadata,
+keychain-authentication, and RPC-resolution boundaries. Simulation, reverse ENS/avatar display, ABI metadata,
 and clear signing remain separate later work.
 
 Current acceptance status (2026-08-25): deterministic vectors, native policy, Safari
@@ -1977,7 +2078,7 @@ investigation history in implementation notes.
    hostname grants; consider a later user-visible reconnect campaign before removing that
    compatibility fallback.
 4. Finish parity details that do not weaken the new model: richer activity detail and broader
-   optional chain metadata. ENS/avatar resolution remains deferred rather than being hidden
+   optional chain metadata. Reverse ENS/avatar display remains deferred rather than being hidden
    inside Gate 6.
 5. Gate 7 and later per the implementation gates.
 6. Complete the remaining Chrome release gates in `docs/chrome-extension-feasibility.md`: real

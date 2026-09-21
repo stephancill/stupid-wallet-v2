@@ -9091,3 +9091,434 @@ Verification:
   test boundary.
 - The recipient accepts only a `0x` address (no ENS), there is no native "Max" affordance, and Swap
   is not implemented.
+
+## 2026-09-21 — Stationary, swipe-driven Send fade
+
+### Summary
+
+- Moved the visible Home Send action into the paging viewport's existing geometry overlay, so it
+  stays at its resting bottom position while the portfolio slides. The token page retains a hidden
+  layout copy to reserve the same action height, including Dynamic Type sizing.
+- Reused the caret's actual scroll progress rather than publishing per-frame state into the holdings
+  list. Per review, the fade uses a smoothstep curve over only the portfolio half of the transition:
+  fully visible at the portfolio, fully invisible at the midpoint and throughout the balance half.
+  Reversing the scroll reverses the same curve, and caret-driven paging uses the same geometry.
+- Disabled hit testing and accessibility while the fade is zero. Preserved the original bottom
+  spacing by accounting for the paging content's extension through the bottom safe area.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift` and
+  `swift format lint --strict Sources/StupidWallet/ContentView.swift`: passed.
+- `stupid-app build`: passed with CLI 0.0.18 and the iOS 27 SDK, retaining iOS 17 deployment support.
+- `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and launched successfully.
+- `idb ui swipe 200 165 200 790 --duration 5 --udid <preferred-simulator>` with concurrent
+  `idb ui describe-all --udid <preferred-simulator> --json` and `xcrun simctl io <preferred-simulator>
+  screenshot <ignored-output>` captures: the Send frame stayed at the original resting position
+  during the swipe, successive images showed the eased fade, and the action disappeared from the
+  accessibility tree after crossing the midpoint. The balance endpoint has no Send action.
+- Simulator accessibility navigation confirmed caret-driven return to the portfolio restores one
+  Send action, tapping it opens the existing send sheet, and Cancel returns to the portfolio.
+- `git diff --check`: passed. Physical-device visual acceptance was not run.
+
+## 2026-09-21 — Searchable send assets and six-significant-figure balances
+
+### Summary
+
+- Send's asset picker now has a native top search field. Filtering matches token symbol, network,
+  or contract address case-insensitively, trims query whitespace, preserves the existing asset order
+  and selection, and shows the native no-results state for an unmatched query. Clearing search
+  restores the full list.
+- Picker rows and the shared selected-asset row display balances rounded half-up to at most six
+  significant figures. The formatter works on exact decimal strings, preserving tiny non-zero
+  balances and supporting full-width token quantities without floating point or scientific notation.
+  Entered transaction amounts and raw balance validation retain their existing precision.
+- Updated the handover's Home-only USD-display wording to distinguish Send's token balances, and
+  recorded an on-screen-keyboard workaround for the known Xcode 27 IDB text-input failure.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` on `SendView.swift`, `DecimalValue.swift`,
+  and `DecimalValueTests.swift`: passed.
+- `swift test --filter 'DecimalValueTests|display'`: seven tests passed, including rounding carries,
+  leading zeros, one-wei precision, six-digit rounding, full-width uint256 values, and invalid input.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed; the app
+  was reinstalled and launched.
+- Simulator inspection confirmed six-significant-figure picker balances and the search field at the
+  top. A mixed-case symbol query returned only matching token rows; a network query returned that
+  network's assets; an unmatched query showed No Results; clearing restored the list. IDB's bulk
+  text command returned success without inserting text, so these checks used actual on-screen
+  keyboard taps and verified the field's accessibility value before evaluating the results.
+- `git diff --check`: passed. Physical-device visual acceptance was not run.
+
+## 2026-09-21 — Two-line, USD-valued send asset rows
+
+### Summary
+
+- Updated the shared picker/selected-asset row to show the symbol on its first line and
+  `network • amount symbol` on its second line, with the holding's USD value aligned right on that
+  same second line. Token icons, selection checkmarks, search, and six-significant-figure token
+  amounts remain part of the row.
+- Reused `PortfolioHolding.valueDisplay` for full grouped USD values rounded to at most two decimal
+  places, with `—` for an unpriced holding. Inspection confirmed the source `portfolioHoldings`
+  collection already sorts by exact USD value descending with unpriced holdings last; the picker
+  preserves that order rather than introducing a second sort or price fetch.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/SendView.swift` and
+  `swift format lint --strict Sources/StupidWallet/SendView.swift`: passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed; reinstalled
+  and launched the app.
+- Simulator accessibility navigation inspected the selected-asset row and picker. A screenshot
+  confirmed the two-line layout, inline network/amount/symbol, trailing full USD values, and retained
+  search field. Parsing the ten exposed row values from `idb ui describe-all --udid
+  <preferred-simulator> --json` with Python `Decimal` confirmed descending USD-value order.
+- `git diff --check`: passed. Physical-device visual acceptance was not run.
+
+## 2026-09-21 — Vertically centered send asset values
+
+### Summary
+
+- Moved the USD value out of the second-line text stack and into the shared asset row's centered
+  horizontal layout. It now sits vertically centered on the right of the symbol and
+  `network • amount symbol` block in both the picker and selected-asset row.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/SendView.swift` and
+  `swift format lint --strict Sources/StupidWallet/SendView.swift`: passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed; reinstalled
+  and launched the app. Simulator screenshots confirmed centered values in both asset surfaces.
+- `git diff --check`: passed.
+
+## 2026-09-21 — Return from the asset picker on selection
+
+### Summary
+
+- Removed the asset picker's selected-state checkmark. Tapping any asset updates the selection and
+  dismisses the pushed picker back to the Send form, including when choosing the same asset again.
+  The containing Send sheet stays open for entering the amount and recipient.
+
+### Verification
+
+- `swift format --in-place Sources/StupidWallet/SendView.swift` and
+  `swift format lint --strict Sources/StupidWallet/SendView.swift`: passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed; reinstalled
+  and launched the app.
+- Simulator screenshot confirmed the checkmark is absent. Accessibility-driven taps verified that
+  choosing a different token returns to the Send form with that token selected and its amount and
+  recipient fields available; reopening and choosing the same token also closes the picker.
+- `git diff --check`: passed.
+
+## 2026-09-21 — Match Available balance typography
+
+- Changed the Send form's Available balance from footnote to subheadline, matching the selected
+  asset's secondary detail text and retaining the secondary foreground color.
+- `swift format --in-place Sources/StupidWallet/SendView.swift`,
+  `swift format lint --strict Sources/StupidWallet/SendView.swift`, and `stupid-app build`: passed.
+- `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and launched; reopened the
+  Send form through accessibility navigation.
+- `git diff --check`: passed.
+
+## 2026-09-21 — Consistent send balance precision and watch-only typography
+
+- Unified the Available balance and asset-row balance on the existing six-significant-figure
+  formatter. Changed the watch-only note to secondary subheadline typography.
+- `swift format --in-place Sources/StupidWallet/SendView.swift`,
+  `swift format lint --strict Sources/StupidWallet/SendView.swift`, and `stupid-app build`: passed.
+- `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and launched. Accessibility
+  inspection of the Send form confirmed the Available amount exactly matches the selected asset's
+  formatted balance and the watch-only note remains present.
+- `git diff --check`: passed.
+
+## 2026-09-21 — Grouped send recipients, clear control, and ENS resolution
+
+### Summary
+
+- Send's To row now pushes a recipient picker containing every active registered account grouped
+  by wallet, including the sender and watch-only accounts. Choosing an account immediately returns
+  to Send without changing Home. Back retains the previous selection. Rows reuse the squircle
+  blockie, label, and native long-press full-address Copy control; `CopyableText` gained configurable
+  text style and alignment for the secondary address line.
+- Replaced the initially tried standalone Paste action with the normal text-field Paste menu. Added
+  the requested trailing clear control, which empties input and retains keyboard focus. Direct
+  non-zero 20-byte addresses are checksummed and explicitly selected through Use address.
+- Added forward ENS resolution to the same field. A 350 ms cancellable debounce binds results to
+  input and the selected asset's chain. The normalized name and resolved address appear before
+  selection and remain together on Send. Cross-network asset changes clear an ENS recipient, and
+  the send guard separately checks its chain/address binding. Account and direct-address selection
+  remove ENS metadata. Names/results are transient UI state, not persisted wallet registrations.
+- Copied the required normalization sources and Unicode tables into `Sources/ENSNormalize`, as
+  requested, rather than relying on an ignored third-party checkout. Source: MIT-licensed
+  `adraffy/ENSNormalize.swift` v1.0.1, commit `d848cc56f5ba8a9cb60dc26b61c96ca51509ef52`, Unicode
+  17.0.0. Retained the full license and added provenance to `THIRD_PARTY_NOTICES.md`. String
+  convenience extensions, the upstream package, and its build/test tooling are not runtime inputs.
+- Normalization algorithms retain upstream behavior. The only functional adaptation replaces
+  `Bundle.module` reads with embedded, byte-identical tables. The reproducible
+  `scripts/embed-ens-normalization-data.py` generator records both SHA-256 digests. This avoids
+  external SwiftPM product/resource-bundle limitations found in the current stupid-app planner.
+  Standard Swift formatting applies; a folder-local rule preserves upstream identifier spelling.
+- The project-owned resolver reuses the shared RPC resolver/client, Keccak and EIP-55. It validates
+  the Ethereum-mainnet RPC chain, uses the current ENS Universal Resolver, requests Ethereum coin
+  type 60 or the asset chain's ENSIP-11 coin type, and rejects absent, zero or malformed addresses.
+  There is no client-side fallback from a chain-specific address to an Ethereum address.
+- CCIP Read verifies the requesting sender, supports advertised HTTPS GET/POST gateways with
+  HTTPS-only redirects, and returns each reply to the original contract callback before decoding
+  an address. Four callback rounds, eight URLs per round, bounded ABI offsets, 10-second gateway
+  request timeouts and a 1 MiB streamed-response bound limit malformed or excessive lookups.
+  Gateway sessions omit cookies, stored credentials and persistent cache.
+- Added the source target to SwiftPM and a static normalization framework to the existing Mac
+  compatibility project. Regenerated its source membership. Recorded existing product names and
+  Face ID descriptions in the XcodeGen spec so regeneration preserves those values.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` passed for changed project Swift files;
+  `swift format lint --strict --recursive Sources/ENSNormalize` passed with the upstream naming rule.
+  Regenerating embedded tables produces identical source; both binary tables match pinned upstream.
+- `swift test`: 415 Swift Testing tests reported passing (one opt-in live test skipped), plus 14
+  XCTest cases. Twelve focused resolver tests cover normalization/confusables, independent viem
+  calldata/namehash/DNS vectors, mainnet override routing, chain-specific records, wrong-network
+  refusal, zero/malformed records, CCIP sender/callback authority, GET/POST and gateway progression,
+  response/offset/recursion bounds, and cancellation before RPC.
+- `swift test --package-path .build/ens-normalize-upstream`: all six upstream conformance tests
+  passed. The first local calldata assertion contained an incorrectly transcribed zero-padding
+  word; re-extracting the exact viem 2.55.19 vector corrected the test, with implementation output
+  already matching viem.
+- `ENS_LIVE_TESTS=1 swift test --filter 'ENSResolverTests|ENSLiveTests'`: all 13 tests passed, including
+  four public live fixtures for ordinary records, CCIP offchain records, Base-specific records and
+  DNS-backed names. Expected results were independently cross-checked with viem 2.55.19. Ordinary
+  package tests do not make those network calls.
+- `stupid-app doctor`: zero failures/warnings. `stupid-app build` and
+  `stupid-app run --simulator --udid <preferred-simulator>` passed with CLI 0.0.18 / Swift 6.4 / iOS
+  SDK 27, retaining iOS 17 deployment support; the app and extension were reinstalled and launched.
+- `xcodegen generate --spec Mac/project.yml` and `xcodebuild -project
+  Mac/StupidWalletMac.xcodeproj -scheme StupidWallet -destination 'platform=macOS,arch=arm64'
+  -derivedDataPath .build/ens-mac-check CODE_SIGNING_ALLOWED=NO build 2>&1 | xcpretty`: passed as an
+  unsigned compatibility-build check. Existing orientation/launch-configuration warnings remain;
+  this does not establish a signed Mac install or release.
+- Simulator acceptance verified grouped account selection, watch-only recipient selection, full
+  address Copy, standard Paste, invalid direct input rejection and Back preserving the recipient.
+  The final build visibly resolved the public offchain fixture on Ethereum and the chain-specific
+  fixture on Base; selecting the Ethereum result returned to Send with its name/address, and
+  switching to a Base asset cleared that selection. Clearing the Base result removed the result
+  and clear control while keeping the keyboard focused. A screenshot confirmed the compact native
+  field/result layout and middle-truncated checksummed address.
+- `git diff --check`: passed.
+
+### Limitations
+
+- Physical-device ENS UI acceptance and an app-initiated live send were not run. Verification used
+  read-only public resolution fixtures and the simulator's watch-only sender state.
+- Reverse-name/account avatar display, native Max and Swap remain deferred. ENS entry requires a
+  dotted name, at most 1,024 input/DNS bytes, and labels of at most 255 UTF-8 bytes.
+
+## 2026-09-21 — Quiet recipient validation
+
+- Removed inline invalid-address and ENS lookup-error text from the recipient picker, as requested.
+  Input now communicates its state through the pending lookup indicator or a selectable address.
+  An unsuccessful lookup records completion without an address so its loading indicator stops.
+- Removed the unused UI error-message state; canonical validation and current-query matching still
+  gate recipient selection.
+- `swift format --in-place Sources/StupidWallet/SendView.swift`,
+  `swift format lint --strict Sources/StupidWallet/SendView.swift`, and `stupid-app build`: passed.
+- `stupid-app run --simulator --udid <preferred-simulator>`: reinstalled and launched. Accessibility
+  inspection verified that both invalid plain input and a malformed dotted ENS name show no error
+  text or selectable address, and the failed ENS lookup stops its loading indicator.
+- `git diff --check`: passed.
+
+## 2026-09-21 — Send percentages, fee-reserved native maximum, and portfolio swipe actions
+
+### Summary
+
+- Corrected the Amount form row's separator alignment. SwiftUI was deriving its leading separator
+  position from the trailing currency label beside the expanding field. Explicit leading separator
+  guides on the input and adjacent information row restore the full inset-width line.
+- Added equal-width 25%, 50%, 75% and 100% buttons beneath Available. Percentages use exact raw
+  holdings, floor to whole base units, and fill the editable field at full asset precision rather
+  than using the six-significant-figure balance preview. ERC-20 100% uses the complete token balance.
+- The owner selected fee reservation for native-currency 100%. Added the read-only shared-core
+  `NativeSendMaximum` preview, using the normal RPC resolver and user overrides. It validates the
+  network, caps the balance at the smaller displayed or pending balance, probes gas, and refines the
+  candidate value at most four times while reserving twice the estimated total fee. A recipient is
+  required because the destination can affect gas consumption. No key, signature or broadcast is
+  involved in calculating the shortcut.
+- Fee research confirmed OP Stack execution gas excludes its L1 data and operator fees. The preview
+  detects code at the standard GasPriceOracle predeploy and includes `getL1FeeUpperBound(512)` plus
+  `getOperatorFee(gas)`. The 512-byte upper bound covers the empty-data legacy native transfer and
+  full-width quantity/signature encoding. Oracle failures do not silently become zero fees. Current
+  behavior was checked against Optimism's transaction-fee documentation and viem 2.55.19's OP Stack
+  fee actions; the two oracle calldata vectors match viem independently.
+- Native 100% shows a loading indicator and blocks submission while calculating. Request identity,
+  account, chain/asset, recipient and prior input bind its result. Other percentages, manual edits,
+  selection/balance changes and view lifetime cancel or invalidate old work. A completed native
+  maximum clears when its recipient, asset or balance changes. The actual send pipeline retains the
+  displayed amount and resolves fees again normally; it does not silently change the send value.
+- Added native trailing swipe-to-Send actions to portfolio groups and their expanded network rows.
+  Single-network assets and expanded rows open Send with the exact asset ID prefilled. Per the
+  owner's choice, a multi-network group opens directly to the asset search with its token symbol
+  entered; selecting a concrete holding returns to the Send form. The floating Send action still
+  opens the ordinary form. Home-account changes dismiss the presentation.
+- Updated the maintained handover and debugging skill, and regenerated the tracked Mac project's
+  source membership for the new shared-core file.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` passed for `SendView.swift`,
+  `ContentView.swift`, `TokenTransfer.swift`, `NativeSendMaximum.swift`, `TokenTransferTests.swift`,
+  `SendTransactionTests.swift`, and `NativeSendMaximumLiveTests.swift`.
+- `swift test --filter 'TokenTransferTests|SendTransactionTests'`: the initial 15 tests passed.
+  Expanded verification with `SEND_MAXIMUM_LIVE_TESTS=1 swift test --filter
+  'NativeSendMaximumLiveTests|TokenTransferTests|SendTransactionTests'` passed all 17 tests, including
+  four live network cases. Coverage includes full-width uint256 percentages, one-base-unit rounding,
+  exact 100%, pending/displayed balance caps, fee reserves, OP oracle ABI and failures, gas-dependent
+  refinement, wrong-chain/insufficient-balance rejection, cancellation and bounded convergence.
+- Live tests used only read-only public fixtures on Ethereum, Base, Optimism and Arbitrum. Each
+  network returned a positive fee-reserved maximum and accepted that value in a separate gas
+  simulation. These tests are opt-in; ordinary package tests do not call live RPCs.
+- Simulator screenshots confirmed the repaired full-width inset separator, percentage controls,
+  full-precision amount, and native asset search prefilled with the group symbol. Accessibility
+  interactions verified all four ERC-20 percentages against the full balance with exact decimal
+  arithmetic, direct single-network and expanded-network prefilling, grouped-symbol routing,
+  successful native 100% on Base, and a smaller amount than the full holding after fee reservation.
+  Choosing 25% during an in-flight 100% estimate retained 25% after the old request would have finished.
+- `xcodegen generate --spec Mac/project.yml` and `git diff --check`: passed.
+
+- `stupid-app doctor`: zero failures/warnings. `stupid-app build` and
+  `stupid-app run --simulator --udid <preferred-simulator>` passed, including the final
+  balance-change invalidation guard; the current app and extension were reinstalled and launched.
+
+### Limitations
+
+- The conservative reserve is an estimate, not a guaranteed exact sweep. Fee changes after preview,
+  contracts that reject the probe value, and custom fee schemes can require a manual amount or a
+  refreshed estimate. Failed estimates leave the existing amount available to edit.
+- No transaction was signed or sent, and no physical-device visual acceptance was run. Simulator
+  verification retained a watch-only sender, with submission disabled.
+
+## 2026-09-21 — Max label, inline ENS progress, and watch-only footer
+
+- Renamed the 100% amount shortcut to Max in its visible/accessibility labels and related recipient
+  guidance. It retains full-token selection and fee-reserved native maximum behavior.
+- Moved ENS lookup progress into the address field row, immediately before the clear control, using
+  a small native spinner. The target network remains in its accessibility label. The picker no
+  longer adds a separate progress row while resolving.
+- Moved the watch-only note into the Send button section's footer, directly below the disabled
+  button, retaining secondary subheadline typography.
+- Updated the handover's current Send UI description.
+- `swift format --in-place Sources/StupidWallet/SendView.swift
+  Sources/StupidWalletCore/NativeSendMaximum.swift`, `swift format lint --strict` on those files,
+  and `git diff --check`: passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>` passed after
+  the final footer change. Simulator accessibility assertions and a screenshot confirmed Max and
+  the watch-only footer below the disabled Send button. A fresh live ENS spinner observation was
+  blocked by simulator text/clipboard injection returning success without populating the field;
+  the inline layout compiled successfully, and resolver behavior was not changed.
+
+## 2026-09-21 — Simulator recipient Paste investigation
+
+- Reproduced the missing Paste menu in the iOS simulator. The address input remains a standard
+  SwiftUI TextField with no paste interception. Xcode 27's `simctl pbcopy` returned success but
+  `simctl pbpaste` was empty; `xcrun devicectl device pasteboard info --device <preferred-simulator>`
+  independently confirmed zero clipboard items. The native edit menu therefore offered only AutoFill.
+- Writing a public ENS fixture with `printf %s '<public-test-name>' | xcrun devicectl device
+  pasteboard copy --device <preferred-simulator>` created one text item. Long-press then offered
+  Paste, and selecting it filled the existing address field correctly without an app change.
+- Accessibility frames confirmed the pending spinner is inline with the field; the live fixture
+  subsequently resolved to a selectable ENS result and the spinner disappeared. This closes the
+  inline-spinner observation gap recorded in the preceding entry.
+- Added the supported clipboard commands and failure signature to the repository debugging skill.
+- `stupid-app doctor`: zero failures and warnings. `git diff --check`: passed.
+- Restarting Device Hub shut down the simulator; `stupid-app run --simulator --udid
+  <preferred-simulator>` booted it, reinstalled, and launched successfully with wallet state retained.
+  The legacy clipboard roundtrip still failed after reboot, while `devicectl device pasteboard
+  transfer to --device <preferred-simulator>` successfully transferred the host clipboard.
+- Started a temporary one-hour local clipboard sync with `xcrun devicectl device pasteboard
+  sync-with-host --device <preferred-simulator> --session-timeout 3600 --timeout 3660 --quiet`.
+  A new public host fixture automatically reached the simulator; the original host clipboard was
+  restored and its synchronized equality verified in memory without logging contents. No app-code
+  change was required. The temporary sync expires; it is not a persistent system configuration.
+
+## 2026-09-21 — Recipient-first Send form
+
+- Moved the To section to the top of Send. The form now reads To → Asset → Amount → Send, with
+  the existing watch-only footer beneath the submit button.
+- Updated the handover's form-order description.
+- `swift format --in-place Sources/StupidWallet/SendView.swift`,
+  `swift format lint --strict Sources/StupidWallet/SendView.swift`, and `git diff --check`: passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>`: passed.
+  Accessibility frame assertions confirmed To → Asset → Amount → Send in the reinstalled app.
+
+## 2026-09-21 — Synced USD and token amount inputs
+
+### Changes
+
+- Replaced 25%, 50%, and 75% with an editable USD row beneath the token amount. Kept Max, as requested,
+  inline immediately to the left of the token symbol. Available remains below both amount inputs.
+- Added the shared-core `SendAmountInput` value type for exact bidirectional editing. USD input divides
+  by the selected holding's portfolio price and floors to token base units; token input updates the
+  USD display rounded to cents without grouping. Edits preserve the active field's trailing decimal
+  separator and zeros. Display rounding does not feed back into the token amount.
+- Missing, zero or invalid prices disable USD input with a Price unavailable placeholder. Passive
+  price refreshes update only the USD display, preserving the exact token amount. Both inputs accept
+  the locale decimal separator and pasted dot decimals. Empty/invalid edits clear the counterpart;
+  unsupported token precision, oversized input and uint256 overflow cannot retain a stale sendable
+  amount. Asset changes reset both fields.
+- Max retains full ERC-20 balance selection and the existing native gas reserve. Editing either
+  field immediately invalidates an in-flight Max request, including edits that produce the same
+  rounded token quantity. Completed native Max and manual token entry both refresh the USD display.
+- Text-field bindings ignore unchanged values so focus/selection updates do not trigger a reverse
+  conversion, rewrite the other field's entered formatting, or cancel Max unnecessarily.
+- Removed the now-unused percentage calculation API and its shortcut-specific tests. Regenerated
+  the existing Mac project's source membership and updated the handover and debugging guidance.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` passed for `SendView.swift`,
+  `SendAmountInput.swift`, `TokenTransfer.swift`, `SendAmountInputTests.swift`, and
+  `TokenTransferTests.swift`.
+- `swift test --filter 'SendAmountInputTests|TokenTransferTests|SendTransactionTests'`: all 22 tests
+  passed. New coverage includes both conversion directions, base-unit flooring, typed-text
+  preservation, price changes, clearing and malformed edits, missing prices, locale separators,
+  sub-cent token precision, full-width Max amounts and overflow rejection.
+- `stupid-app build` and `xcodegen generate --spec Mac/project.yml`: passed.
+- The final `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>` passed
+  after the unchanged-binding guard. Simulator native Paste and accessibility assertions verified
+  USD-to-token conversion, token-to-USD conversion, preserving input values while changing focus,
+  asset changes clearing both fields, ERC-20 Max populating both fields, and Max's inline position
+  immediately left of the symbol. Screenshots confirmed the two input rows, inset-width separators,
+  Available row and retained watch-only footer. The simulator's comma decimal separator was handled
+  correctly; an initial Python verification expected dot-only decimals and was corrected.
+- `git diff --check`: passed. No transaction was signed or broadcast during verification.
+
+### Limitations
+
+- USD conversion uses the portfolio's indicative price, not an exchange quote or a fee-inclusive
+  total. Tiny token amounts can display zero cents while retaining non-zero exact base units.
+
+## 2026-09-21 — Amount clear controls and focus-aware Available balance
+
+- Added native inline clear controls to both nonempty amount inputs. Clearing either field uses the
+  existing synchronized edit path to empty both values and cancel an in-flight Max estimate, then
+  retains focus in the cleared field. The token clear control sits before Max, preserving Max's
+  position immediately left of the token symbol.
+- Bound both inputs to one typed focus state. Available defaults to the six-significant-figure token
+  balance, switches to the portfolio's USD value when USD is selected, and switches back when the
+  token input is selected. It retains the last selected unit after focus leaves the amount inputs and
+  resets to tokens on an asset change. Missing dollar values display unavailable rather than zero.
+- Updated the handover's current input and balance behavior. `SendAmountInput.Unit` now conforms to
+  Hashable for SwiftUI focus binding.
+- `swift format --in-place Sources/StupidWallet/SendView.swift
+  Sources/StupidWalletCore/SendAmountInput.swift` and `swift format lint --strict` on those files:
+  passed.
+- `swift test --filter SendAmountInputTests`: all seven tests passed, including clearing either
+  input and invalid-value handling. `stupid-app build` and
+  `stupid-app run --simulator --udid <preferred-simulator>` passed; the current app was reinstalled
+  and launched.
+- Simulator accessibility assertions verified the initial token Available value, immediate
+  token/USD switching on focus, hidden clear controls for empty fields, both controls appearing for
+  synced amounts, and each clear button emptying both fields while retaining the corresponding
+  Available unit. A screenshot confirmed the inline controls and dollar Available layout, with Max
+  still immediately left of the symbol. No transaction was signed or broadcast.
+- `git diff --check`: passed.
