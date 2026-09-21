@@ -9634,3 +9634,34 @@ Verification:
 
 - Physical-device acceptance was not run; simulator verification covered the zero-balance portfolio
   and the Send picker. The internal TestFlight build 111 predates this change.
+
+## 2026-09-21 — Internal TestFlight build 1.0.0 (112)
+
+### Summary
+
+- Released the zero-balance visibility change for tracked tokens to internal TestFlight as 1.0.0
+  (112). A tracked ERC-20 now keeps its portfolio row at `$0.00` instead of disappearing, and a zero
+  native balance is still omitted.
+- `stupid-app release new-build` selected unused build 112 and `release bump --build-number 112`
+  synchronized the containing app and Safari extension. Build 111 remains the preceding internal
+  build.
+- Set the What to Test note to: "Tracked tokens stay visible at zero balance; empty portfolio state".
+
+### Verification
+
+- `swift test`: 429 Swift Testing tests in 48 suites and 14 XCTest cases passed on the released tree.
+- `stupid-app release preflight`: READY, both Apple bundles 1.0.0 (112); `stupid-app doctor`: zero
+  failures and warnings with CLI 0.0.18 / Swift 6.4 / Xcode 27 / iOS SDK 27.
+- `stupid-app release archive`: IPA SHA-256
+  `6dec4022da784717c3e2a186e6340d1ce7ad20666601c3e363078ccfe3935d29`. The packaged app and Safari
+  extension both report 1.0.0 (112) with `DTXcode` 2700, `DTXcodeBuild` 27A266a, `DTSDKName`
+  iphoneos27.0, and `DTSDKBuild`/`DTPlatformBuild` 24A430; the packaged extension manifest is 0.1.57.
+- `stupid-app release upload --wait`: upload COMPLETE, processing `VALID`, internal `IN_BETA_TESTING`.
+  `release status --live` reports the same live state; external beta is `READY_FOR_BETA_SUBMISSION`
+  and no external submission was made.
+
+### Follow-Up
+
+- External TestFlight distribution of this build has not been requested.
+- Physical-device acceptance of the zero-balance portfolio was not run; the simulator covered the
+  zero-balance and funded accounts.
