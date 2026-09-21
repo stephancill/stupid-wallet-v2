@@ -8955,3 +8955,31 @@ Verification:
   practice, but a holding whose change has never been reported is still excluded from both sides of
   the ratio; revisiting that would change the documented aggregation semantics.
 - Physical-device acceptance of the layout tweaks was not run.
+
+## 2026-09-21 — Internal TestFlight build 1.0.0 (109)
+
+### Summary
+
+- Released the current `main` to internal TestFlight as 1.0.0 (109): watch-only accounts, custom
+  tracked tokens, the USD home portfolio, persistent price stale-while-revalidate, 24-hour price and
+  change expiry, the retained-change fix, the Add Token back navigation, and the home layout polish.
+- `stupid-app release new-build` selected unused build 109 and `release bump --build-number 109`
+  synchronized the containing app and Safari extension. The Safari extension manifest is 0.1.57 and
+  carries the updated description.
+- Set a high-level What to Test note: "Watch-only addresses and custom tokens".
+
+### Verification
+
+- `stupid-app release preflight`: READY, both Apple bundles 1.0.0 (109).
+- `stupid-app doctor`: zero failures and warnings with CLI 0.0.18 / Swift 6.4 / Xcode 27 / iOS SDK 27.
+- `stupid-app release archive`: IPA SHA-256
+  `f30893f516ec83815c883495bba67c7ac8f78aaf3c35481c21c86fe40a8b8b76`. The packaged app and Safari
+  extension both report 1.0.0 (109) with `DTXcode` 2700, `DTXcodeBuild` 27A266a, `DTSDKName`
+  iphoneos27.0, and `DTSDKBuild`/`DTPlatformBuild` 24A430; the packaged extension manifest is 0.1.57.
+- `stupid-app release upload --wait`: upload COMPLETE, processing `VALID`, internal `IN_BETA_TESTING`.
+  `release status --live` confirms the same live state; external beta is `READY_FOR_BETA_SUBMISSION`
+  and no external submission was made.
+
+### Follow-Up
+
+- External TestFlight distribution of this build has not been requested.
