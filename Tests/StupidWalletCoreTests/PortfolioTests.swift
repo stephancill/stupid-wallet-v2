@@ -42,7 +42,7 @@ struct PortfolioTests {
     #expect(groups[0].holdings.map(\.chainID) == ["1", "8453"])
     #expect(groups[0].isGrouped)
     #expect(groups[0].valueUSD == "11000")
-    #expect(groups[0].valueDisplay == "$11,000")
+    #expect(groups[0].valueDisplay == "$11,000.00")
     #expect(groups[0].networkLabel == "2 networks")
     #expect(!groups[1].isGrouped)
     #expect(groups[1].networkLabel == "Ethereum")
@@ -94,7 +94,7 @@ struct PortfolioTests {
     let change = PortfolioGroup.totalChange(of: groups)
     #expect(change?.percent == "25")
     #expect(change?.amountUSD == "10")
-    #expect(change?.display == "+$10 (+25.00%)")
+    #expect(change?.display == "+$10.00 (+25.00%)")
     #expect(groups.first(where: { $0.symbol == "ETH" })?.change24h == "25")
     #expect(groups.first(where: { $0.symbol == "USDC" })?.change24h == nil)
   }

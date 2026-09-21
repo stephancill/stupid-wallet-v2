@@ -54,8 +54,8 @@ public enum DecimalValue {
       integer: parsed.integer, fraction: String(parsed.fraction.prefix(max(0, fractionDigits))))
   }
 
-  /// Full USD display with grouping separators, rounded half-up to at most two decimal places, or
-  /// nil when unparsable. Examples: `$12.34`, `$1,234.57`, `$34,400,000`, `$0`.
+  /// Full USD display with grouping separators, rounded half-up to exactly two decimal places, or
+  /// nil when unparsable. Examples: `$12.34`, `$1,234.57`, `$34,400,000.00`, `$0.00`.
   public static func usd(_ value: String) -> String? {
     guard parse(value) != nil,
       // Round to cents half-up: add half a cent to the value scaled by 100, truncate, then rescale.
@@ -65,8 +65,8 @@ public enum DecimalValue {
       let dollars = multiplyingByPowerOfTen(cents, -2),
       let parts = parse(dollars)
     else { return nil }
-    let fraction = parts.fraction.isEmpty ? "" : ".\(parts.fraction)"
-    return "$\(grouped(parts.integer))\(fraction)"
+    // Always two decimals, so a value ending in a tenth renders as `$1.30`, never `$1.3`.
+    return "$\(grouped(parts.integer)).\(pad(parts.fraction, to: 2))"
   }
 
   /// Exact difference of two non-negative decimal strings, or nil when the result would be
@@ -137,7 +137,7 @@ public enum DecimalValue {
     return comparison == .orderedAscending ? "-\(magnitude)" : magnitude
   }
 
-  /// Signed USD display such as `+$1,234`, `-$12.34`, or `$0.00`.
+  /// Signed USD display such as `+$1,234.00`, `-$12.34`, or `$0.00`.
   public static func signedUSD(_ value: String) -> String? {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     let negative = trimmed.hasPrefix("-")

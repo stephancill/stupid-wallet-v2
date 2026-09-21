@@ -710,8 +710,8 @@ account toolbar (copy address and the account menu).
 - Watch-only accounts are read-only addresses, so every balance, price, and portfolio value works for
   them unchanged; only signing is unavailable.
 - Every value is USD: the exact product of the balance and the catalog price, displayed as the full
-  amount with grouping separators, rounded to at most two decimal places (`$12.34`, `$1,234.57`,
-  `$34,400,000`). Amounts, prices, and values are
+  amount with grouping separators, rounded to exactly two decimal places (`$12.34`, `$1,234.57`,
+  `$34,400,000.00`, `$1.30`). Amounts, prices, and values are
   decimal-string arithmetic in `DecimalValue`; no floating point is used. A holding the catalog
   cannot price shows `—` and is excluded from the total.
 - Rows show the 24-hour price change as a signed percent (`+4.25%`, `-0.01%`) directly under the

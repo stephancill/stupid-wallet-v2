@@ -3,28 +3,34 @@ import Testing
 
 @testable import StupidWalletCore
 
-@Test("display rounds dollars to at most two decimals")
+@Test("display rounds dollars to exactly two decimals")
 func display() throws {
   #expect(DecimalValue.truncating("1.239", fractionDigits: 2) == "1.23")
   #expect(DecimalValue.truncating("0.009", fractionDigits: 2) == "0")
   #expect(DecimalValue.truncating("5", fractionDigits: 2) == "5")
 
-  #expect(DecimalValue.usd("0") == "$0")
-  #expect(DecimalValue.usd("0.001") == "$0")
+  #expect(DecimalValue.usd("0") == "$0.00")
+  #expect(DecimalValue.usd("0.001") == "$0.00")
   #expect(DecimalValue.usd("0.005") == "$0.01")
-  #expect(DecimalValue.usd("0.999") == "$1")
+  #expect(DecimalValue.usd("0.999") == "$1.00")
   #expect(DecimalValue.usd("12.34") == "$12.34")
   #expect(DecimalValue.usd("1.2342485879001691507066") == "$1.23")
   #expect(DecimalValue.usd("1234.567") == "$1,234.57")
   #expect(DecimalValue.usd("1311.3220451758523") == "$1,311.32")
   #expect(DecimalValue.usd("1312.5562937637524691507066") == "$1,312.56")
-  #expect(DecimalValue.usd("12340") == "$12,340")
+  #expect(DecimalValue.usd("12340") == "$12,340.00")
   #expect(DecimalValue.usd("1234567.891") == "$1,234,567.89")
-  #expect(DecimalValue.usd("1000000") == "$1,000,000")
-  #expect(DecimalValue.usd("12340000") == "$12,340,000")
+  #expect(DecimalValue.usd("1000000") == "$1,000,000.00")
+  #expect(DecimalValue.usd("12340000") == "$12,340,000.00")
   #expect(DecimalValue.usd("999.95") == "$999.95")
-  #expect(DecimalValue.usd("0.0000012345") == "$0")
+  #expect(DecimalValue.usd("0.0000012345") == "$0.00")
   #expect(DecimalValue.usd("nope") == nil)
+  // A tenth keeps its trailing zero, and a whole dollar keeps its cents.
+  #expect(DecimalValue.usd("1.3") == "$1.30")
+  #expect(DecimalValue.usd("1527.3") == "$1,527.30")
+  #expect(DecimalValue.signedUSD("1527.3") == "+$1,527.30")
+  #expect(DecimalValue.signedUSD("-0.5") == "-$0.50")
+  #expect(DecimalValue.signedUSD("0") == "$0.00")
 }
 
 struct DecimalValueTests {
@@ -114,9 +120,9 @@ struct DecimalValueTests {
     #expect(DecimalValue.signedSubtract("5", "5") == "0")
     #expect(DecimalValue.signedSubtract("abc", "1") == nil)
 
-    #expect(DecimalValue.signedUSD("1234") == "+$1,234")
+    #expect(DecimalValue.signedUSD("1234") == "+$1,234.00")
     #expect(DecimalValue.signedUSD("-12.34") == "-$12.34")
-    #expect(DecimalValue.signedUSD("0") == "$0")
+    #expect(DecimalValue.signedUSD("0") == "$0.00")
     #expect(DecimalValue.signedUSD("nope") == nil)
   }
 }

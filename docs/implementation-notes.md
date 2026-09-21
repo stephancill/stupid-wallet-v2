@@ -8983,3 +8983,23 @@ Verification:
 ### Follow-Up
 
 - External TestFlight distribution of this build has not been requested.
+
+## 2026-09-21 — USD values always render two decimal places
+
+### Summary
+
+- `DecimalValue.usd` now always renders exactly two fraction digits, so a total or change ending in a
+  tenth reads `$1,527.30` rather than `$1,527.3`, and a whole dollar reads `$34,400,000.00` rather
+  than `$34,400,000`. Rounding is unchanged (half-up to cents). This applies to every USD display:
+  the portfolio total, holding and group values, and signed change amounts.
+- The compact market-cap format used by add-token search results is unchanged.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` on the changed files: passed.
+- `swift test`: 392 Swift Testing tests in 42 suites and 14 XCTest cases passed, with the dollar
+  expectations updated and new cases pinning `$1.30`, `$1,527.30`, `+$1,527.30`, `-$0.50`, and `$0.00`.
+
+### Follow-Up
+
+- Percentage displays already padded to two decimals and were not changed.

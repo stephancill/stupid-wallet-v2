@@ -17,13 +17,13 @@ struct PortfolioSWRTests {
     let original = WalletBalanceModel(service: environment.service)
     original.selectAccount(environment.accounts[0])
     await original.refresh()
-    #expect(original.portfolioTotalDisplay == "$1,002.5")
+    #expect(original.portfolioTotalDisplay == "$1,002.50")
     #expect(original.portfolioChangeDisplay != nil)
 
     // New service and catalog client: neither can inherit a session's remembered prices.
     let relaunched = model(environment: environment, catalog: catalog)
     relaunched.selectAccount(environment.accounts[0])
-    #expect(relaunched.portfolioTotalDisplay == "$1,002.5")
+    #expect(relaunched.portfolioTotalDisplay == "$1,002.50")
     #expect(relaunched.portfolioChange == original.portfolioChange)
     #expect(relaunched.portfolioGroups.map(\.symbol) == ["ETH", "USDC"])
     #expect(relaunched.nativeRows.map(\.id) == ["1"])
@@ -36,7 +36,7 @@ struct PortfolioSWRTests {
     await catalog.waitForRequest(after: 1)
     #expect(relaunched.rows.allSatisfy { !$0.isLoading })
     #expect(relaunched.isRefreshing)
-    #expect(relaunched.portfolioTotalDisplay == "$1,002.5")
+    #expect(relaunched.portfolioTotalDisplay == "$1,002.50")
     let (started, continuation) = AsyncStream<Void>.makeStream()
     let overlap = Task {
       continuation.yield()
@@ -49,17 +49,17 @@ struct PortfolioSWRTests {
     await overlap.value
     #expect(catalog.requests.count == 2)
     #expect(!relaunched.isRefreshing)
-    #expect(relaunched.portfolioTotalDisplay == "$2,005")
+    #expect(relaunched.portfolioTotalDisplay == "$2,005.00")
     #expect(relaunched.error == nil)
 
     let nextLaunch = model(environment: environment, catalog: catalog)
     nextLaunch.selectAccount(environment.accounts[0])
-    #expect(nextLaunch.portfolioTotalDisplay == "$2,005")
+    #expect(nextLaunch.portfolioTotalDisplay == "$2,005.00")
     nextLaunch.selectAccount(environment.accounts[1])
     #expect(nextLaunch.portfolioHoldings.isEmpty)
     #expect(nextLaunch.portfolioTotalUSD == nil)
     nextLaunch.selectAccount(environment.accounts[0])
-    #expect(nextLaunch.portfolioTotalDisplay == "$2,005")
+    #expect(nextLaunch.portfolioTotalDisplay == "$2,005.00")
   }
 
   @Test(
@@ -86,14 +86,14 @@ struct PortfolioSWRTests {
     let relaunched = model(environment: environment, catalog: catalog)
     relaunched.selectAccount(environment.accounts[0])
     await relaunched.refresh()
-    #expect(relaunched.portfolioTotalDisplay == "$1,002.5")
+    #expect(relaunched.portfolioTotalDisplay == "$1,002.50")
     #expect(relaunched.portfolioChange == original.portfolioChange)
     #expect(relaunched.portfolioHoldings.count == 2)
     #expect(!relaunched.isRefreshing)
     #expect(relaunched.rows.first?.error != nil)
     let nextLaunch = model(environment: environment, catalog: catalog)
     nextLaunch.selectAccount(environment.accounts[0])
-    #expect(nextLaunch.portfolioTotalDisplay == "$1,002.5")
+    #expect(nextLaunch.portfolioTotalDisplay == "$1,002.50")
   }
 
   @Test("successful zero balances remove cached holdings and survive relaunch")
@@ -219,17 +219,17 @@ struct PortfolioSWRTests {
     let wallet = WalletBalanceModel(service: environment.service, now: { clock.date })
     wallet.selectAccount(environment.accounts[0])
     await wallet.refresh()
-    #expect(wallet.portfolioTotalDisplay == "$1,002.5")
+    #expect(wallet.portfolioTotalDisplay == "$1,002.50")
 
     catalog.respond = { _ in (503, Data()) }
     clock.advance(seconds: 86_399)
     await wallet.refresh()
-    #expect(wallet.portfolioTotalDisplay == "$1,002.5")
+    #expect(wallet.portfolioTotalDisplay == "$1,002.50")
     let retained = try environment.service.tokens.load().portfolios[wallet.account]
     #expect(retained?.prices[token.id]?.updatedAt == receivedAt)
     let beforeExpiry = model(environment: environment, catalog: catalog, now: { clock.date })
     beforeExpiry.selectAccount(environment.accounts[0])
-    #expect(beforeExpiry.portfolioTotalDisplay == "$1,002.5")
+    #expect(beforeExpiry.portfolioTotalDisplay == "$1,002.50")
 
     clock.advance(seconds: 1)
     await wallet.refresh()
@@ -247,7 +247,7 @@ struct PortfolioSWRTests {
 
     catalog.respond = { _ in (200, priceBody(nativePrice: "2000", tokenPrice: "4")) }
     await wallet.refresh()
-    #expect(wallet.portfolioTotalDisplay == "$2,005")
+    #expect(wallet.portfolioTotalDisplay == "$2,005.00")
     #expect(wallet.portfolioChange != nil)
     let recovered = try environment.service.tokens.load().portfolios[wallet.account]
     #expect(recovered?.prices[token.id]?.updatedAt == clock.date)
@@ -339,7 +339,7 @@ struct PortfolioSWRTests {
     }
     await wallet.refresh()
     #expect(wallet.portfolioChange == priced)
-    #expect(wallet.portfolioTotalDisplay == "$1,002.5")
+    #expect(wallet.portfolioTotalDisplay == "$1,002.50")
     #expect(wallet.portfolioGroups.allSatisfy { $0.changeDisplay != nil })
 
     // The retained change is durable, not just session memory.
