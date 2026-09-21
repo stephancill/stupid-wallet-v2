@@ -232,16 +232,12 @@ public struct ConnectionState: Codable, Sendable, Equatable {
   }
 
   /// Dormant grants for unregistered accounts are retained for migration compatibility, but
-  /// active and default accounts must resolve to an active registered wallet group.
+  /// active and default accounts must resolve to an active key-backed wallet group.
   public func validate(against registry: WalletRegistry) throws {
     try validate()
     try registry.validate()
     let activeAccounts = Set(
-      registry.groups
-        .filter { $0.lifecycle == .active }
-        .flatMap(\.accounts)
-        .filter { $0.lifecycle == .active }
-        .map { $0.address.lowercased() })
+      registry.connectionEligibleAccounts.map { $0.address.lowercased() })
 
     if let defaultAccount, !activeAccounts.contains(defaultAccount.lowercased()) {
       throw ConnectionStateError.invalid(.unregisteredDefault)

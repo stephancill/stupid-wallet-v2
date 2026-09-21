@@ -65,6 +65,11 @@ public struct Simple7702AccountDeploymentStore: Sendable {
       return try JSONDecoder().decode([String: Entry].self, from: Data(contentsOf: fileURL))
     } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
       return [:]
+    } catch is DecodingError {
+      // This file is only a positive verification cache that is re-checked on chain, so an
+      // unrecognized (for example older) shape is treated as empty rather than blocking the
+      // caller. The next record replaces it with the current shape.
+      return [:]
     } catch {
       throw Simple7702AccountDeploymentStoreError.unavailable
     }

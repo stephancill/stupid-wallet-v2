@@ -534,7 +534,7 @@ public actor WalletService {
       throw WalletError.notReady
     }
     return registry.groups.compactMap { group in
-      guard group.lifecycle == .active else { return nil }
+      guard group.lifecycle == .active, group.kind != .watchOnly else { return nil }
       let accounts = group.accounts.compactMap { account -> AvailableAccount? in
         guard account.lifecycle == .active else { return nil }
         guard let signer = try? accountResolver.signer(address: account.address), signer.hasKey()
@@ -690,11 +690,10 @@ public actor WalletService {
     let account = try registryStore.withLockedReady { registry in
       try connectedSites.connectionStore.withLockedState { state in
         try state.validate(against: registry)
-        return state.defaultAccount ?? registry.homeSelectedAddress
-          ?? registry.groups
-          .filter { $0.lifecycle == .active }
-          .flatMap(\.accounts)
-          .first(where: { $0.lifecycle == .active })?.address
+        let eligible = registry.connectionEligibleAccounts
+        return state.defaultAccount
+          ?? eligible.first(where: { $0.address == registry.homeSelectedAddress })?.address
+          ?? eligible.first?.address
       }
     }
     guard let account, let signer = try? accountResolver.signer(address: account), signer.hasKey()

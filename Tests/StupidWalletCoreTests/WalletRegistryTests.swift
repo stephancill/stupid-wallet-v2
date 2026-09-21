@@ -4,6 +4,51 @@ import Testing
 @testable import StupidWalletCore
 
 struct WalletRegistryTests {
+  @Test("watch-only groups enforce single non-derived accounts and immutable identity")
+  func watchOnlyValidation() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let account = try address(secret: 1)
+    let other = try address(secret: 2)
+    var group = WalletGroup(
+      id: UUID(), kind: .watchOnly, createdAt: .now, nextDerivationIndex: nil,
+      accounts: [WalletAccount(address: account, derivationIndex: nil, createdAt: .now)],
+      lifecycle: .active)
+    try registry(groups: [group], home: account).validate()
+    group.nextDerivationIndex = 1
+    #expect(throws: WalletRegistryError.invalid(.invalidWatchOnlyGroup)) {
+      try registry(groups: [group], home: account).validate()
+    }
+    group.nextDerivationIndex = nil
+    group.accounts.append(WalletAccount(address: other, derivationIndex: nil, createdAt: .now))
+    #expect(throws: WalletRegistryError.invalid(.invalidWatchOnlyGroup)) {
+      try registry(groups: [group], home: account).validate()
+    }
+    group.accounts.removeLast()
+    let store = WalletRegistryStore(directory: directory)
+    try store.create(
+      WalletRegistry(
+        revision: 0, adoptionState: .migrating, groups: [], homeSelectedAddress: nil,
+        legacyWalletAddressFallbackRemoved: true))
+    _ = try store.update(expectedRevision: 0) { _ in
+      WalletRegistry(
+        revision: 1, adoptionState: .complete, groups: [group], homeSelectedAddress: account,
+        legacyWalletAddressFallbackRemoved: true)
+    }
+    #expect(throws: WalletRegistryError.invalidTransition) {
+      try store.update(expectedRevision: 1) { current in
+        var replacement = group
+        replacement.accounts = [
+          WalletAccount(address: other, derivationIndex: nil, createdAt: .now)
+        ]
+        return WalletRegistry(
+          revision: 2, adoptionState: .complete, groups: [replacement], homeSelectedAddress: other,
+          legacyWalletAddressFallbackRemoved: true)
+      }
+    }
+    #expect(WalletStore.activeAddress(directory: directory) == nil)
+  }
+
   @Test("private-key and seed groups persist with separate home selection")
   func persistence() throws {
     let directory = try temporaryDirectory()

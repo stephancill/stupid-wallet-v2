@@ -43,7 +43,7 @@ acceptance browser; Arc's native-host launch remains unproven.
 The local installer uses an existing compatible macOS development profile and Apple Development
 identity, under the owner's direct-codesign exception. It installs only a helper bundle and exact
 Chrome user-level registration. No stupid-app source or Apple account resources are modified.
-`stupid-app` remains the iOS build authority (0.0.17 verified for token-balances work with
+`stupid-app` remains the iOS build authority (0.0.18 verified for watch-only work with
 Swift 6.4 / Xcode 27 / iOS SDK 27, retaining the iOS 17 deployment target). The owner authorized repository-local Chrome
 beta packaging and GitHub prerelease distribution without modifying stupid-app. The helper now has
 an approved Developer ID Application certificate and MAC_APP_DIRECT profile for the existing helper
@@ -474,8 +474,9 @@ and timestamp share one Signature section rather than splitting verification met
 second section. Activity list and detail content uses regular system typography throughout;
 hashes, addresses, signatures, and typed-data hex values are not monospaced.
 
-Settings begins with an Apple Settings-style identity row for the currently selected account: a large
-blockie, editable account label, and muted shortened address. Account removal is available only from
+Settings begins with an Apple Settings-style identity row for the currently selected account: a
+42-point blockie matching the two-line account-label/address stack, an editable account label, and a
+muted shortened address. Account removal is available only from
 the Accounts screen's edit-mode removal flow. The separate
 destructive Forget Account/Wallet section and confirmation are no longer shown in Settings. The
 Accounts removal confirmation warns when the protected source will be removed and requires an
@@ -486,7 +487,7 @@ defaults. Secret-deletion and registry failures do not silently clear visible au
 network preferences are retained.
 
 Import Wallet follows the containing app's native inset-grouped form design: title-case navigation,
-separate wallet-group-label and recovery-phrase/private-key sections, concise accepted-format guidance, a
+separate wallet-group-label and recovery-phrase/private-key/address sections, concise accepted-format guidance, a
 standard full-row import action with progress state, and section-scoped errors. The secret field uses
 regular system typography, remains visible for review, disables capitalization and correction, and is
 marked privacy-sensitive. A successful recovery-phrase import navigates directly to the imported seed
@@ -521,6 +522,37 @@ that stale value visible while revalidating all included networks, and replaces 
 at least one network succeeds. A transient complete outage retains the stale total; without a
 cached or previously successful value, the UI reports the balance as unavailable. Forgetting
 the matching account removes its cached total.
+
+### Watch-Only Accounts
+
+Import Wallet accepts a public `0x`-prefixed 20-byte address as a watch-only account, in addition to
+private keys and recovery phrases. Address input is normalized to EIP-55 and the required wallet label
+also supplies the initial account label. Each watch is a single-account `.watchOnly` registry group
+with no derivation metadata or protected source. Duplicate addresses, including reserved seed
+identities, are rejected; importing a secret for an already watched address requires removing its
+watch registration first. Watch-to-key group conversion is not implemented.
+
+Watches use the normal home selector, label editing, native/token balance caches and USD portfolio.
+An initial watch can complete empty-installation setup without authentication; additive imports retain
+the prior home selection. Accounts, the account menu and Settings identify watches with a muted eye
+icon inline beside the shortened address (with watch-only accessibility context), and
+Settings hides Private Key and Authorizations. Tokens still use the shared manually tracked list;
+watch import does not discover all holdings automatically. Activity remains local recorded activity.
+
+Watch-only groups are excluded from the browser account picker, active connections and connection
+defaults. Initial connection selection and deletion's replacement default choose only active
+key-backed accounts, even while Home displays a watch. With only watches, account requests report
+the existing no-wallet-key error. The account resolver can construct a non-capable signer for a watch
+so service initialization remains valid, but `hasKey()` is false and signing/export throw before
+protected access, even if an address-matching orphaned keychain item exists.
+
+Removal uses the existing recoverable group-deletion barrier and clears the watch's caches and live
+account-bound state, while retaining the shared tracked-token list and activity. It never deletes
+keychain or Dawn migration material for the watched address. A watched home produces no
+`wallet-address.conf` downgrade projection. Registry schema 2 and its existing migration are retained;
+older binaries reject the new enum value once a watch is stored. App/Safari and the macOS Chrome helper
+must use a watch-aware shared core when sharing that registry; the previously distributed helper
+0.0.5 is not watch-aware. There is no compatibility projection that makes older registry readers work.
 
 ### Tracked ERC-20 Balances
 
@@ -558,7 +590,8 @@ Clipboard access uses the standard system pasteboard behavior.
   network name, and the compact market cap when the catalog has one (`$74B`, truncated to one decimal
   place of the scaled unit). A token that is already tracked shows a checkmark and its row is
   disabled. Rows with no catalog market cap show none.
-- Selecting a result asks for confirmation in a modal alert naming the token and its network. The
+- Selecting a result asks for confirmation in a modal alert naming the token and its network, with
+  Add Token as the emphasized default action (including the Return keyboard shortcut). The
   import validates the token on chain, keeps the sheet open, and flips that row to its tracked state
   so further tokens can be added in the same session.
 - When an exact contract address has no catalog match on any configured network, the screen shows a
@@ -622,6 +655,36 @@ displayed their balances, showed token details, and removed the
 Base token while retaining Ethereum across reinstall/relaunch. Both temporary tracked tokens were
 then removed through the UI.
 Token-specific physical-device acceptance remains separate from the existing signing/migration gates.
+
+### Home Value Portfolio
+
+Home shows a downward caret once any tracked holding has a non-zero balance. Tapping it scrolls to a
+revealed section whose first line is the total USD value of the holdings, followed by rows ordered by
+value. The hero area occupies most of the first screen so the caret has something to reveal; with no
+holdings the balance stays vertically centered as before.
+
+- Holdings are the tracked tokens with a non-zero balance on any configured network plus the native
+  currency of every network included in the total balance. Native holdings therefore follow the
+  existing Include in Total Balance rule; tracked tokens on excluded networks still appear.
+- Rows group holdings by symbol, case-insensitively, so the same token or native currency on several
+  networks is one row. A grouped row's caret expands the per-chain distribution, and each
+  distribution row shows the network and its own value. Groups and their members are ordered by
+  value, with unpriced holdings last.
+- Every value is USD: the exact product of the balance and the catalog price, displayed to four
+  significant figures with grouping separators (`$7,914`, `$2.468`). Amounts, prices, and values are
+  decimal-string arithmetic in `DecimalValue`; no floating point is used. A holding the catalog
+  cannot price shows `—` and is excluded from the total.
+- Prices come from the cacheable `GET /v1/prices?tokens=chainId:address,...` endpoint, up to 50
+  identities per request with the native currency expressed as the literal address `native`.
+  Requests are sent in canonical order and cached in memory for 60 seconds. Only `ok` statuses
+  contribute a price. Values are fetched after the balances are already on screen, so a slow or
+  failed price refresh never delays the balance display.
+- The revealed rows are presentation only: they read the same tracked balances as the rest of the
+  app, and a token row still navigates to its detail screen. Raw token amounts are no longer
+  displayed anywhere; the list shows values instead.
+- `Simple7702AccountDeploymentStore` treats an unrecognized deployments cache shape as empty instead
+  of failing, because that file is only a positive verification cache that is re-checked on chain.
+  Previously a legacy cache file made RPC override saves fail with "could not be saved".
 
 `RPCOverrideStore` atomically persists one validated endpoint per decimal chain ID in the
 App Group. Both the app and Safari handler construct their resolver from this store, and
@@ -850,14 +913,15 @@ Mac; using the same account on both requires an explicit user-authorized import 
   chain validation, or key protection.
 - Planning documents use ordered dependencies and acceptance gates, not timeline
   estimates.
-- Wallet groups are either seed-backed with accounts derived at `m/44'/60'/0'/0/{index}` or
-  private-key-backed with exactly one account.
+- Wallet groups are seed-backed with accounts derived at `m/44'/60'/0'/0/{index}`,
+  private-key-backed with exactly one account, or watch-only with one public address and no secret.
 - Wallet-group and account labels are editable, non-authoritative display metadata. Addresses and group
   IDs remain the identity for signing, grants, activity, migration, and canonical requests.
 - Removing a seed-derived account deletes only its registration and live account-bound state, preserves
   the seed and activity, and never reuses its derivation index. A retained account-zero seed identity
   prevents duplicate group import after account-zero removal. The final seed account requires complete
-  group deletion; removing a private-key account deletes its one-account group and key.
+  group deletion; removing a private-key account deletes its one-account group and key. Removing a
+  watch-only account deletes its group and account caches without accessing a secret.
 - Existing installations adopt their proven account as a one-account private-key group. Shipped
   formats did not retain seed phrases and must not be treated as expandable seed groups.
 - Home account selection is independent from the default account proposed for new dapp connections.
@@ -929,6 +993,7 @@ The first usable milestone includes:
 - Display the account address and aggregate native-token balance across included networks.
 - Manually import and display tracked ERC-20 balances on Home, with shared Settings → Tokens
   management and account-specific stale-while-revalidate caches.
+- Import public addresses as watch-only accounts for the containing-app balance and portfolio views.
 - Authenticated private-key backup with explicit warnings and no persistent plaintext.
 - Connect, list, and disconnect authorized sites.
 - EIP-1193 request transport and EIP-6963 discovery.

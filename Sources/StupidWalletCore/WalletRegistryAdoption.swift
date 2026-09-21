@@ -353,6 +353,8 @@ public struct WalletRegistryAdoption: Sendable {
         guard seedProbe.seedExists(groupID: group.id) else {
           throw WalletRegistryAdoptionError.noSeedForGroup(group.id)
         }
+      case .watchOnly:
+        break
       }
     }
   }

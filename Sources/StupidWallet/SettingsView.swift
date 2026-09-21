@@ -10,6 +10,7 @@ import SwiftUI
   struct SettingsView: View {
     let address: String
     let accountName: String?
+    let isWatchOnly: Bool
     @ObservedObject var balances: WalletBalanceModel
 
     var body: some View {
@@ -18,19 +19,26 @@ import SwiftUI
           Section {
             HStack(spacing: 14) {
               BlockieView(seed: address.lowercased())
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .frame(width: 42, height: 42)
               VStack(alignment: .leading, spacing: 3) {
                 Text(accountName ?? shortAddress)
                   .font(.headline)
-                Text(shortAddress)
-                  .font(.subheadline)
-                  .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                  Text(shortAddress)
+                  if isWatchOnly {
+                    Image(systemName: "eye")
+                  }
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
               }
             }
             .padding(.vertical, 6)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Selected account, \(accountName ?? shortAddress), \(address)")
+            .accessibilityLabel(
+              "\(isWatchOnly ? "Watch-only account" : "Selected account"), \(accountName ?? shortAddress), \(address)"
+            )
           }
 
           Section {
@@ -40,11 +48,13 @@ import SwiftUI
             NavigationLink(destination: TokensView(balances: balances)) {
               Text("Tokens")
             }
-            NavigationLink(destination: AuthorizationsView(address: address)) {
-              Text("Authorizations")
-            }
-            NavigationLink(destination: PrivateKeyView(address: address)) {
-              Text("Private Key")
+            if !isWatchOnly {
+              NavigationLink(destination: AuthorizationsView(address: address)) {
+                Text("Authorizations")
+              }
+              NavigationLink(destination: PrivateKeyView(address: address)) {
+                Text("Private Key")
+              }
             }
           }
         }

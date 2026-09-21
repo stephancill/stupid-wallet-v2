@@ -12,6 +12,21 @@ public enum TokenSearchError: Error, Sendable, Equatable, LocalizedError {
   }
 }
 
+/// One token identity for a bulk price request. `native` is the catalog's literal address for a
+/// chain's native currency.
+public struct PriceRequest: Sendable, Hashable {
+  public let chainID: String
+  public let address: String
+
+  public init?(chainID: String, address: String) {
+    guard let chain = ChainStore.normalize(chainID),
+      let normalized = StupidTokensClient.normalizeTokenAddress(address)
+    else { return nil }
+    self.chainID = chain
+    self.address = normalized
+  }
+}
+
 /// One catalog match from the Stupid Tokens search API. This is discovery metadata only:
 /// canonical token metadata is always read on chain before a token can be imported.
 public struct TokenSearchResult: Sendable, Equatable, Identifiable {
@@ -19,6 +34,7 @@ public struct TokenSearchResult: Sendable, Equatable, Identifiable {
   public let address: String
   public let name: String
   public let symbol: String
+  public let decimals: UInt8?
   public let imageURL: URL?
   /// Decimal USD market cap as reported by the catalog, used only for ranking. Display-only.
   public let marketCap: String?
@@ -26,13 +42,14 @@ public struct TokenSearchResult: Sendable, Equatable, Identifiable {
   public var id: String { "\(chainID):\(address.lowercased())" }
 
   public init(
-    chainID: String, address: String, name: String, symbol: String, imageURL: URL? = nil,
-    marketCap: String? = nil
+    chainID: String, address: String, name: String, symbol: String, decimals: UInt8? = nil,
+    imageURL: URL? = nil, marketCap: String? = nil
   ) {
     self.chainID = chainID
     self.address = address
     self.name = name
     self.symbol = symbol
+    self.decimals = decimals
     self.imageURL = imageURL
     self.marketCap = marketCap
   }
@@ -89,8 +106,10 @@ public actor StupidTokensClient {
   private let cacheLifetime: TimeInterval
   private let cacheLimit: Int
   private let metadataLifetime: TimeInterval
+  private let priceLifetime: TimeInterval
   private var cache: [String: (expiresAt: Date, results: [TokenSearchResult])] = [:]
-  private var metadata: [String: (expiresAt: Date, imageURL: URL?)] = [:]
+  private var metadata: [String: (expiresAt: Date, token: TokenSearchResult?)] = [:]
+  private var priceCache: [PriceRequest: (expiresAt: Date, price: String?)] = [:]
 
   public init(
     session: URLSession = .shared,
@@ -98,7 +117,8 @@ public actor StupidTokensClient {
     timeout: TimeInterval = 15,
     cacheLifetime: TimeInterval = 60,
     cacheLimit: Int = 64,
-    metadataLifetime: TimeInterval = 3600
+    metadataLifetime: TimeInterval = 3600,
+    priceLifetime: TimeInterval = 60
   ) {
     self.session = session
     self.baseURL = baseURL
@@ -106,6 +126,7 @@ public actor StupidTokensClient {
     self.cacheLifetime = cacheLifetime
     self.cacheLimit = cacheLimit
     self.metadataLifetime = metadataLifetime
+    self.priceLifetime = priceLifetime
   }
 
   /// Case-insensitive name/symbol substring or exact address search on one chain.
@@ -176,24 +197,97 @@ public actor StupidTokensClient {
     return results
   }
 
-  /// The catalog icon for one token, or nil when the catalog has none or does not know it.
-  /// Icons are display-only and are cached in memory far longer than search results.
-  public func imageURL(chainID: String, address: String) async -> URL? {
+  /// Catalog metadata for one token or a chain's native currency, cached in memory.
+  public func tokenMetadata(chainID: String, address: String) async -> TokenSearchResult? {
     guard let chain = ChainStore.normalize(chainID),
-      let normalized = try? WalletToken.normalizeAddress(address)
+      let normalized = Self.normalizeTokenAddress(address)
     else { return nil }
     let key = "\(chain)|\(normalized)"
-    if let cached = metadata[key], cached.expiresAt > Date() { return cached.imageURL }
-    let imageURL = await fetchImageURL(chainID: chain, address: normalized)
+    if let cached = metadata[key], cached.expiresAt > Date() { return cached.token }
+    let token = await fetchTokenMetadata(chainID: chain, address: normalized)
     if metadata.count >= cacheLimit {
       metadata = metadata.filter { $0.value.expiresAt > Date() }
     }
     if metadata.count >= cacheLimit { metadata.removeAll() }
-    metadata[key] = (Date().addingTimeInterval(metadataLifetime), imageURL)
-    return imageURL
+    metadata[key] = (Date().addingTimeInterval(metadataLifetime), token)
+    return token
   }
 
-  private func fetchImageURL(chainID: String, address: String) async -> URL? {
+  /// The catalog icon for one token, or nil when the catalog has none or does not know it.
+  public func imageURL(chainID: String, address: String) async -> URL? {
+    await tokenMetadata(chainID: chainID, address: address)?.imageURL
+  }
+
+  /// USD prices for the requested tokens, keyed by request. Tokens without a usable price are
+  /// absent. Requests are sent in the catalog's canonical order, 50 per call.
+  public func prices(for requests: [PriceRequest]) async -> [PriceRequest: String] {
+    var resolved: [PriceRequest: String] = [:]
+    var missing: [PriceRequest] = []
+    for request in Set(requests) {
+      guard let cached = priceCache[request], cached.expiresAt > Date() else {
+        missing.append(request)
+        continue
+      }
+      if let price = cached.price { resolved[request] = price }
+    }
+    var index = 0
+    let ordered = missing.sorted { lhs, rhs in
+      let left = Int(lhs.chainID) ?? 0
+      let right = Int(rhs.chainID) ?? 0
+      if left != right { return left < right }
+      return lhs.address < rhs.address
+    }
+    while index < ordered.count {
+      let chunk = Array(ordered[index..<min(index + 50, ordered.count)])
+      let prices = await fetchPrices(chunk)
+      for request in chunk {
+        let price = prices[request]
+        priceCache[request] = (Date().addingTimeInterval(priceLifetime), price)
+        if let price { resolved[request] = price }
+      }
+      index += 50
+    }
+    return resolved
+  }
+
+  private func fetchPrices(_ requests: [PriceRequest]) async -> [PriceRequest: String] {
+    guard !requests.isEmpty,
+      var components = URLComponents(
+        url: baseURL.appendingPathComponent("v1/prices"), resolvingAgainstBaseURL: false)
+    else { return [:] }
+    components.queryItems = [
+      URLQueryItem(
+        name: "tokens",
+        value: requests.map { "\($0.chainID):\($0.address)" }.joined(separator: ","))
+    ]
+    guard let url = components.url else { return [:] }
+    var request = URLRequest(url: url)
+    request.httpMethod = "GET"
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.timeoutInterval = timeout
+    guard let (data, response) = try? await session.data(for: request),
+      let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+      data.count <= Self.maximumResponseBytes,
+      case .object(let root)? = try? JSONValue.parse(data),
+      case .array(let entries)? = root["prices"]
+    else { return [:] }
+    var prices: [PriceRequest: String] = [:]
+    for entry in entries {
+      guard case .object(let object) = entry,
+        case .number(let chainNumber)? = object["chainId"], chainNumber.rounded() == chainNumber,
+        chainNumber >= 1, chainNumber <= Double(Int.max),
+        let chain = ChainStore.normalize(String(Int(chainNumber))),
+        let address = object["address"]?.stringValue,
+        let key = PriceRequest(chainID: chain, address: address),
+        object["status"]?.stringValue == "ok",
+        let price = object["priceUsd"]?.stringValue, DecimalValue.parse(price) != nil
+      else { continue }
+      prices[key] = price
+    }
+    return prices
+  }
+
+  private func fetchTokenMetadata(chainID: String, address: String) async -> TokenSearchResult? {
     let url = baseURL.appendingPathComponent("v1/tokens/\(chainID)/\(address)")
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
@@ -202,11 +296,14 @@ public actor StupidTokensClient {
     guard let (data, response) = try? await session.data(for: request),
       let http = response as? HTTPURLResponse, http.statusCode == 200,
       data.count <= Self.maximumResponseBytes,
-      case .object(let root)? = try? JSONValue.parse(data),
-      // Guard against a wrong-token response before trusting its icon.
-      root["address"]?.stringValue.flatMap({ try? WalletToken.normalizeAddress($0) }) == address
+      let parsed = try? JSONValue.parse(data)
     else { return nil }
-    return Self.imageURL(from: root["imageUrl"])
+    return Self.result(from: parsed, chainID: chainID)
+  }
+
+  /// Accepts a contract address or the catalog's `native` literal.
+  static func normalizeTokenAddress(_ value: String) -> String? {
+    value == "native" ? "native" : (try? WalletToken.normalizeAddress(value))
   }
 
   static func result(from item: JSONValue, chainID: String) -> TokenSearchResult? {
@@ -215,8 +312,8 @@ public actor StupidTokensClient {
       chainNumber.rounded() == chainNumber,
       chainNumber >= 1, chainNumber <= Double(Int.max),
       let chain = ChainStore.normalize(String(Int(chainNumber))), chain == chainID,
-      let address = entry["address"]?.stringValue,
-      let normalized = try? WalletToken.normalizeAddress(address),
+      let rawAddress = entry["address"]?.stringValue,
+      let normalized = Self.normalizeTokenAddress(rawAddress),
       let symbol = entry["symbol"]?.stringValue, Self.isUsableSymbol(symbol)
     else { return nil }
     let name = entry["name"]?.stringValue
@@ -225,8 +322,16 @@ public actor StupidTokensClient {
       address: normalized,
       name: name.flatMap { $0.isEmpty ? nil : $0 } ?? symbol,
       symbol: symbol,
+      decimals: Self.decimals(from: entry["decimals"]),
       imageURL: Self.imageURL(from: entry["imageUrl"]),
       marketCap: Self.marketCap(from: entry["marketCapUsd"]))
+  }
+
+  private static func decimals(from value: JSONValue?) -> UInt8? {
+    guard case .number(let number)? = value, number.rounded() == number, number >= 0,
+      number <= 255
+    else { return nil }
+    return UInt8(number)
   }
 
   /// The catalog reports market cap as a decimal string, which may carry a fractional part.

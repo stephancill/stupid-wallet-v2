@@ -17,6 +17,7 @@ signing input or creates key material.
 - Let a seed-backed wallet group derive multiple Ethereum accounts at
   `m/44'/60'/0'/0/{index}`.
 - Keep a raw-private-key wallet group restricted to exactly one account.
+- Support one public address per watch-only group for containing-app balance and portfolio viewing.
 - Make the address item in the home account menu open an account picker.
 - Let the home picker select an account, derive an account in a seed group, create a new seed group,
   import a seed phrase, or import a private key.
@@ -44,17 +45,19 @@ signing input or creates key material.
 - Hiding a removed account while retaining it as a selectable account, or restoring a removed
   account registration automatically.
 - BIP-39 passphrases, non-English word lists, custom derivation paths, hardware
-  wallets, watch-only accounts, or cross-device key synchronization.
+  wallets, watch-only dapp connections, or cross-device key synchronization.
 - Per-account chain selection, network metadata, or RPC preferences. Those remain installation-wide.
 - Silently adopting orphaned keychain items that are not represented by an authenticated registry
   migration or explicit import.
 
 ## Locked Product Decisions
 
-- A wallet group is either seed-backed or private-key-backed.
+- A wallet group is seed-backed, private-key-backed, or watch-only. The watch-only extension to this
+  specification is recorded below and supersedes earlier key-source assumptions for those groups.
 - New wallet creation generates a seed-backed wallet group and derives account index zero.
 - Seed import creates a seed-backed group and derives account index zero.
 - Private-key import creates a one-account private-key group.
+- Public-address import creates a one-account watch-only group without keychain access.
 - Only old Dawn v1 installations are supported migration sources. They become one-account private-key
   groups even when the account was originally imported from a seed phrase because Dawn retained no
   seed from which siblings can be derived.
@@ -89,10 +92,36 @@ signing input or creates key material.
 
 ### Wallet group
 
-A collection controlled by one secret source:
+A collection controlled by one secret source, or one explicitly watched public address:
 
 - A seed group owns protected BIP-39 entropy and one or more ordered derived accounts.
 - A private-key group owns one protected secp256k1 private key and exactly one account.
+- A watch-only group owns no secret and has exactly one non-derived account.
+
+### Watch-only scope (2026-09-21)
+
+The existing Import Wallet form accepts a label and a `0x`-prefixed 20-byte address. Native code
+normalizes the address to EIP-55, rejects duplicates across all groups and reserved seed identities,
+and persists a `.watchOnly` group in the existing schema-2 registry. Its account starts with the import
+label. Watches support normal home selection, label editing, cache hydration/refresh, and recoverable
+group removal. They require no authentication or keychain existence probe. The existing shared token
+watchlist determines which ERC-20 balances appear; there is no automatic account-holdings discovery.
+
+Watch-only groups have no seed identity, next derivation index, or account derivation index. Their
+identity and kind remain immutable through registry transitions. They are app-only: browser pickers,
+active connection accounts and connection defaults exclude watches. Connection proposal and default
+repair use eligible key-backed accounts, independent of a watch-only home. Signing and export reject
+before protected access, including when an orphaned key happens to match the watched address. The
+resolver can still construct a signer whose `hasKey()` is false for native service initialization.
+
+Accounts, the account menu and Settings show an eye inline beside the address, retaining watch-only
+accessibility context; Settings hides Private Key and Authorizations. Removal confirms
+account/cache deletion and uses the group-level `.deleting` barrier, skipping secret and Dawn-material
+cleanup. Shared token definitions and recorded activity remain. A watched home removes the old
+single-account projection. Older app/extension/helper binaries reject the new registry enum value;
+sharing it on Mac requires rebuilding/updating the Chrome helper with the watch-aware core. Existing
+registry schemas still load normally in the new build. Watch-to-key conversion is outside this slice;
+remove the watch before explicitly importing its secret.
 
 ### Home-selected account
 

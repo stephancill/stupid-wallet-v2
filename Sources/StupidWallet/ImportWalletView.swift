@@ -10,13 +10,17 @@ import SwiftUI
     @State private var groupName = ""
     @State private var importedSeedGroupID: UUID?
 
+    private var isWatchOnly: Bool {
+      WalletGroupManager.canonicalWatchOnlyAddress(input: inputText) != nil
+    }
+
     private var isValid: Bool {
       let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
       let hex = trimmed.lowercased().hasPrefix("0x") ? String(trimmed.dropFirst(2)) : trimmed
       let words = trimmed.split(whereSeparator: \.isWhitespace)
       let hasName = !groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       return hasName
-        && ((hex.count == 64 && hex.allSatisfy(\.isHexDigit))
+        && (isWatchOnly || (hex.count == 64 && hex.allSatisfy(\.isHexDigit))
           || [12, 15, 18, 21, 24].contains(words.count))
     }
 
@@ -32,17 +36,19 @@ import SwiftUI
         }
 
         Section {
-          TextField("Enter recovery phrase or private key", text: $inputText, axis: .vertical)
-            .textInputAutocapitalization(.never)
-            .disableAutocorrection(true)
-            .lineLimit(4...8)
-            .frame(minHeight: 96, alignment: .topLeading)
-            .privacySensitive()
+          TextField(
+            "Enter recovery phrase, private key, or address", text: $inputText, axis: .vertical
+          )
+          .textInputAutocapitalization(.never)
+          .disableAutocorrection(true)
+          .lineLimit(4...8)
+          .frame(minHeight: 96, alignment: .topLeading)
+          .privacySensitive()
         } header: {
-          Text("Recovery Phrase or Private Key")
+          Text("Recovery Phrase, Private Key, or Address")
         } footer: {
           Text(
-            "Enter a 12, 15, 18, 21, or 24-word recovery phrase, or a 64-character private key."
+            "Enter a 12, 15, 18, 21, or 24-word recovery phrase, a 64-character private key, or a public address to watch balances."
           )
         }
 
@@ -66,7 +72,9 @@ import SwiftUI
               if vm.isSaving {
                 ProgressView()
               }
-              Text(vm.isSaving ? "Importing…" : "Import Wallet")
+              Text(
+                vm.isSaving
+                  ? "Importing…" : isWatchOnly ? "Import Watch-only Account" : "Import Wallet")
             }
             .frame(maxWidth: .infinity)
           }

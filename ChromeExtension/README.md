@@ -53,6 +53,11 @@ malware controlling Chrome or stealing the browser credential: non-exportability
 restriction, not guaranteed hardware-backed storage. Fresh wallet authentication remains mandatory.
 Use extension 0.0.7 with helper 0.0.5; protocol 2 is intentionally incompatible.
 
+Watch-only accounts in current source require rebuilding the helper with the watch-aware shared core
+before adding watches in the Mac wallet. The published helper 0.0.5 rejects registries containing the
+new `watchOnly` group kind. Watches are app-only and never appear in the browser account picker; a
+watch-selected Home still permits connecting with another registered key-backed account.
+
 Chrome bundles pinned Zod 4.5.4 and esbuild 0.28.2; use the committed Bun lockfile. Zod validates privileged
 transport envelopes. Shared browser resources remain framework-free and all private-key operations
 remain native. The minimums are Chrome 111 and macOS 14.

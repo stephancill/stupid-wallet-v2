@@ -77,6 +77,36 @@ private struct AdoptionEnv {
 }
 
 struct WalletRegistryAdoptionTests {
+  @Test("an empty installation adopts and reloads watch-only accounts without protected sources")
+  func watchOnlyReadiness() async throws {
+    let env = try AdoptionEnv.make()
+    defer {
+      try? FileManager.default.removeItem(at: env.directory)
+      UserDefaults(suiteName: env.suite)?.removePersistentDomain(forName: env.suite)
+    }
+    let adoption = WalletRegistryAdoption(
+      directory: env.directory, appGroup: env.suite,
+      probe: StubSecretProbe(addresses: []), seedProbe: StubSeedProbe(groupIDs: []),
+      migrationBackend: AdoptionFakeBackend(oldAddress: nil, decryptResult: .failure(.cancelled)))
+    _ = try await adoption.ensureAdopted()
+    let manager = WalletGroupManager(directory: env.directory, appGroup: env.suite)
+    let group = try manager.importWatchOnly(
+      address: "0x1111111111111111111111111111111111111111", label: "Watch")
+    _ = try manager.selectHomeAccount(address: group.accounts[0].address)
+    try BalanceCache(directory: env.directory).save(
+      balance: "1.000000", account: group.accounts[0].address)
+    let reloaded = try await adoption.ensureAdopted()
+    #expect(reloaded.registry?.groups == [group])
+    #expect(reloaded.registry?.homeSelectedAddress == group.accounts[0].address)
+    #expect(WalletStore.activeAddress(directory: env.directory) == nil)
+    try manager.deleteAccount(groupID: group.id, address: group.accounts[0].address)
+    #expect(
+      try BalanceCache(directory: env.directory).entry(account: group.accounts[0].address) == nil)
+    let empty = try await adoption.ensureAdopted()
+    #expect(empty.registry?.groups.isEmpty == true)
+    #expect(empty.registry?.homeSelectedAddress == nil)
+  }
+
   @Test("active seed groups require their exact protected entropy item")
   func seedSourceReadiness() async throws {
     let env = try AdoptionEnv.make()

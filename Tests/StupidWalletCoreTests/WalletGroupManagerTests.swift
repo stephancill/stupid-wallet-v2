@@ -7,6 +7,162 @@ import Testing
 struct WalletGroupManagerTests {
   private let mnemonic = "test test test test test test test test test test test junk"
 
+  @Test(
+    "watch-only import normalizes, persists, edits and selects without changing connection authority"
+  )
+  func importsWatchOnly() throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let address = "0x52908400098527886E0F7030069857D2E4169EE7"
+    let before = try environment.connection.load()
+    let accesses = environment.keys.accessCount
+    let group = try environment.manager.importWatchOnly(
+      address: " \(address.lowercased())\n", label: " Portfolio ")
+    #expect(group.kind == .watchOnly)
+    #expect(group.accounts.count == 1)
+    #expect(group.accounts[0].address == address)
+    #expect(group.accounts[0].label == "Portfolio")
+    #expect(
+      try environment.registry.loadReady()?.homeSelectedAddress == environment.existingAddress)
+    _ = try environment.manager.selectHomeAccount(address: address)
+    _ = try environment.manager.updateLabels(
+      groupLabels: [group.id: "Watch"], accountLabels: [address: "Test portfolio"])
+    let reloaded = try #require(
+      try WalletRegistryStore(directory: environment.directory).loadReady())
+    #expect(reloaded.homeSelectedAddress == address)
+    #expect(reloaded.groups.last?.accounts[0].label == "Test portfolio")
+    #expect(WalletStore.activeAddress(directory: environment.directory) == nil)
+    #expect(try environment.connection.load() == before)
+    #expect(environment.keys.accessCount == accesses)
+    #expect(environment.seeds.savedGroupIDs.isEmpty)
+    #expect(throws: WalletGroupManagerError.duplicateAccount) {
+      try environment.manager.importWatchOnly(address: address.uppercased(), label: "Duplicate")
+    }
+    #expect(throws: WalletGroupManagerError.duplicateAccount) {
+      try environment.manager.importWatchOnly(
+        address: environment.existingAddress, label: "Duplicate")
+    }
+    for invalid in [
+      "0x1234", String(address.dropFirst(2)), "0x" + String(repeating: "g", count: 40),
+      "example.eth",
+    ] {
+      #expect(throws: WalletGroupManagerError.invalidAddress) {
+        try environment.manager.importWatchOnly(address: invalid, label: "Invalid")
+      }
+    }
+    #expect(throws: WalletGroupManagerError.invalidLabel) {
+      try environment.manager.importWatchOnly(address: address, label: " ")
+    }
+  }
+
+  @Test("a watched account cannot use or delete an orphaned key, and interrupted removal resumes")
+  func watchOnlyProtectedOperations() async throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    var secret = [UInt8](repeating: 0, count: 32)
+    secret[31] = 2
+    let address = try EthereumKeypair.from(secret: secret).address
+    try environment.keys.save(key: secret, account: address)
+    let accesses = environment.keys.accessCount
+    let group = try environment.manager.importWatchOnly(address: address, label: "Watch")
+    _ = try environment.manager.selectHomeAccount(address: address)
+    let resolver = environment.accountResolver()
+    let signer = try resolver.signer(address: address)
+    #expect(!signer.hasKey())
+    #expect(throws: SigningError.watchOnlyAccount) {
+      try signer.signDigest([UInt8](repeating: 1, count: 32))
+    }
+    #expect(throws: SigningError.watchOnlyAccount) {
+      try resolver.exportPrivateKey(address: address)
+    }
+    #expect(throws: WalletGroupManagerError.wrongGroupKind) {
+      try environment.manager.deriveAccount(groupID: group.id)
+    }
+    #expect(throws: WalletGroupManagerError.duplicateAccount) {
+      try environment.manager.importPrivateKey(privateKey: Hex.encode(secret))
+    }
+    let request = WalletPendingRequest(
+      kind: .message, method: "personal_sign", origin: "https://watch.example", chainId: "1",
+      account: address, params: .array([]), payloadDigest: "test", bindingVersion: 2)
+    try await environment.pending.insert(request)
+    let claim = try #require(environment.pending.claim(request.id))
+    #expect(throws: WalletGroupManagerError.pendingRequestBusy) {
+      try environment.manager.deleteAccount(groupID: group.id, address: address)
+    }
+    #expect(try environment.registry.loadReady()?.groups.last?.lifecycle == .deleting)
+    environment.pending.releaseClaim(claim)
+    try environment.manager.resumeDeletingGroups()
+    #expect(try environment.registry.loadReady()?.groups.count == 1)
+    #expect(try await environment.pending.record(request.id)?.status == .failed)
+    #expect(environment.keys.accessCount == accesses)
+    #expect(try environment.keys.load(account: address, reason: "Test") == secret)
+  }
+
+  @Test(
+    "browser connections skip a watched home and reject watched defaults and active connections")
+  func watchOnlyConnectionPolicy() async throws {
+    let environment = try Environment()
+    defer { environment.remove() }
+    let watch = try environment.manager.importWatchOnly(
+      address: "0x1111111111111111111111111111111111111111", label: "Watch")
+    let address = watch.accounts[0].address
+    _ = try environment.manager.selectHomeAccount(address: address)
+    _ = try environment.connection.mutate { $0.defaultAccount = nil }
+    let resolver = environment.accountResolver()
+    let service = WalletService(
+      store: environment.pending, signing: try resolver.signer(address: address),
+      connectedSites: ConnectedSitesStore(
+        appGroupID: environment.suite, directory: environment.directory),
+      chainStore: ChainStore(directory: environment.directory),
+      networkStore: NetworkStore(
+        directory: environment.directory, legacySuiteName: environment.suite),
+      activityStore: ActivityStore(
+        databaseURL: environment.directory.appendingPathComponent("Activity.sqlite")),
+      registryStore: environment.registry, accountResolver: resolver)
+    let available = try await service.availableAccountGroups()
+    #expect(available.flatMap(\.accounts).map(\.address) == [environment.existingAddress])
+    let id = try await service.prepare(
+      method: "eth_requestAccounts", params: .array([]), origin: "https://watch.example")
+    #expect(try await environment.pending.record(id)?.account == environment.existingAddress)
+    await #expect(throws: WalletError.bindingMismatch) {
+      try await service.rebindConnect(request: id, account: address, reviewedRevision: 0)
+    }
+    _ = try await service.approve(request: id, reviewedRevision: 0)
+    #expect(
+      try await service.visibleAccounts(origin: "https://watch.example") == [
+        environment.existingAddress
+      ])
+    let registry = try #require(try environment.registry.loadReady())
+    var state = try #require(try environment.connection.load())
+    state.defaultAccount = address
+    #expect(throws: ConnectionStateError.invalid(.unregisteredDefault)) {
+      try state.validate(against: registry)
+    }
+    state.defaultAccount = nil
+    state.grants = [
+      ConnectionGrant(
+        account: address, origin: "https://watch.example", legacyDomain: "watch.example",
+        profileID: nil, connectedAt: .now, precision: .exact)
+    ]
+    state.activeConnections = [
+      ActiveConnection(origin: "https://watch.example", profileID: nil, account: address)
+    ]
+    #expect(throws: ConnectionStateError.invalid(.unregisteredActive)) {
+      try state.validate(against: registry)
+    }
+
+    let privateGroup = try #require(registry.groups.first { $0.kind == .privateKey })
+    try environment.manager.deleteGroup(groupID: privateGroup.id)
+    #expect(try environment.registry.loadReady()?.homeSelectedAddress == address)
+    #expect(try environment.connection.load()?.defaultAccount == nil)
+    #expect(try await service.availableAccountGroups().isEmpty)
+    #expect(try await service.visibleAccounts(origin: "https://watch.example").isEmpty)
+    await #expect(throws: WalletError.notReady) {
+      try await service.prepare(
+        method: "eth_requestAccounts", params: .array([]), origin: "https://watch.example")
+    }
+  }
+
   @Test("seed import registers protected entropy and account zero")
   func importsSeedGroup() throws {
     let environment = try Environment()
@@ -396,12 +552,18 @@ struct WalletGroupManagerTests {
 
   @Test(
     "account and group deletion remove token caches while retaining the shared watchlist",
-    arguments: [false, true])
-  func deletesTokenBalances(entireGroup: Bool) throws {
+    arguments: ["account", "group", "watchOnly"])
+  func deletesTokenBalances(removal: String) throws {
     let environment = try Environment()
     defer { environment.remove() }
-    let group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
-    _ = try environment.manager.deriveAccount(groupID: group.id)
+    let group: WalletGroup
+    if removal == "watchOnly" {
+      group = try environment.manager.importWatchOnly(
+        address: "0x2222222222222222222222222222222222222222", label: "Watch")
+    } else {
+      group = try environment.manager.importSeedGroup(mnemonic: mnemonic)
+      _ = try environment.manager.deriveAccount(groupID: group.id)
+    }
     let service = WalletBalanceService(directory: environment.directory)
     let removedAccount = group.accounts[0].address
     let context = try service.context(account: removedAccount)
@@ -422,7 +584,7 @@ struct WalletGroupManagerTests {
     let oldContext = try service.context(account: removedAccount)
     let oldRefresh = try service.begin(context: oldContext)
 
-    if entireGroup {
+    if removal == "group" {
       try environment.manager.deleteGroup(groupID: group.id)
     } else {
       try environment.manager.deleteAccount(groupID: group.id, address: removedAccount)
@@ -518,6 +680,7 @@ private struct Environment {
   let cache: BalanceCache
   let pending: PendingRequestStore
   let manager: WalletGroupManager
+  let suite: String
 
   init(
     keys: StubKeyStore = StubKeyStore(),
@@ -533,7 +696,7 @@ private struct Environment {
     self.keys = keys
     try keys.save(key: secret, account: existingAddress)
     self.seeds = seeds
-    let suite = "WalletGroupManagerTests-\(UUID().uuidString)"
+    suite = "WalletGroupManagerTests-\(UUID().uuidString)"
     connection = ConnectionStateStore(directory: directory, suiteName: suite)
     cache = BalanceCache(directory: directory)
     pending = PendingRequestStore(
@@ -576,15 +739,25 @@ private struct Environment {
 
   func remove() {
     try? FileManager.default.removeItem(at: directory)
+    UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+  }
+
+  func accountResolver() -> WalletAccountResolver {
+    WalletAccountResolver(
+      registryStore: registry, keyStore: keys, seedStore: seeds,
+      lifecycle: WalletGroupLifecycleCoordinator(directory: directory))
   }
 }
 
 private final class StubKeyStore: WalletKeyStoring, @unchecked Sendable {
   private let lock = NSLock()
   private var values: [String: [UInt8]] = [:]
+  private var accesses = 0
+  var accessCount: Int { lock.withLock { accesses } }
 
   func save(key: [UInt8], account: String) throws {
     try lock.withLock {
+      accesses += 1
       guard values[account.lowercased()] == nil else {
         throw KeychainKeyStore.StorageError.saveFailed(errSecDuplicateItem)
       }
@@ -594,6 +767,7 @@ private final class StubKeyStore: WalletKeyStoring, @unchecked Sendable {
 
   func load(account: String, reason: String) throws -> [UInt8] {
     try lock.withLock {
+      accesses += 1
       guard let key = values[account.lowercased()] else {
         throw KeychainKeyStore.StorageError.notFound
       }
@@ -602,11 +776,17 @@ private final class StubKeyStore: WalletKeyStoring, @unchecked Sendable {
   }
 
   func delete(account: String) throws {
-    _ = lock.withLock { values.removeValue(forKey: account.lowercased()) }
+    lock.withLock {
+      accesses += 1
+      values.removeValue(forKey: account.lowercased())
+    }
   }
 
   func contains(account: String) -> Bool {
-    lock.withLock { values[account.lowercased()] != nil }
+    lock.withLock {
+      accesses += 1
+      return values[account.lowercased()] != nil
+    }
   }
 }
 

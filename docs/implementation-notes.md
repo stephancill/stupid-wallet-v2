@@ -8161,3 +8161,124 @@ Verification:
   temporarily pointed at an unreachable host, rebuilt, and the same row then rendered the letter
   placeholder; the host was restored, rebuilt, and the real icon returned. The token was then removed
   through the confirmation alert and the store confirmed an empty token list at revision 18.
+
+## 2026-09-21 — Home value portfolio with USD prices
+
+Home now reveals a value-ordered portfolio. A downward caret appears once any tracked holding has a
+non-zero balance; tapping it scrolls to a section whose first line is the total USD value, followed
+by rows ordered by value. The hero area occupies about four fifths of the first screen while holdings
+exist so the caret has something to reveal, and the previous vertically centered layout returns when
+there are none.
+
+Holdings are tracked tokens with a non-zero balance on any configured network plus the native
+currency of every network included in the total balance, which keeps the existing Include in Total
+Balance rule for native reads. Rows group holdings by symbol case-insensitively, so the same token or
+native currency on several networks collapses into one row; a grouped row's caret expands the
+per-chain distribution with each network's own value. Groups and members are ordered by value with
+unpriced holdings last, and a token row still navigates to its token detail screen.
+
+Prices come from the catalog's cacheable bulk endpoint, `GET
+/v1/prices?tokens=chainId:address,...`, using the literal address `native` for native currencies.
+Requests are chunked at 50 identities, sent in canonical order, and cached in memory for 60 seconds;
+only `ok` statuses contribute a price. Native metadata (symbol, decimals, icon) comes from
+`GET /v1/tokens/{chainId}/native`, cached for an hour. Values are fetched after balances are already
+published, so price failures never delay the balance display, and a holding the catalog cannot price
+shows an em dash and is excluded from the total.
+
+All value arithmetic is exact decimal-string math in the new `DecimalValue` helper: digit-string
+addition and schoolbook multiplication, numeric comparison, and half-up rounding to four significant
+figures for display (`$7,914`, `$2.468`, `$1.234`). No floating point is involved. `PortfolioHolding`
+and `PortfolioGroup` are pure value types with grouping, ordering, and total helpers, and
+`WalletBalanceModel` assembles them from the existing native and token results.
+
+Also fixed a robustness gap found while verifying: `Simple7702AccountDeploymentStore` now treats an
+unrecognized deployments-cache shape as empty instead of throwing. That file is only a positive
+verification cache that is re-checked on chain, and a legacy cache file previously made RPC override
+saves fail with "The RPC URL could not be saved."
+
+Verification:
+
+- `swift test`: 364 tests passed. New coverage includes exact decimal parsing, comparison, sums, and
+  products cross-checked against Python's `Decimal` (including a maximum `uint256` balance), four
+  significant figure rounding and USD display, and portfolio grouping, ordering, totals, and
+  case-insensitive symbol grouping. Catalog coverage now also exercises native metadata and the bulk
+  price request, including the `ok`/`not_found` statuses, canonical identity parsing, and caching.
+- `swift format --in-place` and `swift format lint --strict` on the changed Swift files passed;
+  `stupid-app build` passed; `git diff --check` passed.
+- `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched. A local JSON-RPC
+  stub was run on loopback and configured as the Ethereum and Base RPC override through the app's own
+  network editor, with tracked USDC on both networks, so the UI could be checked with real balances
+  and real catalog prices. Simulator acceptance confirmed the caret, `Total value $7,916`, native ETH
+  grouped across two networks at `$7,914`, USDC grouped across two networks at `$2.468` with an
+  expandable distribution of `Ethereum $1.234` and `Base $1.234`, an unpriced Anvil native holding
+  last with `—`, and the caret scrolling the portfolio into view.
+- Cleanup: the temporary tracked tokens and the two test RPC overrides were removed through the app's
+  own flows (deleting and re-adding the networks restored the default endpoints), the stub was
+  stopped, and a relaunch confirmed the previous centered balance layout with no caret.
+
+## 2026-09-21 — Watch-only accounts and primary Add Token confirmation
+
+Added public-address import to the existing Import Wallet form so the portfolio can be exercised
+without provisioning a signing key. A required label and a `0x`-prefixed 20-byte address create one
+non-derived `.watchOnly` registry group. Native validation normalizes to EIP-55 and rejects duplicate
+registered/reserved identities. Initial setup supports a watch alone; additive imports retain the
+existing Home selection. Watches use normal selection, label editing, balance refresh, portfolio and
+recoverable account/group removal.
+
+The registry/adoption paths accept watches without a protected source. The resolver can construct a
+watch signer for native service initialization, but `hasKey()` is false and signing/export reject
+before protected access, even if an orphaned keychain item matches its address. Browser pickers,
+active connections, and connection defaults exclude watches. Initial connection proposal and removal's
+replacement default choose key-backed accounts independently of Home selection. Watch removal clears
+account-bound caches and live state through the existing deletion barrier while skipping protected
+secret and legacy migration-material deletion; the shared tracked-token list remains.
+
+Accounts, the account menu, and Settings show an eye inline beside the shortened address, with
+watch-only accessibility context and no separate visible Watch-only label. Settings hides Private
+Key and Authorizations for watches. The Add Token confirmation marks its affirmative button with
+`.keyboardShortcut(.defaultAction)`, making it the native emphasized primary action with Return support.
+
+The schema-2 registry layout is retained with a new group-kind enum value. Older app, Safari, and
+Chrome-helper binaries reject a registry containing watches; a watched Home also removes the legacy
+single-address projection. Mac use requires a helper rebuilt from the watch-aware core before watches
+are added. The published helper 0.0.5 lacks that support. This compatibility requirement is documented
+in the handover, multi-account plan, and Chrome README. Watch-to-key conversion and automatic holdings
+discovery remain outside this slice; ERC-20 rendering still uses the manually tracked token list.
+
+Verification:
+
+- `stupid-app --version`: 0.0.18, Swift 6.4 with Xcode 27 / iOS SDK 27.
+- `swift test`: 369 tests in 41 suites passed. Added coverage exercises import validation, checksum
+  normalization, duplicates, persistence, labels, selection, immutable single-account group shape,
+  empty-installation readiness, signing/export refusal despite an orphaned matching key, browser
+  connect/rebind/default eligibility, readiness errors when only watches exist, interrupted removal recovery,
+  native/token cache cleanup, and retained shared token definitions. Existing balance-isolation and
+  suspended-response rejection tests also passed. The first test compilation exposed missing inner
+  `try` annotations in three new `#require` expressions; correcting those resolved the failure.
+- `swift format --in-place` on edited Swift files and
+  `git diff --name-only -- '*.swift' | xargs swift format lint --strict` passed.
+- `stupid-app doctor`: zero failures and warnings. `stupid-app build` passed after the final UI edit.
+- `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched the final build.
+  Simulator acceptance imported a public burn-address watch without authentication, selected it from
+  Accounts, fetched native balances, added tracked USDC on Ethereum and Base, and rendered grouped
+  portfolio values. The watch, selection, and tokens survived the subsequent reinstall/relaunch.
+  Accessibility inspection confirmed the watch indicator in the account menu; a Settings screenshot
+  confirmed the inline eye and hidden protected-operation rows. A fresh add-token alert confirmed the
+  affirmative action is blue and primary, and Cancel dismissed it. Screenshots remain under ignored
+  `.build/`. The public watch and two tracked tokens remain available for portfolio testing.
+- `git diff --check` passed. The simulator debugging skill now records AXValue-based text-field
+  targeting, physical-tap focus verification, and selection-refresh gating of the Accounts Close button.
+
+Follow-up: watch-specific physical-device and live Safari/Chrome acceptance remain separate from the
+hermetic connection-policy tests. Removal/recovery is covered deterministically; this simulator pass
+retained the watch fixture rather than exercising its final UI removal.
+
+## 2026-09-21 — Smaller Settings account avatar
+
+Reduced the Settings identity-row blockie from 52 to 42 points, with a proportionally smaller outer
+corner radius, to align its height with the two-line account label and address. Updated the handover.
+
+Verification: `swift format --in-place Sources/StupidWallet/SettingsView.swift`,
+`swift format lint --strict Sources/StupidWallet/SettingsView.swift`, and `stupid-app build` passed.
+`stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched; accessibility-driven
+navigation and a screenshot confirmed the smaller avatar beside the two lines in Settings.

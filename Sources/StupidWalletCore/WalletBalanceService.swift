@@ -125,6 +125,16 @@ public struct WalletBalanceService: Sendable {
     await tokenSearch.imageURL(chainID: chainID, address: address)
   }
 
+  /// Catalog metadata for a chain's native currency, used for its display symbol and icon.
+  public func nativeToken(chainID: String) async -> TokenSearchResult? {
+    await tokenSearch.tokenMetadata(chainID: chainID, address: "native")
+  }
+
+  /// USD prices for the requested tokens, keyed by request. Unpriced tokens are absent.
+  public func prices(for requests: [PriceRequest]) async -> [PriceRequest: String] {
+    await tokenSearch.prices(for: requests)
+  }
+
   /// Resolves one contract address on one configured network for the add-token address flow.
   public func addressCandidate(context: BalanceContext, chainID: String, address: String) async
     -> Result<TokenCandidate, TokenError>

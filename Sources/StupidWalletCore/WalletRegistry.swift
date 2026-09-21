@@ -9,6 +9,7 @@ public enum WalletRegistryAdoptionState: String, Codable, Sendable {
 public enum WalletGroupKind: String, Codable, Sendable {
   case seed
   case privateKey
+  case watchOnly
 }
 
 public enum WalletGroupLifecycle: String, Codable, Sendable {
@@ -94,7 +95,10 @@ public struct WalletGroup: Codable, Sendable, Equatable, Identifiable {
       ? seedIdentityAddress
         ?? accounts.first(where: { $0.derivationIndex == 0 })?.address
       : nil
-    self.label = label ?? (kind == .seed ? "Seed Wallet" : "Private Key Wallet")
+    self.label =
+      label
+      ?? (kind == .seed
+        ? "Seed Wallet" : kind == .watchOnly ? "Watch-only Wallet" : "Private Key Wallet")
     self.nextDerivationIndex = nextDerivationIndex
     self.accounts = accounts
     self.lifecycle = lifecycle
@@ -223,12 +227,13 @@ public struct WalletRegistry: Codable, Sendable, Equatable {
       }
 
       switch group.kind {
-      case .privateKey:
+      case .privateKey, .watchOnly:
         guard group.accounts.count == 1, group.nextDerivationIndex == nil,
           group.accounts[0].derivationIndex == nil, group.seedIdentityAddress == nil,
           group.accounts[0].lifecycle == .active
         else {
-          throw WalletRegistryError.invalid(.invalidPrivateKeyGroup)
+          throw WalletRegistryError.invalid(
+            group.kind == .watchOnly ? .invalidWatchOnlyGroup : .invalidPrivateKeyGroup)
         }
       case .seed:
         guard !group.accounts.isEmpty, let nextDerivationIndex = group.nextDerivationIndex,
@@ -313,6 +318,11 @@ public struct WalletRegistry: Codable, Sendable, Equatable {
 
   fileprivate static let derivationIndexLimit: UInt32 = 1 << 31
 
+  var connectionEligibleAccounts: [WalletAccount] {
+    groups.filter { $0.lifecycle == .active && $0.kind != .watchOnly }
+      .flatMap(\.accounts).filter { $0.lifecycle == .active }
+  }
+
   private static func isCanonicalAddress(_ address: String) -> Bool {
     guard address.hasPrefix("0x"), address.count == 42,
       let bytes = Hex.data(String(address.dropFirst(2))), bytes.count == 20
@@ -332,6 +342,7 @@ public enum WalletRegistryValidationError: Sendable, Equatable {
   case invalidAddress
   case duplicateAddress
   case invalidPrivateKeyGroup
+  case invalidWatchOnlyGroup
   case invalidSeedGroup
   case invalidSeedDerivationOrder
   case invalidNextDerivationIndex
@@ -688,7 +699,7 @@ public struct WalletRegistryStore: Sendable {
         else {
           throw WalletRegistryError.invalidTransition
         }
-      } else if group.kind == .privateKey {
+      } else if group.kind != .seed {
         guard Self.sameAccounts(group.accounts, updated.accounts) else {
           throw WalletRegistryError.invalidTransition
         }

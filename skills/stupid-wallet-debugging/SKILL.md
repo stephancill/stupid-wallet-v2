@@ -87,6 +87,11 @@ generic error text and do not bypass the canonical approval protocol.
     printing unexpected clipboard contents; synchronize that test string with host `pbcopy` when
     necessary. Automatic `UIPasteboard.general.string` access can show the system Allow Paste prompt.
     Complete that prompt and verify the field value before judging automatic metadata loading.
+18. AXe can expose a SwiftUI text-field placeholder under `AXValue` with a null `AXLabel`; target it
+    with `tap --value <placeholder> --element-type TextField`. On Xcode 27 an automatic/simulator tap
+    can report success without focusing the field. Use `--tap-style physical` and verify the typed
+    value from a fresh tree before continuing. Also check that a button is enabled: account selection
+    can keep the Accounts Close button disabled while its balance refresh is still finishing.
 
 ## Stack Map
 

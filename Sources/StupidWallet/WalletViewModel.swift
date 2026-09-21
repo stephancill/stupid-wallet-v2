@@ -19,6 +19,7 @@ final class WalletViewModel: ObservableObject {
   @Published var errorMessage: String?
 
   var hasWallet: Bool { !addressHex.isEmpty }
+  var isWatchOnly: Bool { selectedGroup?.kind == .watchOnly }
   var hasRegisteredAccounts: Bool { walletGroups.contains { $0.lifecycle == .active } }
   var chainName: String { NetworkInfo.name(for: chainID) }
   var selectedGroup: WalletGroup? {
@@ -111,7 +112,9 @@ final class WalletViewModel: ObservableObject {
     let shouldSelect = !hasWallet
     do {
       let group: WalletGroup
-      if words.count == 1 {
+      if let address = WalletGroupManager.canonicalWatchOnlyAddress(input: trimmed) {
+        group = try groupManager.importWatchOnly(address: address, label: groupName)
+      } else if words.count == 1 {
         group = try groupManager.importPrivateKey(privateKey: trimmed, label: groupName)
       } else {
         group = try groupManager.importSeedGroup(mnemonic: trimmed, label: groupName)
@@ -119,7 +122,7 @@ final class WalletViewModel: ObservableObject {
       if shouldSelect {
         _ = try groupManager.selectHomeAccount(address: group.accounts[0].address)
       }
-      if group.kind == .privateKey {
+      if group.kind != .seed {
         await finishWalletImport()
       }
       return group
@@ -326,6 +329,8 @@ final class WalletViewModel: ObservableObject {
       return "That derivation index is no longer available. Choose a current index and try again."
     case WalletGroupManagerError.invalidLabel:
       return "Enter a name for every wallet and account."
+    case WalletGroupManagerError.invalidAddress:
+      return "Enter a valid 0x-prefixed, 40-character account address."
     case WalletGroupManagerError.lastSeedAccount:
       return "Remove the wallet to delete its final account."
     case WalletGroupManagerError.accountNotFound:

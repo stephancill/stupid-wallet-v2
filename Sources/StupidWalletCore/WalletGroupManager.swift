@@ -17,6 +17,7 @@ public enum WalletGroupManagerError: Error, Sendable, Equatable {
   case invalidLabel
   case accountNotFound
   case lastSeedAccount
+  case invalidAddress
 }
 
 public struct DerivedAccountPreview: Sendable, Equatable, Identifiable {
@@ -76,6 +77,45 @@ public struct WalletGroupManager: Sendable {
     tokenStore = TokenStore(directory: registryStore.directory)
     self.pendingStore = pendingStore
     self.migrationBackend = migrationBackend
+  }
+
+  public static func canonicalWatchOnlyAddress(input: String) -> String? {
+    let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.count == 42, trimmed.lowercased().hasPrefix("0x"),
+      let bytes = Hex.data(trimmed), bytes.count == 20
+    else { return nil }
+    return EIP55.checksum(from: bytes)
+  }
+
+  @discardableResult
+  public func importWatchOnly(address: String, label: String) throws -> WalletGroup {
+    let label = try Self.validatedLabel(label)
+    guard let address = Self.canonicalWatchOnlyAddress(input: address) else {
+      throw WalletGroupManagerError.invalidAddress
+    }
+    guard let current = try registryStore.loadReady() else {
+      throw WalletGroupManagerError.registryNotReady
+    }
+    guard !Self.contains(account: address, in: current) else {
+      throw WalletGroupManagerError.duplicateAccount
+    }
+    let createdAt = Date()
+    let group = WalletGroup(
+      id: UUID(), kind: .watchOnly, createdAt: createdAt, nextDerivationIndex: nil,
+      accounts: [
+        WalletAccount(address: address, derivationIndex: nil, createdAt: createdAt, label: label)
+      ],
+      lifecycle: .active, label: label)
+    let updated = try registryStore.update(expectedRevision: current.revision) { registry in
+      WalletRegistry(
+        revision: registry.revision + 1, adoptionState: registry.adoptionState,
+        groups: registry.groups + [group], homeSelectedAddress: registry.homeSelectedAddress,
+        legacyWalletAddressFallbackRemoved: registry.legacyWalletAddressFallbackRemoved)
+    }
+    guard let persisted = updated.groups.first(where: { $0.id == group.id }) else {
+      throw WalletGroupManagerError.registryChanged
+    }
+    return persisted
   }
 
   @discardableResult
@@ -432,6 +472,8 @@ public struct WalletGroupManager: Sendable {
       sourceExists = keyStore.contains(account: account.address)
     case .seed:
       sourceExists = seedStore.contains(groupID: group.id)
+    case .watchOnly:
+      sourceExists = true
     }
     guard sourceExists else { throw WalletGroupManagerError.secureStorage }
     if current.homeSelectedAddress?.caseInsensitiveCompare(account.address) == .orderedSame {
@@ -554,7 +596,7 @@ public struct WalletGroupManager: Sendable {
       })
     else { throw WalletGroupManagerError.accountNotFound }
 
-    if group.kind == .privateKey {
+    if group.kind != .seed {
       try deleteClaimedGroup(groupID: groupID)
       return
     }
@@ -677,7 +719,9 @@ public struct WalletGroupManager: Sendable {
     for account in group.accounts {
       try balanceCache.remove(account: account.address)
       try tokenStore.removeBalances(account: account.address)
-      if migrationBackend.oldAddress()?.caseInsensitiveCompare(account.address) == .orderedSame {
+      if group.kind != .watchOnly,
+        migrationBackend.oldAddress()?.caseInsensitiveCompare(account.address) == .orderedSame
+      {
         migrationBackend.forgetMigrationMaterial(address: account.address)
       }
     }
@@ -776,6 +820,8 @@ public struct WalletGroupManager: Sendable {
         guard !seedStore.contains(groupID: group.id) else {
           throw WalletGroupManagerError.secureStorage
         }
+      case .watchOnly:
+        break
       }
     } catch let error as WalletGroupManagerError {
       throw error
@@ -786,12 +832,10 @@ public struct WalletGroupManager: Sendable {
 
   private func removeConnections(accounts: Set<String>) throws {
     try registryStore.withLockedReady { registry in
+      let eligible = registry.connectionEligibleAccounts
       let survivingDefault =
-        registry.homeSelectedAddress
-        ?? registry.groups
-        .filter { $0.lifecycle == .active }
-        .flatMap(\.accounts)
-        .first(where: { $0.lifecycle == .active })?.address
+        eligible.first(where: { $0.address == registry.homeSelectedAddress })?.address
+        ?? eligible.first?.address
       _ = try connectionStore.mutate { current in
         if current.connectCommits.contains(where: { accounts.contains($0.account.lowercased()) }) {
           throw WalletGroupManagerError.corruptState

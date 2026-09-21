@@ -16,6 +16,7 @@ import SwiftUI
     @State private var showAccountPicker = false
     @State private var showCopyCheckmark = false
     @State private var showAddToken = false
+    @State private var expandedSymbols: Set<String> = []
 
     var body: some View {
       NavigationView {
@@ -65,6 +66,7 @@ import SwiftUI
               AddressMenuButton(
                 address: vm.addressHex,
                 accountName: homeAccountName,
+                isWatchOnly: vm.isWatchOnly,
                 showAccounts: {
                   showAccountPicker = true
                 },
@@ -89,8 +91,11 @@ import SwiftUI
           Task { await vm.refreshBalance() }
         }
       ) {
-        SettingsView(address: vm.addressHex, accountName: homeAccountName, balances: vm.balances)
-          .id(vm.addressHex.lowercased())
+        SettingsView(
+          address: vm.addressHex, accountName: homeAccountName, isWatchOnly: vm.isWatchOnly,
+          balances: vm.balances
+        )
+        .id(vm.addressHex.lowercased())
       }
       .sheet(isPresented: $showAccountPicker) {
         AccountPickerView(vm: vm)
@@ -114,104 +119,204 @@ import SwiftUI
       }
     }
 
+    private static let portfolioAnchor = "portfolio"
+
     private var walletView: some View {
-      GeometryReader { geometry in
-        ScrollView {
-          VStack {
-            if visibleTokenRows.isEmpty { Spacer() }
-            VStack(alignment: .center) {
-              HStack {
-                Spacer()
-                Button {
-                  showBalanceDetails = true
-                } label: {
-                  HStack(alignment: .center, spacing: 8) {
-                    if let balance = vm.balance {
-                      Text("♦ \(balance)")
-                        .font(.system(size: 48, weight: .bold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.4)
-                        .allowsTightening(true)
-                    } else {
-                      ProgressView()
-                    }
-                    if !vm.networkBalances.isEmpty {
-                      Image(systemName: showBalanceDetails ? "chevron.up" : "chevron.down")
-                        .foregroundStyle(.secondary)
-                    }
-                  }
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.networkBalances.isEmpty)
-                .popover(
-                  isPresented: $showBalanceDetails,
-                  attachmentAnchor: .rect(.bounds),
-                  arrowEdge: .top
-                ) {
-                  Group {
-                    if !vm.networkBalances.isEmpty {
-                      VStack(alignment: .leading, spacing: 0) {
-                        ForEach(vm.networkBalances) { network in
-                          HStack(spacing: 6) {
-                            Text(network.name)
-                            Text(network.balance.map { "♦ \($0)" } ?? "Unavailable")
-                              .foregroundStyle(.secondary)
-                          }
-                          .frame(maxWidth: .infinity, alignment: .leading)
-                          .padding(.vertical, 6)
-                        }
-                      }
-                      .frame(minWidth: 280)
-                    } else if vm.balance == nil {
-                      Text("Loading balances...")
-                    } else if vm.includedNetworkCount == 0 {
-                      Text("No networks included")
-                    } else {
-                      Text("Balances unavailable")
-                    }
-                  }
-                  .padding()
-                  .presentationCompactAdaptation(.popover)
-                }
-                Spacer()
-              }
-            }
-            .padding()
-            if visibleTokenRows.isEmpty { Spacer() }
+      ScrollViewReader { proxy in
+        GeometryReader { geometry in
+          ScrollView {
             VStack(spacing: 0) {
-              ForEach(visibleTokenRows) { row in
-                NavigationLink(destination: TokenDetailView(tokenID: row.id, balances: vm.balances))
-                {
-                  TokenRowView(row: row)
-                    .padding(.vertical, 12)
+              VStack(spacing: 14) {
+                Spacer(minLength: 0)
+                balanceBlock
+                if !vm.balances.portfolioHoldings.isEmpty {
+                  Button {
+                    withAnimation { proxy.scrollTo(Self.portfolioAnchor, anchor: .top) }
+                  } label: {
+                    Image(systemName: "chevron.down")
+                      .font(.title3)
+                      .foregroundStyle(.secondary)
+                  }
+                  .buttonStyle(.plain)
+                  .accessibilityLabel("Show token values")
                 }
-                .buttonStyle(.plain)
-                Divider()
+                Spacer(minLength: 0)
               }
-              if let error = vm.balances.error {
-                Text(error).font(.footnote).foregroundStyle(.red).padding(.vertical, 8)
+              .frame(minHeight: heroHeight(geometry.size.height))
+
+              portfolioSection
+
+              VStack(spacing: 0) {
+                if let error = vm.balances.error {
+                  Text(error).font(.footnote).foregroundStyle(.red).padding(.vertical, 8)
+                }
+                Button("Add Token") { showAddToken = true }
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .padding(.vertical, 16)
               }
-              Button("Add Token") { showAddToken = true }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 16)
+              .padding(.horizontal)
             }
-            .padding(.horizontal)
           }
-          .frame(minHeight: visibleTokenRows.isEmpty ? geometry.size.height : nil)
+          .refreshable { await vm.refreshBalance() }
         }
-        .refreshable { await vm.refreshBalance() }
       }
       .onChange(of: vm.networkBalances.isEmpty) { _, isEmpty in
         if isEmpty { showBalanceDetails = false }
       }
     }
 
-    private var visibleTokenRows: [TokenBalanceRow] {
-      vm.balances.rows.filter { row in
-        guard let entry = row.entry else { return true }
-        return entry.raw.contains { $0 != 0 }
+    /// Leaves the portfolio section just below the fold so the caret has something to reveal.
+    private func heroHeight(_ available: CGFloat) -> CGFloat {
+      vm.balances.portfolioHoldings.isEmpty ? available : available * 0.8
+    }
+
+    private var balanceBlock: some View {
+      HStack {
+        Spacer()
+        Button {
+          showBalanceDetails = true
+        } label: {
+          HStack(alignment: .center, spacing: 8) {
+            if let balance = vm.balance {
+              Text("♦ \(balance)")
+                .font(.system(size: 48, weight: .bold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.4)
+                .allowsTightening(true)
+            } else {
+              ProgressView()
+            }
+            if !vm.networkBalances.isEmpty {
+              Image(systemName: showBalanceDetails ? "chevron.up" : "chevron.down")
+                .foregroundStyle(.secondary)
+            }
+          }
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.networkBalances.isEmpty)
+        .popover(
+          isPresented: $showBalanceDetails,
+          attachmentAnchor: .rect(.bounds),
+          arrowEdge: .top
+        ) {
+          Group {
+            if !vm.networkBalances.isEmpty {
+              VStack(alignment: .leading, spacing: 0) {
+                ForEach(vm.networkBalances) { network in
+                  HStack(spacing: 6) {
+                    Text(network.name)
+                    Text(network.balance.map { "♦ \($0)" } ?? "Unavailable")
+                      .foregroundStyle(.secondary)
+                  }
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .padding(.vertical, 6)
+                }
+              }
+              .frame(minWidth: 280)
+            } else if vm.balance == nil {
+              Text("Loading balances...")
+            } else if vm.includedNetworkCount == 0 {
+              Text("No networks included")
+            } else {
+              Text("Balances unavailable")
+            }
+          }
+          .padding()
+          .presentationCompactAdaptation(.popover)
+        }
+        Spacer()
       }
+      .padding()
+    }
+
+    private var portfolioSection: some View {
+      VStack(alignment: .leading, spacing: 0) {
+        if let total = vm.balances.portfolioTotalDisplay {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Total value")
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+            Text(total)
+              .font(.system(size: 30, weight: .semibold))
+              .lineLimit(1)
+              .minimumScaleFactor(0.5)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.bottom, 12)
+        }
+        ForEach(vm.balances.portfolioGroups) { group in
+          groupRow(group)
+          Divider()
+        }
+      }
+      .padding(.horizontal)
+      .id(Self.portfolioAnchor)
+    }
+
+    @ViewBuilder
+    private func groupRow(_ group: PortfolioGroup) -> some View {
+      if group.isGrouped {
+        Button {
+          withAnimation {
+            if expandedSymbols.contains(group.symbol) {
+              expandedSymbols.remove(group.symbol)
+            } else {
+              expandedSymbols.insert(group.symbol)
+            }
+          }
+        } label: {
+          groupLabel(group, expandable: true)
+        }
+        .buttonStyle(.plain)
+      } else if let tokenID = group.holdings.first.flatMap({ $0.address == nil ? nil : $0.id }) {
+        NavigationLink(destination: TokenDetailView(tokenID: tokenID, balances: vm.balances)) {
+          groupLabel(group, expandable: false)
+        }
+        .buttonStyle(.plain)
+      } else {
+        groupLabel(group, expandable: false)
+      }
+
+      if group.isGrouped, expandedSymbols.contains(group.symbol) {
+        ForEach(group.holdings) { holding in
+          HStack(spacing: 12) {
+            Text(holding.networkName)
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(holding.valueDisplay ?? "—")
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          }
+          .padding(.leading, 40)
+          .padding(.bottom, 10)
+          .accessibilityElement(children: .combine)
+        }
+      }
+    }
+
+    private func groupLabel(_ group: PortfolioGroup, expandable: Bool) -> some View {
+      HStack(spacing: 12) {
+        TokenIconView(iconURL: group.iconURL, symbol: group.symbol)
+        VStack(alignment: .leading, spacing: 3) {
+          Text(group.symbol).foregroundStyle(.primary)
+          Text(group.networkLabel).font(.subheadline).foregroundStyle(.secondary)
+        }
+        Spacer(minLength: 12)
+        Text(group.valueDisplay ?? "—")
+          .foregroundStyle(group.valueDisplay == nil ? .secondary : .primary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.7)
+        if expandable {
+          Image(systemName: expandedSymbols.contains(group.symbol) ? "chevron.up" : "chevron.down")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .padding(.vertical, 12)
+      .contentShape(Rectangle())
+      .accessibilityElement(children: .combine)
     }
 
     private var homeAccountName: String? {
@@ -225,6 +330,7 @@ import SwiftUI
   private struct AddressMenuButton: View {
     let address: String
     let accountName: String?
+    let isWatchOnly: Bool
     let showAccounts: () -> Void
     let showActivity: () -> Void
     let showConnectedApps: () -> Void
@@ -272,9 +378,14 @@ import SwiftUI
             .frame(width: 28, height: 28)
           VStack(alignment: .leading, spacing: 2) {
             Text(accountName ?? displayAddress)
-            Text(displayAddress)
-              .font(.footnote)
-              .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+              Text(displayAddress)
+              if isWatchOnly {
+                Image(systemName: "eye").accessibilityLabel("Watch-only")
+              }
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
           }
           Spacer(minLength: 12)
           Image(systemName: "arrow.left.arrow.right")

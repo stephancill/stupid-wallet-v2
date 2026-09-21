@@ -59,6 +59,7 @@ public enum SigningError: Error, Sendable, Equatable {
   case authenticationRequired
   case accountUnavailable
   case accountMismatch
+  case watchOnlyAccount
 }
 
 public protocol AccountResolving: Sendable {
@@ -138,6 +139,7 @@ public struct WalletAccountResolver: AccountResolving, Sendable {
     switch context.group.kind {
     case .privateKey: return keyStore.contains(account: context.account.address)
     case .seed: return seedStore.contains(groupID: context.group.id)
+    case .watchOnly: return false
     }
   }
 
@@ -189,6 +191,8 @@ public struct WalletAccountResolver: AccountResolving, Sendable {
         var entropy = try seedStore.load(groupID: current.group.id, reason: reason)
         defer { entropy.resetBytes(in: entropy.indices) }
         secret = try EthereumSeedPhrase.privateKey(entropy: entropy, index: index)
+      case .watchOnly:
+        throw SigningError.watchOnlyAccount
       }
       defer { secret.resetBytes(in: secret.indices) }
       let derived = try EthereumKeypair.from(secret: secret).address

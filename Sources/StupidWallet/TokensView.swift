@@ -41,7 +41,6 @@ import SwiftUI
 
   struct TokenRowView: View {
     let row: TokenBalanceRow
-    var showsBalance = true
 
     var body: some View {
       HStack(alignment: .center, spacing: 12) {
@@ -49,21 +48,6 @@ import SwiftUI
         VStack(alignment: .leading, spacing: 3) {
           Text(row.token.symbol).foregroundStyle(.primary)
           Text(row.networkName).font(.subheadline).foregroundStyle(.secondary)
-        }
-        if showsBalance {
-          Spacer(minLength: 12)
-          VStack(alignment: .trailing, spacing: 3) {
-            if let entry = row.entry {
-              Text(row.token.displayBalance(raw: entry.raw))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            } else if row.isLoading {
-              ProgressView().accessibilityLabel("Loading balance")
-            } else {
-              Text("Unavailable").foregroundStyle(.secondary)
-            }
-          }
         }
       }
       .contentShape(Rectangle())
@@ -81,7 +65,7 @@ import SwiftUI
           if balances.rows.isEmpty { Text("No tokens added").foregroundStyle(.secondary) }
           ForEach(balances.rows) { row in
             NavigationLink(destination: TokenDetailView(tokenID: row.id, balances: balances)) {
-              TokenRowView(row: row, showsBalance: false)
+              TokenRowView(row: row)
             }
           }
         }
@@ -250,6 +234,7 @@ import SwiftUI
         Button("Add Token") {
           if let candidate = pendingCandidate { add(candidate) }
         }
+        .keyboardShortcut(.defaultAction)
       } message: {
         if let candidate = pendingCandidate {
           Text("Adds \(candidate.symbol) on \(candidate.networkName) to your tracked tokens.")

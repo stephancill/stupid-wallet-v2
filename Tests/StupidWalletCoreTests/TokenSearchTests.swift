@@ -274,7 +274,10 @@ struct TokenSearchTests {
     let icon = URL(string: "https://example.com/usdc.png")
 
     stub.respond = { _ in
-      (200, Data(#"{"address":"\#(address)","imageUrl":"https://example.com/usdc.png"}"#.utf8))
+      (
+        200,
+        metadata(chain: 1, address: address, symbol: "USDC", image: "https://example.com/usdc.png")
+      )
     }
     #expect(await client.imageURL(chainID: "1", address: address.uppercased()) == icon)
     #expect(await client.imageURL(chainID: "1", address: address) == icon)
@@ -288,17 +291,62 @@ struct TokenSearchTests {
     stub.respond = { _ in
       (
         200,
-        Data(
-          #"{"address":"0x6b175474e89094c44da98b954eedeac495271d0f","imageUrl":"https://example.com/wrong.png"}"#
-            .utf8)
+        metadata(
+          chain: 1, address: "0x6b175474e89094c44da98b954eedeac495271d0f", symbol: "DAI",
+          image: "https://example.com/wrong.png")
       )
     }
     #expect(await client.imageURL(chainID: "10", address: address) == nil)
 
-    stub.respond = { _ in (200, Data(#"{"address":"\#(address)"}"#.utf8)) }
+    stub.respond = { _ in (200, metadata(chain: 1, address: address, symbol: "USDC", image: nil)) }
     #expect(await client.imageURL(chainID: "42161", address: address) == nil)
 
     #expect(await client.imageURL(chainID: "1", address: "0x1234") == nil)
+  }
+
+  @Test("native metadata and bulk prices use the catalog endpoints")
+  func clientNativeAndPrices() async throws {
+    let stub = SearchHTTPStub()
+    defer { stub.close() }
+    let client = stub.client()
+
+    stub.respond = { request in
+      if request.url?.path.hasSuffix("/native") == true {
+        return (200, metadata(chain: 1, address: "native", symbol: "ETH", decimals: 18))
+      }
+      return (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"2622.6440903517046"},{"chainId":8453,"address":"0x833589fcd6edb6e08f4c7c32d4f71b54bda02913","status":"ok","priceUsd":"0.9997420860108598"},{"chainId":10,"address":"0x4200000000000000000000000000000000000042","status":"not_found","priceUsd":null}]}"#
+            .utf8)
+      )
+    }
+
+    let native = try #require(await client.tokenMetadata(chainID: "1", address: "native"))
+    #expect(native.symbol == "ETH")
+    #expect(native.decimals == 18)
+    #expect(native.imageURL == nil)
+
+    let nativeRequest = try #require(PriceRequest(chainID: "1", address: "native"))
+    let usdc = try #require(
+      PriceRequest(chainID: "8453", address: "0x833589FCD6eDb6E08f4C7C32D4f71b54bdA02913"))
+    let missing = try #require(
+      PriceRequest(chainID: "10", address: "0x4200000000000000000000000000000000000042"))
+    let prices = await client.prices(for: [nativeRequest, usdc, missing, nativeRequest])
+    #expect(prices[nativeRequest] == "2622.6440903517046")
+    #expect(prices[usdc] == "0.9997420860108598")
+    #expect(prices[missing] == nil)
+
+    // The request carries canonical identities and is cached after the first call.
+    let priceRequests = stub.requests.filter { $0.url?.path.hasSuffix("/prices") == true }
+    #expect(priceRequests.count == 1)
+    let query = try #require(priceRequests.first?.url?.query)
+    #expect(query.contains("tokens="))
+    _ = await client.prices(for: [usdc, nativeRequest])
+    #expect(stub.requests.filter { $0.url?.path.hasSuffix("/prices") == true }.count == 1)
+
+    #expect(PriceRequest(chainID: "not-a-chain", address: "native") == nil)
+    #expect(PriceRequest(chainID: "1", address: "0x1234") == nil)
   }
 
   @Test("one unreachable network still returns the other networks' matches")
@@ -387,6 +435,15 @@ struct TokenSearchTests {
     #expect(stub.requests.isEmpty)
   }
 
+}
+
+private func metadata(
+  chain: Int, address: String, symbol: String, decimals: Int = 6, image: String? = nil
+) -> Data {
+  let imageField = image.map { ",\"imageUrl\":\"\($0)\"" } ?? ""
+  return Data(
+    "{\"chainId\":\(chain),\"address\":\"\(address)\",\"name\":\"\(symbol)\",\"symbol\":\"\(symbol)\",\"decimals\":\(decimals)\(imageField)}"
+      .utf8)
 }
 
 private func searchBody(_ entries: [String]) -> Data {

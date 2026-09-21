@@ -36,9 +36,14 @@ import SwiftUI
                           .underline(pattern: .dot, color: .secondary)
                         Spacer(minLength: 0)
                       }
-                      Text(shortAddress(account.address))
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                      HStack(spacing: 4) {
+                        Text(shortAddress(account.address))
+                        if group.kind == .watchOnly {
+                          Image(systemName: "eye").accessibilityLabel("Watch-only")
+                        }
+                      }
+                      .font(.footnote)
+                      .foregroundStyle(.secondary)
                     }
                   }
                 } else {
@@ -50,9 +55,14 @@ import SwiftUI
                         .frame(width: 28, height: 28)
                       VStack(alignment: .leading, spacing: 2) {
                         Text(account.label)
-                        Text(shortAddress(account.address))
-                          .font(.footnote)
-                          .foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                          Text(shortAddress(account.address))
+                          if group.kind == .watchOnly {
+                            Image(systemName: "eye").accessibilityLabel("Watch-only")
+                          }
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                       }
                       Spacer()
                       if account.address.caseInsensitiveCompare(vm.addressHex) == .orderedSame {
@@ -226,6 +236,10 @@ import SwiftUI
       let accountLabel =
         accountLabels[removal.account.address.lowercased()] ?? removal.account.label
       let address = shortAddress(removal.account.address)
+      if removal.group.kind == .watchOnly {
+        return
+          "\(accountLabel) (\(address)) and its cached balances will be removed from this device."
+      }
       if removal.group.kind == .seed && removal.removesGroup {
         return
           "This is the last account in \(groupLabel) (\(address)). Its recovery phrase and wallet will be removed."
