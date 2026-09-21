@@ -96,14 +96,14 @@ struct PortfolioSWRTests {
     #expect(nextLaunch.portfolioTotalDisplay == "$1,002.50")
   }
 
-  @Test("successful zero balances remove cached holdings and survive relaunch")
+  @Test("zero tracked-token balances stay visible while zero native balances are removed")
   @MainActor func zeroBalances() async throws {
     let catalog = SearchHTTPStub()
     defer { catalog.close() }
     catalog.respond = { _ in (200, priceBody(nativePrice: "1000", tokenPrice: "2")) }
     let environment = try BalanceEnvironment(tokenSearch: catalog.client())
     defer { environment.close() }
-    _ = try environment.addToken()
+    let token = try environment.addToken()
     let wallet = WalletBalanceModel(service: environment.service)
     wallet.selectAccount(environment.accounts[0])
     await wallet.refresh()
@@ -112,11 +112,19 @@ struct PortfolioSWRTests {
       try balanceBody(request: request, native: "0x0", tokenAmount: 0)
     }
     await wallet.refresh()
-    #expect(wallet.portfolioHoldings.isEmpty)
-    #expect(wallet.nativeTotal == "0.000000")
+    #expect(wallet.portfolioHoldings.map(\.id) == [token.id])
+    #expect(wallet.portfolioHoldings.first?.valueUSD == "0")
+    #expect(wallet.portfolioGroups.map(\.symbol) == ["USDC"])
+    #expect(wallet.portfolioGroups.first?.valueDisplay == "$0.00")
+    #expect(wallet.portfolioGroups.first?.changeDisplay == nil)
+    #expect(wallet.portfolioTotalDisplay == "$0.00")
+    // Zero stays visible after relaunch too, and still contributes nothing to the total.
     let relaunched = model(environment: environment, catalog: catalog)
     relaunched.selectAccount(environment.accounts[0])
-    #expect(relaunched.portfolioHoldings.isEmpty)
+    #expect(relaunched.portfolioHoldings.map(\.id) == [token.id])
+    #expect(relaunched.portfolioGroups.map(\.symbol) == ["USDC"])
+    #expect(relaunched.portfolioTotalDisplay == "$0.00")
+    #expect(wallet.nativeTotal == "0.000000")
   }
 
   @Test("switching accounts during price loading cannot publish or persist the old quote")

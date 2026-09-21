@@ -577,8 +577,9 @@ Home's token screen (see Home Value Portfolio) displays the value-ordered portfo
 Settings → Tokens sits alongside Networks and manages the same installation-wide watchlist. The list
 starts empty; importing discovers a token by name, symbol, or contract address. Token identity is
 normalized decimal chain ID plus lowercase contract address.
-Balances are separately keyed by normalized account and token identity. Home hides holdings whose
-last successful raw balance is zero; loading or unavailable balances without a cache remain visible.
+Balances are separately keyed by normalized account and token identity. A tracked token stays in the
+portfolio at a zero balance, shown as an exact `$0.00` with no day change; a zero native balance is
+still omitted, and a tracked token whose balance has never been read successfully has no row.
 Settings → Tokens retains the full tracked list, including zero balances, for management and is where
 tokens are imported. Settings rows sort
 by symbol, network name, then stable token ID. Compact amounts truncate to six decimal
@@ -689,7 +690,8 @@ then the value-ordered holdings, and
 keeps the account's tracked-token errors. The holdings render as plain asset rows without grouped
 section backgrounds; importing tokens lives in Settings → Tokens, so the token screen has no Add
 Token action. Each page fills the viewport exactly, including the bottom safe area, so no part of the
-next page peeks in at rest. A settled portfolio with no holdings shows a native empty state (`No
+next page peeks in at rest. A settled portfolio with nothing to show — no tracked token has a known
+balance and no included native currency is non-zero — shows a native empty state (`No
 tokens`) in place of the list and a `$0.00` total; an unpriceable or unavailable total still shows
 `—`. A refresh that is still in flight or has failed keeps its existing presentation instead of
 claiming the wallet is empty.
@@ -705,9 +707,12 @@ in both directions: the landing screen has no inner scroll view, so a drag anywh
 the token screen the list scrolls normally while the rest of the page still pages back. Both screens render the same
 account toolbar (copy address and the account menu).
 
-- Holdings are the tracked tokens with a non-zero balance on any configured network plus the native
-  currency of every network included in the total balance. Native holdings therefore follow the
-  existing Include in Total Balance rule; tracked tokens on excluded networks still appear.
+- Holdings are every tracked token with a known balance, including a zero one, plus the native
+  currency of every network included in the total balance when it is non-zero. Native holdings
+  therefore follow the
+  existing Include in Total Balance rule; tracked tokens on excluded networks still appear. A zero
+  tracked holding reports an exact `0` value, so it shows `$0.00` even when the catalog has no price
+  for it, and it carries no 24-hour change.
 - Rows group holdings by symbol, case-insensitively, so the same token or native currency on several
   networks is one row. A grouped row shows a small caret inline beside the network label (for example
   `4 networks ⌄`) that expands the per-chain distribution, and each
@@ -793,8 +798,9 @@ capsule. Swap joins the same group when it is
 implemented, and only `Send` exists today.
 
 Send presents a wallet-owned sheet ordered To → Asset → Amount → Send. The To row opens a recipient
-picker; the flat per-chain asset picker lists the native currency of every included network plus
-every non-zero tracked ERC-20, each row labelled with its network. The decimal amount field shows the
+picker; the flat per-chain asset picker offers the same per-chain holdings as the portfolio, so it
+includes every tracked token (showing a zero balance when it holds none) and every included network's
+non-zero native currency, each row labelled with its network. The decimal amount field shows the
 available balance. The recipient picker lists
 every active registered account under its wallet-group label, including watch-only accounts and the
 sending account. Choosing an account returns to the Send form without changing the Home account.

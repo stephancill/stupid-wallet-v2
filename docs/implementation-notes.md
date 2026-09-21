@@ -9596,3 +9596,41 @@ Verification:
 - External TestFlight distribution of this build has not been requested.
 - Physical-device acceptance of the Send form and the portfolio empty state was not run; simulator
   verification covered both.
+
+## 2026-09-21 — Zero balances stay visible for tracked tokens
+
+### Summary
+
+- A tracked ERC-20 no longer disappears from the home portfolio when its balance reaches zero. A
+  zero holding reports an exact `0` value, so it shows `$0.00` even without a catalog price, and it
+  carries no 24-hour change because a zero position has nothing to change. Zero native balances are
+  still omitted, and a tracked token whose balance has never been read successfully still has no row.
+- The Send asset picker keeps one rule with the portfolio: it offers the same per-chain holdings, so a
+  zero-balance tracked token can be selected (with `Available 0`) instead of leaving portfolio
+  swipe-to-Send actions pointing at an asset the picker omits.
+- Because tracked tokens now stay visible, the `No tokens` empty state is reached only when nothing is
+  tracked and no included native currency is non-zero. Its copy is unchanged and still correct.
+- Updated the handover to describe the new holding rule in the tracked-token, portfolio and Send
+  sections.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` on the changed files: passed.
+- `swift test --filter 'PortfolioSWRTests|PortfolioTests|TokenBalanceTests'`: 38 tests passed. The
+  previous "zero balances remove holdings" regression now pins the new behavior: after a successful
+  zero read the holding, group, `$0.00` value and total survive a relaunch while the zero native
+  balance is still removed.
+- `swift test`: 429 Swift Testing tests in 48 suites and 14 XCTest cases passed.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>` passed; the app was
+  reinstalled and launched. On the zero-balance watch-only account the portfolio now shows its tracked
+  `USDC` (4 networks) and `HIGHER` holdings at `$0.00` with no change line and a `$0.00` total,
+  replacing the previous `No tokens` state. A funded watch-only account still shows its four priced
+  holdings, icons, signed changes and real total. Screenshots confirmed both.
+- The Send asset picker derives from the same holding set, so it now lists zero-balance tracked tokens
+  with `Available 0`; any positive amount stays unsendable. Portfolio swipe-to-Send therefore still
+  opens an asset the picker contains.
+
+### Limitations
+
+- Physical-device acceptance was not run; simulator verification covered the zero-balance portfolio
+  and the Send picker. The internal TestFlight build 111 predates this change.

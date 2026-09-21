@@ -256,19 +256,25 @@ public final class WalletBalanceModel: ObservableObject {
     for index in rows.indices {
       let row = rows[index]
       let token = row.token
-      guard let entry = row.entry, entry.raw.contains(where: { $0 != 0 }) else { continue }
+      guard let entry = row.entry else { continue }
       let quote = priceQuotes[token.id]
       let iconURL = quote?.imageURL ?? row.iconURL ?? iconCache[token.id] ?? nil
       iconCache[token.id] = iconURL
       if rows[index].iconURL != iconURL { rows[index].iconURL = iconURL }
+      // A tracked token keeps its row at a zero balance. Zero is a known value even when the
+      // catalog has no price, and a zero position has no day change to report.
+      let isZero = !entry.raw.contains { $0 != 0 }
       holdings.append(
         PortfolioHolding(
           chainID: token.chainID, networkName: row.networkName, symbol: token.symbol,
           address: token.address, iconURL: iconURL, raw: entry.raw, decimals: token.decimals,
           priceUSD: quote?.priceUSD,
-          valueUSD: (quote?.priceUSD ?? nil).flatMap {
-            PortfolioHolding.value(raw: entry.raw, decimals: token.decimals, price: $0)
-          }, change24h: quote?.change24h))
+          valueUSD: isZero
+            ? "0"
+            : (quote?.priceUSD ?? nil).flatMap {
+              PortfolioHolding.value(raw: entry.raw, decimals: token.decimals, price: $0)
+            },
+          change24h: isZero ? nil : quote?.change24h))
     }
 
     let groups = PortfolioGroup.groups(from: holdings)
