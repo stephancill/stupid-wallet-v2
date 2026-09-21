@@ -150,6 +150,12 @@ https://app.uniswap.org/swap?chain=base&inputCurrency=<token>&outputCurrency=NAT
   flash setup or no-wallet UI before the persisted home account arrives. Gate the root content and
   account toolbar on an explicit initial-load completion flag; do not infer emptiness until adoption
   returns.
+- For Home paging affordances, inspect accessibility frames during a slow drag as well as at both
+  settled pages. A caret that only flips its symbol can still be incorrectly fixed to the viewport.
+  Resolve a single caret from the token page's bounds anchor in an overlay, keeping per-frame geometry
+  out of the parent view's state and the holdings list. Derive its direction, accessibility label,
+  and tap target from the same geometry: `ScrollViewReader.scrollTo` can move the page before the
+  `scrollPosition` binding reflects it. Verify both caret taps and a partial drag that snaps back.
 
 ### 2. Locate The Boundary
 
@@ -394,6 +400,14 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   intentionally retain the last success, while successful zero balances are persisted as zero.
   Include in Total Balance affects native reads only. A pending `network-removal.json` resumes cleanup
   on the next network-store access; never edit that journal or token caches to force recovery.
+- Portfolio `—` values can be a price-service status rather than a missing balance or decimal bug.
+  Inspect `status` and `priceUsd` from `/v1/prices`: `stale` deliberately carries null after the
+  source price exceeds five minutes. A simulator's URLCache `Cache.db` can prove the actual received
+  response; open it read-only and limit inspection to the price-service URLs and public status/cache
+  fields. Do not dump unrelated wallet requests. Compare `Cache-Control`, `Age`, and `Date` with the
+  app's memory-cache lifetime, and do not cache transient nulls as permanent catalog misses. The
+  service canonicalizes full `chainId:address` strings lexicographically, not by numeric chain ID;
+  a 308 to the sorted URL is expected for a non-canonical request.
 - Reproduce a failing passthrough call with the exact original method spelling and params.
 - Compare native behavior with a direct public-safe request:
 

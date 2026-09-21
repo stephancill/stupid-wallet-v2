@@ -91,8 +91,8 @@ public enum MarketCapFormatter {
 /// Keyless read client for `https://tokens.stupidtech.net`.
 ///
 /// The service is free and unauthenticated and asks callers to cache responses, so identical
-/// searches are served from a short-lived in-memory cache. Only search is used; prices and
-/// catalog enumeration are deliberately not part of the wallet.
+/// searches, metadata, and prices are served from bounded in-memory caches. Price caching also
+/// respects the response's HTTP freshness; a transient failure is not a cached missing price.
 public actor StupidTokensClient {
   public static let defaultBaseURL = URL(string: "https://tokens.stupidtech.net")!
   public static let shared = StupidTokensClient()
@@ -231,36 +231,40 @@ public actor StupidTokensClient {
       if let price = cached.price { resolved[request] = price }
     }
     var index = 0
-    let ordered = missing.sorted { lhs, rhs in
-      let left = Int(lhs.chainID) ?? 0
-      let right = Int(rhs.chainID) ?? 0
-      if left != right { return left < right }
-      return lhs.address < rhs.address
-    }
+    let ordered = missing.sorted { "\($0.chainID):\($0.address)" < "\($1.chainID):\($1.address)" }
     while index < ordered.count {
       let chunk = Array(ordered[index..<min(index + 50, ordered.count)])
-      let prices = await fetchPrices(chunk)
-      for request in chunk {
-        let price = prices[request]
-        priceCache[request] = (Date().addingTimeInterval(priceLifetime), price)
-        if let price { resolved[request] = price }
+      if let batch = await fetchPrices(chunk) {
+        for request in chunk {
+          let price = batch.prices[request]
+          if let price { resolved[request] = price }
+          if price != nil || batch.notFound.contains(request) {
+            priceCache[request] = (Date().addingTimeInterval(batch.cacheLifetime), price)
+          }
+        }
       }
       index += 50
     }
     return resolved
   }
 
-  private func fetchPrices(_ requests: [PriceRequest]) async -> [PriceRequest: String] {
+  private struct PriceBatch {
+    let prices: [PriceRequest: String]
+    let notFound: Set<PriceRequest>
+    let cacheLifetime: TimeInterval
+  }
+
+  private func fetchPrices(_ requests: [PriceRequest]) async -> PriceBatch? {
     guard !requests.isEmpty,
       var components = URLComponents(
         url: baseURL.appendingPathComponent("v1/prices"), resolvingAgainstBaseURL: false)
-    else { return [:] }
+    else { return nil }
     components.queryItems = [
       URLQueryItem(
         name: "tokens",
         value: requests.map { "\($0.chainID):\($0.address)" }.joined(separator: ","))
     ]
-    guard let url = components.url else { return [:] }
+    guard let url = components.url else { return nil }
     var request = URLRequest(url: url)
     request.httpMethod = "GET"
     request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -269,22 +273,48 @@ public actor StupidTokensClient {
       let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
       data.count <= Self.maximumResponseBytes,
       case .object(let root)? = try? JSONValue.parse(data),
+      root["currency"]?.stringValue == "usd",
       case .array(let entries)? = root["prices"]
-    else { return [:] }
+    else { return nil }
     var prices: [PriceRequest: String] = [:]
+    var notFound: Set<PriceRequest> = []
+    let requested = Set(requests)
     for entry in entries {
       guard case .object(let object) = entry,
         case .number(let chainNumber)? = object["chainId"], chainNumber.rounded() == chainNumber,
         chainNumber >= 1, chainNumber <= Double(Int.max),
         let chain = ChainStore.normalize(String(Int(chainNumber))),
         let address = object["address"]?.stringValue,
-        let key = PriceRequest(chainID: chain, address: address),
-        object["status"]?.stringValue == "ok",
-        let price = object["priceUsd"]?.stringValue, DecimalValue.parse(price) != nil
+        let key = PriceRequest(chainID: chain, address: address), requested.contains(key)
       else { continue }
-      prices[key] = price
+      if object["status"]?.stringValue == "not_found" {
+        notFound.insert(key)
+      } else if object["status"]?.stringValue == "ok",
+        let price = object["priceUsd"]?.stringValue, DecimalValue.parse(price) != nil
+      {
+        prices[key] = price
+      }
     }
-    return prices
+    let directives = (http.value(forHTTPHeaderField: "Cache-Control") ?? "")
+      .lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    var lifetime = priceLifetime
+    if directives.contains("no-store") || directives.contains("no-cache") {
+      lifetime = 0
+    } else if let directive = directives.first(where: { $0.hasPrefix("max-age=") }),
+      let maximumAge = TimeInterval(
+        directive.dropFirst(8).trimmingCharacters(in: CharacterSet(charactersIn: "\""))),
+      maximumAge.isFinite, maximumAge >= 0
+    {
+      let age = TimeInterval(http.value(forHTTPHeaderField: "Age") ?? "0") ?? 0
+      let formatter = DateFormatter()
+      formatter.locale = Locale(identifier: "en_US_POSIX")
+      formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+      let responseDate = http.value(forHTTPHeaderField: "Date").flatMap(formatter.date(from:))
+      let elapsed = responseDate.map { max(0, Date().timeIntervalSince($0)) } ?? 0
+      let currentAge = max(elapsed, age.isFinite ? max(0, age) : maximumAge)
+      lifetime = min(lifetime, max(0, maximumAge - currentAge))
+    }
+    return PriceBatch(prices: prices, notFound: notFound, cacheLifetime: lifetime)
   }
 
   private func fetchTokenMetadata(chainID: String, address: String) async -> TokenSearchResult? {

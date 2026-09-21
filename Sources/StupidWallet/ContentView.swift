@@ -17,6 +17,7 @@ import SwiftUI
     @State private var showCopyCheckmark = false
     @State private var showAddToken = false
     @State private var expandedSymbols: Set<String> = []
+    @State private var currentPage: String? = ContentView.balancePage
 
     var body: some View {
       NavigationView {
@@ -119,55 +120,124 @@ import SwiftUI
       }
     }
 
-    private static let portfolioAnchor = "portfolio"
+    private static let balancePage = "balancePage"
+    private static let tokenPage = "tokenPage"
+
+    private var hasHoldings: Bool { !vm.balances.portfolioHoldings.isEmpty }
 
     private var walletView: some View {
       ScrollViewReader { proxy in
-        GeometryReader { geometry in
-          ScrollView {
-            VStack(spacing: 0) {
-              VStack(spacing: 14) {
-                Spacer(minLength: 0)
-                balanceBlock
-                if !vm.balances.portfolioHoldings.isEmpty {
-                  Button {
-                    withAnimation { proxy.scrollTo(Self.portfolioAnchor, anchor: .top) }
-                  } label: {
-                    Image(systemName: "chevron.down")
-                      .font(.title3)
-                      .foregroundStyle(.secondary)
-                  }
-                  .buttonStyle(.plain)
-                  .accessibilityLabel("Show token values")
-                }
-                Spacer(minLength: 0)
-              }
-              .frame(minHeight: heroHeight(geometry.size.height))
+        ScrollView(.vertical) {
+          VStack(spacing: 0) {
+            balanceScreen
+              .containerRelativeFrame(.vertical)
+              .id(Self.balancePage)
 
-              portfolioSection
-
-              VStack(spacing: 0) {
-                if let error = vm.balances.error {
-                  Text(error).font(.footnote).foregroundStyle(.red).padding(.vertical, 8)
+            tokenScreen
+              .containerRelativeFrame(.vertical)
+              .anchorPreference(key: TokenPageBoundsKey.self, value: .bounds) { $0 }
+              .id(Self.tokenPage)
+          }
+          .scrollTargetLayout()
+        }
+        .scrollTargetBehavior(.paging)
+        .scrollIndicators(.hidden)
+        .scrollPosition(id: $currentPage)
+        .ignoresSafeArea(.container, edges: .bottom)
+        .overlayPreferenceValue(TokenPageBoundsKey.self) { anchor in
+          GeometryReader { geometry in
+            if hasHoldings, let anchor {
+              let bounds = geometry[anchor]
+              let progress = min(max(1 - bounds.minY / max(bounds.height, 1), 0), 1)
+              let onTokenPage = progress >= 0.5
+              // Resolve the moving seam here, without publishing per-frame state to the holdings list.
+              pageCaret(
+                progress: progress,
+                label: onTokenPage ? "Hide token values" : "Show token values"
+              ) {
+                let target = onTokenPage ? Self.balancePage : Self.tokenPage
+                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                  currentPage = target
+                  proxy.scrollTo(target, anchor: .top)
                 }
-                Button("Add Token") { showAddToken = true }
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .padding(.vertical, 16)
               }
-              .padding(.horizontal)
+              .position(
+                x: geometry.size.width / 2,
+                y: max(22, min(bounds.minY, geometry.size.height - 30))
+              )
             }
           }
-          .refreshable { await vm.refreshBalance() }
         }
       }
       .onChange(of: vm.networkBalances.isEmpty) { _, isEmpty in
         if isEmpty { showBalanceDetails = false }
       }
+      .onChange(of: hasHoldings) { _, hasHoldings in
+        if !hasHoldings { currentPage = Self.balancePage }
+      }
     }
 
-    /// Leaves the portfolio section just below the fold so the caret has something to reveal.
-    private func heroHeight(_ available: CGFloat) -> CGFloat {
-      vm.balances.portfolioHoldings.isEmpty ? available : available * 0.8
+    private func pageCaret(progress: CGFloat, label: String, action: @escaping () -> Void)
+      -> some View
+    {
+      Button(action: action) {
+        Image(systemName: "chevron.down")
+          .font(.title3)
+          .foregroundStyle(.secondary)
+          .rotationEffect(.degrees(180 * progress))
+          .frame(width: 120, height: 44)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(label)
+      .accessibilityIdentifier("home.pageCaret")
+    }
+
+    private var balanceScreen: some View {
+      VStack(spacing: 0) {
+        Spacer(minLength: 0)
+        balanceBlock
+        Spacer(minLength: 0)
+      }
+      .frame(maxWidth: .infinity)
+      .background(Color(.systemBackground))
+    }
+
+    /// Revealed screen: total value over the value-ordered holdings.
+    private var tokenScreen: some View {
+      VStack(spacing: 0) {
+        if hasHoldings {
+          Color.clear.frame(height: 44)
+        }
+        Text(vm.balances.portfolioTotalDisplay ?? "—")
+          .font(.system(size: 30, weight: .semibold))
+          .lineLimit(1)
+          .minimumScaleFactor(0.5)
+          .accessibilityLabel("Portfolio value")
+          .accessibilityValue(vm.balances.portfolioTotalDisplay ?? "Unavailable")
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal)
+          .padding(.top, 4)
+          .padding(.bottom, 12)
+
+        List {
+          Section {
+            ForEach(vm.balances.portfolioGroups) { group in
+              groupRow(group)
+            }
+          }
+          if let error = vm.balances.error {
+            Section { Text(error).foregroundStyle(.red) }
+          }
+          Section {
+            Button("Add Token") { showAddToken = true }
+          }
+        }
+        .listStyle(.insetGrouped)
+        .refreshable { await vm.refreshBalance() }
+      }
+      .frame(maxWidth: .infinity)
+      .background(Color(.systemBackground))
     }
 
     private var balanceBlock: some View {
@@ -230,30 +300,6 @@ import SwiftUI
       .padding()
     }
 
-    private var portfolioSection: some View {
-      VStack(alignment: .leading, spacing: 0) {
-        if let total = vm.balances.portfolioTotalDisplay {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Total value")
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
-            Text(total)
-              .font(.system(size: 30, weight: .semibold))
-              .lineLimit(1)
-              .minimumScaleFactor(0.5)
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .padding(.bottom, 12)
-        }
-        ForEach(vm.balances.portfolioGroups) { group in
-          groupRow(group)
-          Divider()
-        }
-      }
-      .padding(.horizontal)
-      .id(Self.portfolioAnchor)
-    }
-
     @ViewBuilder
     private func groupRow(_ group: PortfolioGroup) -> some View {
       if group.isGrouped {
@@ -290,7 +336,6 @@ import SwiftUI
               .foregroundStyle(.secondary)
           }
           .padding(.leading, 40)
-          .padding(.bottom, 10)
           .accessibilityElement(children: .combine)
         }
       }
@@ -314,7 +359,7 @@ import SwiftUI
             .foregroundStyle(.secondary)
         }
       }
-      .padding(.vertical, 12)
+      .padding(.vertical, 4)
       .contentShape(Rectangle())
       .accessibilityElement(children: .combine)
     }
@@ -325,6 +370,14 @@ import SwiftUI
       }?.label
     }
 
+  }
+
+  private struct TokenPageBoundsKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+      value = nextValue() ?? value
+    }
   }
 
   private struct AddressMenuButton: View {

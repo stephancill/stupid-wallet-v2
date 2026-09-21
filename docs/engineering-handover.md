@@ -658,10 +658,21 @@ Token-specific physical-device acceptance remains separate from the existing sig
 
 ### Home Value Portfolio
 
-Home shows a downward caret once any tracked holding has a non-zero balance. Tapping it scrolls to a
-revealed section whose first line is the total USD value of the holdings, followed by rows ordered by
-value. The hero area occupies most of the first screen so the caret has something to reveal; with no
-holdings the balance stays vertically centered as before.
+Home pages vertically between two full screens, like a short-video feed, using a paging scroll view
+so the transition follows the finger with native scrolling physics. The landing screen centres the
+native balance; the token screen leads with the total USD value, then the value-ordered holdings, and
+keeps the Add Token action and the account's tracked-token errors. Each page fills the viewport
+exactly, including the bottom safe area, so no part of the next page peeks in at rest.
+
+One caret follows the seam between the pages, starting at the bottom of the landing screen and
+ending at the top of the token screen, above the USD total. The total has no visible heading; its
+accessibility label is Portfolio value. The caret's position and downward-to-upward rotation
+follow the actual scroll geometry, including partial and reversed drags; there is no second caret.
+It appears only once some tracked holding has a non-zero balance, and tapping it pages in the
+indicated direction. The token header reserves the caret's 44-point touch area. Swiping works natively
+in both directions: the landing screen has no inner scroll view, so a drag anywhere pages it, and on
+the token screen the list scrolls normally while the rest of the page still pages back. Both screens render the same
+account toolbar (copy address and the account menu).
 
 - Holdings are the tracked tokens with a non-zero balance on any configured network plus the native
   currency of every network included in the total balance. Native holdings therefore follow the
@@ -670,15 +681,23 @@ holdings the balance stays vertically centered as before.
   networks is one row. A grouped row's caret expands the per-chain distribution, and each
   distribution row shows the network and its own value. Groups and their members are ordered by
   value, with unpriced holdings last.
+- Watch-only accounts are read-only addresses, so every balance, price, and portfolio value works for
+  them unchanged; only signing is unavailable.
 - Every value is USD: the exact product of the balance and the catalog price, displayed to four
   significant figures with grouping separators (`$7,914`, `$2.468`). Amounts, prices, and values are
   decimal-string arithmetic in `DecimalValue`; no floating point is used. A holding the catalog
   cannot price shows `—` and is excluded from the total.
 - Prices come from the cacheable `GET /v1/prices?tokens=chainId:address,...` endpoint, up to 50
   identities per request with the native currency expressed as the literal address `native`.
-  Requests are sent in canonical order and cached in memory for 60 seconds. Only `ok` statuses
-  contribute a price. Values are fetched after the balances are already on screen, so a slow or
-  failed price refresh never delays the balance display.
+  Requests are sorted lexicographically by the full `chainId:address` identity, matching the service's
+  canonical URL without a redirect. Successful prices and catalog `not_found` results are cached in
+  memory for at most 60 seconds, bounded by HTTP freshness (`Cache-Control`, `Age`, and `Date`).
+  Transient `stale`, `price_unavailable`, `upstream_error`, and `rate_limited` results, and failed or
+  malformed requests, are not cached as missing prices by the wallet. The normal HTTP cache still
+  respects the service's retry window. Only `ok` statuses contribute a price; the service deliberately
+  returns null after a source price becomes older than five minutes, so a genuinely unavailable
+  value still displays `—` until a successful refresh. Values are fetched after the balances are
+  already on screen, so a slow or failed price refresh never delays the balance display.
 - The revealed rows are presentation only: they read the same tracked balances as the rest of the
   app, and a token row still navigates to its detail screen. Raw token amounts are no longer
   displayed anywhere; the list shows values instead.

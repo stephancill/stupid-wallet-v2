@@ -341,12 +341,104 @@ struct TokenSearchTests {
     let priceRequests = stub.requests.filter { $0.url?.path.hasSuffix("/prices") == true }
     #expect(priceRequests.count == 1)
     let query = try #require(priceRequests.first?.url?.query)
-    #expect(query.contains("tokens="))
-    _ = await client.prices(for: [usdc, nativeRequest])
+    #expect(
+      query
+        == "tokens=10:0x4200000000000000000000000000000000000042,1:native,8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"
+    )
+    _ = await client.prices(for: [usdc, nativeRequest, missing])
     #expect(stub.requests.filter { $0.url?.path.hasSuffix("/prices") == true }.count == 1)
 
     #expect(PriceRequest(chainID: "not-a-chain", address: "native") == nil)
     #expect(PriceRequest(chainID: "1", address: "0x1234") == nil)
+  }
+
+  @Test(
+    "transient price statuses recover on the next refresh rather than caching a missing value",
+    arguments: ["stale", "price_unavailable", "upstream_error", "rate_limited"])
+  func transientPrices(status: String) async throws {
+    let stub = SearchHTTPStub()
+    defer { stub.close() }
+    let client = stub.client()
+    let request = try #require(PriceRequest(chainID: "1", address: "native"))
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          "{\"currency\":\"usd\",\"prices\":[{\"chainId\":1,\"address\":\"native\",\"status\":\"\(status)\",\"priceUsd\":null}]}"
+            .utf8)
+      )
+    }
+    #expect(await client.prices(for: [request]).isEmpty)
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"2600"}]}"#
+            .utf8)
+      )
+    }
+    #expect(await client.prices(for: [request])[request] == "2600")
+    #expect(await client.prices(for: [request])[request] == "2600")
+    #expect(stub.requests.count == 2)
+  }
+
+  @Test("failed price requests are not cached as missing prices")
+  func failedPrices() async throws {
+    let stub = SearchHTTPStub()
+    defer { stub.close() }
+    let client = stub.client()
+    let request = try #require(PriceRequest(chainID: "1", address: "native"))
+    stub.respond = { _ in throw URLError(.timedOut) }
+    #expect(await client.prices(for: [request]).isEmpty)
+    stub.respond = { _ in (503, Data()) }
+    #expect(await client.prices(for: [request]).isEmpty)
+    stub.respond = { _ in (200, Data(#"{"currency":"usd","prices":{}}"#.utf8)) }
+    #expect(await client.prices(for: [request]).isEmpty)
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"2600"}]}"#
+            .utf8)
+      )
+    }
+    #expect(await client.prices(for: [request])[request] == "2600")
+    #expect(stub.requests.count == 4)
+  }
+
+  @Test(
+    "price memory caching does not extend HTTP freshness",
+    arguments: [
+      ["Cache-Control": "public, max-age=0"],
+      ["Cache-Control": "public, max-age=3", "Age": "3"],
+      ["Cache-Control": "public, max-age=60", "Date": "Wed, 01 Jan 2020 00:00:00 GMT"],
+      ["Cache-Control": "no-store"],
+      ["Cache-Control": "no-cache, max-age=60"],
+    ])
+  func priceHTTPFreshness(headers: [String: String]) async throws {
+    let stub = SearchHTTPStub(responseHeaders: headers)
+    defer { stub.close() }
+    let client = stub.client()
+    let request = try #require(PriceRequest(chainID: "1", address: "native"))
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"2600"}]}"#
+            .utf8)
+      )
+    }
+    #expect(await client.prices(for: [request])[request] == "2600")
+    stub.respond = { _ in
+      (
+        200,
+        Data(
+          #"{"currency":"usd","prices":[{"chainId":1,"address":"native","status":"ok","priceUsd":"2700"}]}"#
+            .utf8)
+      )
+    }
+    #expect(await client.prices(for: [request])[request] == "2700")
+    #expect(stub.requests.count == 2)
   }
 
   @Test("one unreachable network still returns the other networks' matches")
@@ -472,12 +564,16 @@ private func queryItems(of request: URLRequest) throws -> [String: String] {
 final class SearchHTTPStub: @unchecked Sendable {
   private let lock = NSLock()
   private let host = UUID().uuidString.lowercased() + ".example"
+  private let responseHeaders: [String: String]
   private var recorded: [URLRequest] = []
   private var handler: @Sendable (URLRequest) throws -> (Int, Data) = { _ in
     (200, Data(#"{"tokens":[]}"#.utf8))
   }
 
-  init() { SearchURLProtocol.register(host: host, stub: self) }
+  init(responseHeaders: [String: String] = [:]) {
+    self.responseHeaders = responseHeaders
+    SearchURLProtocol.register(host: host, stub: self)
+  }
 
   var requests: [URLRequest] { lock.withLock { recorded } }
 
@@ -497,7 +593,7 @@ final class SearchHTTPStub: @unchecked Sendable {
 
   func receive(_ transport: SearchURLProtocol) {
     lock.withLock { recorded.append(transport.request) }
-    transport.complete(using: respond)
+    transport.complete(using: respond, headers: responseHeaders)
   }
 }
 
@@ -527,7 +623,7 @@ final class SearchURLProtocol: URLProtocol {
 
   override func stopLoading() {}
 
-  func complete(using handler: (URLRequest) throws -> (Int, Data)) {
+  func complete(using handler: (URLRequest) throws -> (Int, Data), headers: [String: String]) {
     guard let url = request.url else {
       client?.urlProtocol(self, didFailWithError: URLError(.badURL))
       return
@@ -537,7 +633,7 @@ final class SearchURLProtocol: URLProtocol {
       client?.urlProtocol(
         self,
         didReceive: HTTPURLResponse(
-          url: url, statusCode: status, httpVersion: nil, headerFields: nil)!,
+          url: url, statusCode: status, httpVersion: nil, headerFields: headers)!,
         cacheStoragePolicy: .notAllowed)
       client?.urlProtocol(self, didLoad: data)
       client?.urlProtocolDidFinishLoading(self)

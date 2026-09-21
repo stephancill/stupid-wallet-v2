@@ -8282,3 +8282,137 @@ Verification: `swift format --in-place Sources/StupidWallet/SettingsView.swift`,
 `swift format lint --strict Sources/StupidWallet/SettingsView.swift`, and `stupid-app build` passed.
 `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched; accessibility-driven
 navigation and a screenshot confirmed the smaller avatar beside the two lines in Settings.
+
+## 2026-09-21 — Paged Home screens with the reveal caret
+
+Home is now a two-screen vertical pager instead of one scrolling page. The landing screen centres the
+native balance and pins the downward caret to the bottom of the screen; the token screen slides up
+over it and leads with the total USD value, followed by the value-ordered holdings and the Add Token
+action.
+
+- The pager follows the finger: dragging on the balance area (or anywhere on the token screen's
+  grabber header) moves both screens live, and the release decides the target. A flick follows its
+  direction; a slow drag settles based on where the finger was released.
+- The caret button pages forward, and an upward caret pinned to the bottom of the token screen pages
+  back, mirroring the landing caret. The token list keeps its own scrolling, so a downward drag
+  inside the list scrolls the list rather than paging; paging back from the list uses the grabber
+  header or the upward caret.
+- The token list's Add Token action moved onto the token screen, and the account toolbar
+  (copy address and account menu) stays visible above both screens.
+- Watch-only accounts need no special handling here: balances, prices, and portfolio values are
+  read-only, and only signing is unavailable for them.
+
+The return caret needed an explicit hit area: a `.padding`-only button label above a `List` did not
+receive taps, and neither a `ZStack` sibling nor a safe-area inset worked. Giving the button a
+`frame` and `contentShape(Rectangle())` inside an `.overlay(alignment: .bottom)` did.
+
+Verification: `swift test` (369 tests), `swift format lint --strict`, `stupid-app build`, and
+`stupid-app doctor` passed. Simulator acceptance on the selected funded account confirmed the bottom
+caret on the landing screen, the caret tap and an upward drag paging to the token screen, the total
+USD value and value-ordered groups with per-network distribution rows, a downward drag on the grabber
+header and the upward caret paging back, and the token list scrolling independently. A screenshot
+captured the revealed screen with the USDC group expanded to its Base and Ethereum distribution.
+
+## 2026-09-21 — Paged Home transition reworked onto a native paging scroll view
+
+The first paged Home implementation moved both screens through a `@State` progress value driven by a
+hand-rolled `DragGesture`. It followed the finger, but it re-evaluated the whole Home body — including
+the token screen's `List` — on every drag event, which stuttered visibly on slow drags.
+
+Replaced it with a native vertical paging scroll view (`.scrollTargetBehavior(.paging)` with a
+`scrollTargetLayout`), so the scroll view moves the pages itself and SwiftUI does no per-frame work.
+The pages are sized with `containerRelativeFrame(.vertical)` and the pager ignores the bottom safe
+area, so a page fills the viewport exactly and the next page never peeks in at rest.
+
+The caret went through several iterations and ended as a single chevron pinned at the bottom of the
+screen, in the same position on both pages, pointing down on the landing screen and up on the token
+screen; tapping it pages in that direction. Earlier attempts — a caret inside each page (which showed
+two chevrons at once, the outgoing one visible behind the translucent navigation bar), a caret that
+animated between the bottom and the top, and a caret drawn in each page's seam — all moved or
+duplicated the caret during the transition. The final version keeps it fixed and only flips its
+direction, which also removed the grabber and the separate tokens-page caret.
+
+Verification: `swift test` (369 tests), `swift format lint --strict`, `stupid-app build`, and
+`stupid-app doctor` passed. Simulator acceptance on the selected funded account confirmed the native
+swipe in both directions, the caret at the same y position on both pages with its direction flipped,
+the caret paging in each direction, no peeking content at rest, the total value and value-ordered
+grouped holdings with per-network distribution, and the token list scrolling independently of paging.
+
+## 2026-09-21 — Home chevron follows the page seam
+
+Corrected the fixed-bottom caret from the preceding iteration. The requested behavior is one
+chevron that travels with the balance/Tokens seam and ends pointing upward at the top of Tokens.
+
+- `ContentView` now publishes the token page's bounds anchor and resolves it in a single overlay.
+  The chevron follows the seam, clamped inside the visible viewport at either end, and rotates from
+  down to up according to actual scroll progress. Native paging continues to own the gesture;
+  per-frame geometry is not written into parent state or used to rebuild the holdings list.
+- Tokens reserves a 44-point touch area above Total value. The obsolete bottom list margin for
+  the fixed caret is removed. There is one identified page-caret button throughout the transition.
+- The action and accessibility label use the same geometry as the chevron. During verification,
+  `ScrollViewReader.scrollTo` moved the page without immediately updating the `scrollPosition` ID;
+  relying only on that ID left the top caret with the forward action. Geometry-based direction
+  fixes that mismatch, while tap navigation still updates the page binding.
+- Updated the current handover and the repository debugging skill with the geometry and verification
+  boundary. Earlier fixed-bottom implementation notes remain historical.
+
+Verification:
+
+- `swift format --in-place Sources/StupidWallet/ContentView.swift` and
+  `swift format lint --strict Sources/StupidWallet/ContentView.swift`: passed.
+- `swift test`: 369 Swift Testing tests in 41 suites and 14 XCTest cases passed.
+- `stupid-app build`: app and Safari extension build passed with the iOS 17 deployment target.
+- `stupid-app doctor`: zero failures and warnings.
+- `stupid-app run --simulator --udid <preferred-simulator>`: final sources reinstalled and launched.
+- Simulator checks using `idb ui describe-all`, caret-frame-targeted `idb ui tap`, and
+  `idb ui swipe`: exactly one 44-point caret moved from landing y=788 to Tokens y=116; both taps
+  navigated correctly. A three-second upward drag sampled the caret at y=672 between those endpoints,
+  then settled at the top. A downward header swipe returned it to the bottom, and a short upward
+  drag snapped back with the original position and action. Screenshots confirmed the down/up
+  orientations and a single moving chevron during the drag. The final app is left on Tokens.
+- The first ad hoc UI check passed a decimal coordinate to IDB, whose tap command requires integers;
+  rounding the accessibility-derived center corrected the verification command.
+- `git diff --check`: passed. Physical-device UI acceptance was not run for this presentation change.
+
+## 2026-09-21 — Unlabelled portfolio total and transient price-cache recovery
+
+Removed the visible Total value heading from Tokens, retaining the USD total and its Portfolio value
+accessibility label. The moving chevron and reserved top touch area remain in place.
+
+Investigated the reported dashes by inspecting only price-service records in the simulator's URLCache
+database, read-only. The received bulk response marked the priced native/token entries `stale` with
+null prices; its HTTP freshness was three seconds. The service intentionally withholds source prices
+older than five minutes. The wallet additionally cached every absent price for a fixed 60 seconds,
+including transient status, transport, and response failures, so a subsequent refresh could not
+recover promptly even after the service became healthy. Live public requests subsequently returned
+`ok` prices for supported holdings and `not_found` for uncatalogued native currencies.
+
+`StupidTokensClient` now caches successful prices and genuine catalog misses only. Transient stale,
+unavailable, upstream-error, and rate-limited results, along with transport/HTTP/malformed-response
+failures, do not become wallet memory-cache misses. Cached entries expire at the shorter of the
+configured lifetime and HTTP freshness, accounting for Cache-Control, Age, and Date; no-cache and
+no-store prevent memory reuse. URLSession still honors the service's normal HTTP cache/retry window.
+Only requested identities in a USD response can contribute prices. Bulk requests now sort the full
+identity lexicographically to match the service's canonical URL instead of causing a numeric-chain
+ordering redirect. No stale price is relabelled as current, and unknown or actually unavailable values
+still render a dash until a successful refresh.
+
+Verification:
+
+- Public `curl --location --max-time 30` checks against `/v1/prices` and a Foundation URLSession read
+  returned HTTP 200 with usable decimal-string prices. A direct canonical-order request returned 200
+  without a redirect. Raw public responses were retained in local temporary diagnostic files.
+- `swift format --in-place` and `swift format lint --strict` for ContentView, StupidTokensClient, and
+  TokenSearchTests passed.
+- `swift test`: 372 Swift Testing tests in 41 suites and 14 XCTest cases passed. Regression coverage
+  proves immediate next-refresh recovery for all four transient statuses; timeout, HTTP, and malformed
+  response recovery; canonical query ordering; retained successful/not-found caching; and expiry for
+  max-age=0, elapsed Age/Date, no-cache, and no-store.
+- `stupid-app build` and `stupid-app run --simulator --udid <preferred-simulator>` passed for the
+  final sources. Accessibility-driven navigation confirmed there is no Total value heading, the
+  portfolio total and both supported holding groups display USD values, and the upward chevron remains
+  at the top of Tokens. No wallet/cache records were modified to force the outcome.
+- `git diff --check`: passed. The handover and debugging skill now record the status/freshness boundary.
+
+The service can still return genuinely stale or unavailable prices; this change corrects wallet-side
+cache recovery rather than changing upstream freshness policy. Physical-device acceptance was not run.
