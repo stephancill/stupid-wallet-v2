@@ -51,11 +51,12 @@ port disconnects never replay approvals. Incognito is denied. Chrome inherits no
 Pairing protects against an unpaired caller imitating the native protocol. It does not protect against
 malware controlling Chrome or stealing the browser credential: non-exportability is a browser API
 restriction, not guaranteed hardware-backed storage. Fresh wallet authentication remains mandatory.
-Use extension 0.0.7 with helper 0.0.5; protocol 2 is intentionally incompatible.
+Use extension 0.0.8 with helper 0.0.6; protocol 2 is intentionally incompatible.
 
-Watch-only accounts in current source require rebuilding the helper with the watch-aware shared core
-before adding watches in the Mac wallet. The published helper 0.0.5 rejects registries containing the
-new `watchOnly` group kind. Watches are app-only and never appear in the browser account picker; a
+Helper 0.0.6 is the first published helper built from the watch-aware shared core. Helper 0.0.5
+rejected any registry containing the `watchOnly` group kind, so the Chrome integration reported an
+unavailable wallet once a watch existed; upgrading the helper is required before watches are added
+on the Mac wallet. Watches are app-only and never appear in the browser account picker; a
 watch-selected Home still permits connecting with another registered key-backed account.
 
 Chrome bundles pinned Zod 4.5.4 and esbuild 0.28.2; use the committed Bun lockfile. Zod validates privileged
@@ -137,4 +138,5 @@ app necessarily embeds its Apple-authorized direct-distribution profile.
 The idle popup shows the current page's connected account. Choose it to connect/switch accounts,
 or use Disconnect to revoke the displayed account. These controls use the same canonical native
 connection path and emit accountsChanged to the page. Reopen the popup after page navigation.
-Chrome 0.0.7 needs helper 0.0.5 for its additional account APIs; the published 0.0.6 beta is unchanged.
+Chrome 0.0.8 needs helper 0.0.6. Helper 0.0.6 keeps protocol 3 and the existing identities; it only
+adds watch-aware registry support, which extension 0.0.7 also works with.

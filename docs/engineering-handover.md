@@ -55,7 +55,7 @@ Installation from the release ZIP and an independently recovered authenticated m
 passed in Chrome with existing pairing retained. Clean-machine acceptance and a reserved Web Store
 identity remain general-distribution requirements.
 
-Chrome artifact 0.0.5 uses a light #f2f2f2 toolbar arrow at 16/19/32/38 pixels for dark browser
+Chrome artifacts 0.0.5 and later use a light #f2f2f2 toolbar arrow at 16/19/32/38 pixels for dark browser
 chrome. Chrome-only assets preserve the original alpha masks; general app/discovery and Safari icons
 retain their existing appearance. The icon variant is static rather than automatic theme detection.
 
@@ -81,12 +81,13 @@ No signature or authentication is involved in an ordinary connect. Disconnect at
 reviewed account and revokes its grant without selecting another retained grant. Both actions emit
 origin-scoped account-refresh notifications; the page resolves its native profile-bound snapshot.
 The app's home account is unchanged; successful connect selection retains the existing connection-
-default policy. Current source versions are Safari manifest 0.1.55, Chrome 0.0.7 and helper 0.0.5
-(protocol 3). Chrome 0.0.7 requires helper 0.0.5 for these added account-management APIs.
-Helper 0.0.5 has passed Apple notarization, stapling and Gatekeeper verification and is installed
-locally. Chrome 0.0.7 live acceptance confirms the idle connected-account bar and grouped picker,
-with existing pairing retained. Live switch/disconnect mutation acceptance remains pending.
-GitHub prerelease `chrome-v0.0.7-beta.1` publishes these artifacts from `c499181`; all four
+default policy. Current source versions are Safari manifest 0.1.57, Chrome 0.0.8 and helper 0.0.6
+(protocol 3). Helper 0.0.6 is the first published helper built from the watch-aware shared core, so it
+reads a registry containing watch-only groups instead of failing closed as helper 0.0.5 did. It passed
+Apple notarization, stapling and Gatekeeper verification and is installed locally; extension 0.0.7
+remains compatible with it. Chrome 0.0.7 live acceptance confirms the idle connected-account bar and
+grouped picker, with existing pairing retained. Live switch/disconnect mutation acceptance remains pending.
+GitHub prerelease `chrome-v0.0.7-beta.1` publishes the previous artifacts from `c499181`; all four
 uploaded asset digests match local files. Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
 version 1.0.0 (108), prepared for an internal TestFlight release after merging the token-balances,
@@ -561,8 +562,9 @@ account-bound state, while retaining the shared tracked-token list and activity.
 keychain or Dawn migration material for the watched address. A watched home produces no
 `wallet-address.conf` downgrade projection. Registry schema 2 and its existing migration are retained;
 older binaries reject the new enum value once a watch is stored. App/Safari and the macOS Chrome helper
-must use a watch-aware shared core when sharing that registry; the previously distributed helper
-0.0.5 is not watch-aware. There is no compatibility projection that makes older registry readers work.
+must use a watch-aware shared core when sharing that registry; helper 0.0.6 is the first published
+watch-aware helper and supersedes the non-watch-aware 0.0.5. There is no compatibility projection that
+makes older registry readers work.
 
 ### Tracked ERC-20 Balances
 

@@ -207,6 +207,84 @@ struct WalletRegistryTests {
     ).validate()
   }
 
+  @Test(
+    "a watch-only group loads from disk, stays out of browser eligibility, and unknown kinds fail closed"
+  )
+  func watchOnlyPersistenceContract() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let watched = try address(secret: 3)
+    let signable = try address(secret: 4)
+    let payload: [String: Any] = [
+      "schemaVersion": 2,
+      "revision": 5,
+      "adoptionState": "complete",
+      "groups": [
+        [
+          "id": UUID().uuidString,
+          "kind": "privateKey",
+          "label": "Wallet 1",
+          "createdAt": 1_000,
+          "accounts": [
+            [
+              "address": signable, "derivationIndex": NSNull(), "label": "Account 1",
+              "createdAt": 1_000, "lifecycle": "active",
+            ]
+          ],
+          "lifecycle": "active",
+        ],
+        [
+          "id": UUID().uuidString,
+          "kind": "watchOnly",
+          "label": "Watch-only Wallet",
+          "createdAt": 1_000,
+          "accounts": [
+            [
+              "address": watched, "derivationIndex": NSNull(), "label": "Account 1",
+              "createdAt": 1_000, "lifecycle": "active",
+            ]
+          ],
+          "lifecycle": "active",
+        ],
+      ],
+      "homeSelectedAddress": watched,
+      "legacyWalletAddressFallbackRemoved": true,
+    ]
+    try JSONSerialization.data(withJSONObject: payload).write(
+      to: directory.appendingPathComponent("wallet-registry.json"))
+
+    // The helper and Safari entry points both decode through the same ready-registry reader.
+    let loaded = try #require(try WalletRegistryStore(directory: directory).loadReady())
+    #expect(loaded.groups.count == 2)
+    #expect(loaded.groups.contains { $0.kind == .watchOnly })
+    #expect(loaded.homeSelectedAddress == watched)
+    #expect(loaded.connectionEligibleAccounts.map(\.address) == [signable])
+
+    // A group kind from a newer schema must fail closed rather than decode to a wrong kind.
+    var unsupported = payload
+    unsupported["groups"] = [
+      [
+        "id": UUID().uuidString,
+        "kind": "hardwareWallet",
+        "label": "Wallet 1",
+        "createdAt": 1_000,
+        "accounts": [
+          [
+            "address": signable, "derivationIndex": NSNull(), "label": "Account 1",
+            "createdAt": 1_000, "lifecycle": "active",
+          ]
+        ],
+        "lifecycle": "active",
+      ]
+    ]
+    unsupported["homeSelectedAddress"] = signable
+    try JSONSerialization.data(withJSONObject: unsupported).write(
+      to: directory.appendingPathComponent("wallet-registry.json"))
+    #expect(throws: WalletRegistryError.corrupt) {
+      try WalletRegistryStore(directory: directory).loadReady()
+    }
+  }
+
   @Test("unknown schemas and corrupt files fail loudly")
   func corruptPersistence() throws {
     let directory = try temporaryDirectory()

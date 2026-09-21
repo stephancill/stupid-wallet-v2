@@ -8841,4 +8841,57 @@ Verification:
 - `stupid-app release preflight`: READY, both Apple bundles 1.0.0 (108).
 - `stupid-app doctor`: zero failures and warnings with CLI 0.0.18 / Swift 6.4 / Xcode 27 / iOS SDK 27.
 - `stupid-app build --configuration release`: passed.
-- Distribution archive, upload, and Apple's internal-beta processing are the remaining release steps.
+- `stupid-app release archive` produced the IPA (SHA-256
+  `afd9e26080fe81bbdcd4539d35044bae829613f4b71a20e3e728c8f0e2510479`); the packaged app and Safari
+  extension both report 1.0.0 (108) with build-system keys `DTXcode` 2700, `DTXcodeBuild` 27A266a,
+  `DTSDKName` iphoneos27.0, `DTSDKBuild`/`DTPlatformBuild` 24A430.
+- `stupid-app release upload --wait`: upload complete, processing `VALID`, internal `IN_BETA_TESTING`.
+  Internal testers can install build 108; no external beta was submitted for it.
+
+## 2026-09-21 — Watch-aware Chrome helper 0.0.6 and extension 0.0.8
+
+### Summary
+
+- The published Chrome helper 0.0.5 predated watch-only accounts. A registry containing a `watchOnly`
+  group failed its ready-registry decode, so Chrome reported an unavailable wallet once a watch existed.
+  Helper 0.0.6 is the first published helper built from the watch-aware shared core; extension 0.0.8 is
+  the accompanying artifact. Protocol 3, bundle identity, host name, App Group, keychain group and the
+  fixed extension ID are unchanged, and extension 0.0.7 also works with helper 0.0.6.
+- No JavaScript behavior changed: watch-only groups are excluded from the browser account picker and
+  from connection eligibility by the shared native core, which the helper links directly.
+- The extension manifest description is now `a simple ethereum wallet for the web` (previously the
+  internal `EIP-1193 Ethereum provider with canonical request review` phrasing). The shared manifest
+  also moved from Safari 0.1.56 to 0.1.57 so Safari reloads the changed resource.
+- Added a regression test pinning the cross-binary contract: a schema-2 registry written with a
+  `watchOnly` group loads through `loadReady()`, keeps the watch out of `connectionEligibleAccounts`,
+  and an unrecognized future group kind still fails closed as `corrupt` rather than decoding to a
+  wrong kind.
+- Recorded the helper 0.0.6 compatibility requirement in `ChromeExtension/README.md` and the handover.
+
+### Verification
+
+- `bun install --frozen-lockfile`, `node ChromeExtension/build.mjs`, and
+  `swift build -c release --product StupidWalletChromeHost`: passed. The generated Chrome manifest
+  reports version 0.0.8 and the new description.
+- `node --test Tests/JavaScript/*.test.mjs`: 39 tests passed. `swift test`: 390 Swift Testing tests in
+  42 suites and 14 XCTest cases passed. `swift test -c release --filter WalletRegistryTests` passed,
+  exercising the watch-only persistence contract with the release-optimized core.
+- `stupid-app doctor`: zero failures and warnings. `stupid-app build`: passed.
+- `package-release.py` signed the helper with hardened runtime and the existing Developer ID identity;
+  Apple notarization returned `Accepted`, and `finalize-release.py` stapled and validated it.
+  `codesign --verify --strict`, `spctl --assess --type execute`, and `xcrun stapler validate` all pass
+  on the packaged 0.0.6 bundle.
+- Installed the published helper through its own `install-release.command`, then exercised the installed
+  binary over framed stdio with Chrome's origin argument: protocol-3 `hello` succeeded with
+  `walletAccess` true, `chain`, `siteAccounts` (three registered groups, kinds `privateKey` and `seed`),
+  `visibleAccounts` for a test origin, and `pairStatus` all returned successful responses with empty
+  stderr. No wallet address was printed.
+- `SHA256SUMS` verification passes for the helper ZIP, extension ZIP, and installation guide.
+
+### Follow-Up
+
+- Live Google Chrome UI acceptance with a watch-only account actually present on the Mac wallet is not
+  yet done: the Mac registry currently holds no watch, and adding one is an app-UI action the owner
+  should perform. Watch tolerance therefore rests on the shared-core contract test plus the installed
+  helper's use of that core, not on a live watch-present popup run.
+- Clean-machine installation and the reserved Chrome Web Store identity remain open, as before.
