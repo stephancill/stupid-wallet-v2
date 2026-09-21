@@ -9562,3 +9562,37 @@ Verification:
   refresh and error state rather than an explicit loaded flag, which the balance model does not
   expose.
 - No physical-device acceptance was run for this change.
+
+## 2026-09-21 — Internal TestFlight build 1.0.0 (111)
+
+### Summary
+
+- Merged the Send-flow work into `main` and released it to internal TestFlight as 1.0.0 (111): ENS
+  recipient resolution with vendored ENSIP-15 normalization, the recipient-first Send form with
+  synced USD and token amounts, the fee-reserved native Max, the empty portfolio state, and
+  portfolio swipe-to-Send.
+- `stupid-app release new-build` selected unused build 111 and `release bump --build-number 111`
+  synchronized the containing app and Safari extension.
+- Set the What to Test note to: "ENS recipient names, synced USD/token amounts, and swipe-to-Send".
+- The feature commits were rebased onto the preceding `main` and fast-forwarded, keeping a linear
+  history. The Send amount tests were aligned with the already-merged exactly-two-decimal USD
+  display.
+
+### Verification
+
+- `stupid-app release preflight`: READY, both Apple bundles 1.0.0 (111).
+- `stupid-app doctor`: zero failures and warnings with CLI 0.0.18 / Swift 6.4 / Xcode 27 / iOS SDK 27.
+- `swift test`: 429 Swift Testing tests in 48 suites and 14 XCTest cases passed on the released tree.
+- `stupid-app release archive`: IPA SHA-256
+  `b0f8a99b0467b7109fe08e7799d7cb297851016269b626118759517290123520`. The packaged app and Safari
+  extension both report 1.0.0 (111) with `DTXcode` 2700, `DTXcodeBuild` 27A266a, `DTSDKName`
+  iphoneos27.0, and `DTSDKBuild`/`DTPlatformBuild` 24A430; the packaged extension manifest is 0.1.57.
+- `stupid-app release upload --wait`: upload COMPLETE, processing `VALID`, internal `IN_BETA_TESTING`.
+  `release status --live` reports the same live state; external beta is `READY_FOR_BETA_SUBMISSION`
+  and no external submission was made.
+
+### Follow-Up
+
+- External TestFlight distribution of this build has not been requested.
+- Physical-device acceptance of the Send form and the portfolio empty state was not run; simulator
+  verification covered both.
