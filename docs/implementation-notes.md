@@ -50,6 +50,28 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-22 - Internal TestFlight Build 1.0.0 (113)
+
+### Summary
+
+- Released the app send-target fix to internal TestFlight.
+- Workflow via `stupid-app`: `release new-build` (113), `release bump --build-number 113` (both Apple
+  bundles moved 112 → 113 in lockstep), `doctor` (0 failures, 0 warnings), `release preflight` READY,
+  `release archive` (IPA SHA-256
+  `60f01bd61f4947fc31716c9af2fe3bbab510292def3c9543e0c7c34499767596`), and `release upload --wait`
+  (upload COMPLETE, processing VALID, internal IN_BETA_TESTING).
+
+### State
+
+- Source commit for the release artifacts: `8496731`.
+- Live App Store Connect at the time of writing: processing `VALID`, internal beta
+  `IN_BETA_TESTING`, external beta `READY_FOR_BETA_SUBMISSION`. No external beta was submitted.
+
+### Follow-Up
+
+- Live app-UI ERC-20 broadcast acceptance remains unproven; the fix is covered deterministically at
+  the send-intent layer.
+
 ## 2026-09-22 - App Send Target Fix
 
 ### Summary

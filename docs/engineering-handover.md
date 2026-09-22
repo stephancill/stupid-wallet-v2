@@ -90,12 +90,13 @@ grouped picker, with existing pairing retained. Live switch/disconnect mutation 
 GitHub prerelease `chrome-v0.0.7-beta.1` publishes the previous artifacts from `c499181`; all four
 uploaded asset digests match local files. Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
-version 1.0.0 (112), live for internal TestFlight, adding zero-balance visibility for tracked tokens
-on top of ENS recipient resolution with a recipient-first Send form, synced USD and token amounts with
+version 1.0.0 (113), live for internal TestFlight, fixing the app send target so an ERC-20 transfer
+calls the token contract rather than the recipient, on top of zero-balance visibility for tracked
+tokens, ENS recipient resolution with a recipient-first Send form, synced USD and token amounts with
 a fee-reserved native Max, an empty
 portfolio state, and portfolio swipe-to-Send, which sit on the token-balances merge (watch-only accounts,
 custom tokens, the USD portfolio, persistent price SWR, 24-hour price and change expiry), the layout
-and portfolio-change fixes, and always-two-decimal USD values. Builds 108 through 111 were the
+and portfolio-change fixes, and always-two-decimal USD values. Builds 108 through 112 were the
 preceding internal builds. No external beta has been submitted for any of them. The Safari extension
 manifest is 0.1.57.
 
