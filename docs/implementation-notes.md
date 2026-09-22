@@ -50,6 +50,39 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-22 - App Send Target Fix
+
+### Summary
+
+- Fixed the wallet-owned send path. An ERC-20 send from the containing app was building the
+  `transfer(address,uint256)` calldata but placing the **recipient** in the transaction's `to`
+  field instead of the token contract. The resulting transaction called the recipient with
+  token-transfer calldata, so it succeeded as a no-op (an EOA with no code) and moved no tokens
+  while still spending gas. Native sends were unaffected because their amount travels in `value`.
+- Moved the send-intent mapping into `StupidWalletCore` as `SendTransfer.native(...)` and
+  `SendTransfer.erc20(...)`. `SendView` now derives the destination, value, and calldata from the
+  core type, so a future caller cannot reintroduce the recipient-as-target bug at the call site.
+
+### Why
+
+- The send defect was observable as a confirmed onchain ERC-20 send that emitted no transfer. The
+  calldata and the amount were correct, so the only wrong field was the target. Keeping the mapping
+  in the core makes it unit-testable and harder to misuse.
+
+### Verification
+
+- `swift test`: 435 tests in 49 suites pass, including new `SendTransferTests` (native targets the
+  recipient; ERC-20 targets the token contract and encodes the recipient in calldata; invalid
+  recipient/token and oversized amounts are rejected).
+- `xcrun swift-format lint --strict` is clean on the changed files; `git diff --check` passes.
+- `stupid-app build` succeeded, and `stupid-app run --simulator --udid <preferred-simulator>`
+  rebuilt, installed, and launched the app on the preferred iOS 26.3 simulator.
+
+### Follow-Up
+
+- A live app-UI ERC-20 broadcast has still not been run end to end; the fix is covered
+  deterministically at the intent-mapping layer rather than by an accepted network transfer.
+
 ## 2026-09-07 - External TestFlight Build 1.0.0 (104)
 
 ### Summary

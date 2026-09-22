@@ -380,21 +380,19 @@ import SwiftUI
       Task {
         defer { isSending = false }
         do {
-          let value: String
-          let data: String
+          // Native sends target the recipient; ERC-20 sends target the token contract with the
+          // recipient encoded in the transfer calldata.
+          let transfer: SendTransfer
           if asset.isNative {
-            guard let quantity = Hex.quantity(units) else {
-              throw TokenTransferError.amountTooLarge
-            }
-            value = quantity
-            data = "0x"
+            transfer = try SendTransfer.native(recipient: to, rawAmount: units)
           } else {
-            value = "0x0"
-            data = try TokenTransfer.transferCalldata(to: to, rawAmount: units)
+            guard let token = asset.address else { throw WalletError.invalidParams }
+            transfer = try SendTransfer.erc20(token: token, recipient: to, rawAmount: units)
           }
           let service = makeWalletService(account: vm.addressHex)
           let hash = try await service.sendTransaction(
-            account: vm.addressHex, chainID: asset.chainID, to: to, value: value, data: data)
+            account: vm.addressHex, chainID: asset.chainID, to: transfer.to,
+            value: transfer.value, data: transfer.data)
           await vm.refreshBalance()
           sentHash = hash
         } catch {

@@ -898,7 +898,10 @@ validates the prepared transaction, signs the canonical digest through the accou
 `eth_sendRawTransaction`, verifies the node-returned hash, and records the submitted transaction in
 the shared activity database. It holds the same per-account/per-chain submission claim as a dapp
 send, so app and dapp sends cannot race the same pending nonce. Native sends carry the amount as
-`value`; ERC-20 sends call `transfer(address,uint256)` on the token contract with zero value.
+`value` and target the recipient directly; ERC-20 sends target the token contract and encode the
+recipient in `transfer(address,uint256)` calldata. `SendTransfer` owns that intent mapping in the
+core, so a caller cannot place the recipient in the transaction's `to` field while also sending
+transfer calldata (which would call the recipient as a no-op and spend gas without moving tokens).
 Wallet-owned sends are recorded with the reserved origin `wallet` and no pending request, so they
 never enter the dapp approval queue; activity renders that origin as `Wallet`. Amounts convert
 through decimal-string arithmetic (`TokenTransfer.rawUnits`) and reject more precision than the
