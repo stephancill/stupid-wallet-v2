@@ -4,6 +4,9 @@ bundleID: co.za.stephancill.stupid-wallet
 deploymentTarget: "17.0"
 infoPath: Info.plist
 entitlementsPath: App.entitlements
+# iPhone-only: on Apple silicon Mac the app installs as "Designed for iPhone" and
+# uses the fixed phone-sized window; iPadOS uses the same phone layout.
+deviceFamily: iphone
 iconPath: Resources/AppIcon.png
 resources:
   - Resources/AppIcon.png

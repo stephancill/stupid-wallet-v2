@@ -50,6 +50,82 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-24 - Adopt the deviceFamily project config
+
+### Summary
+
+- Replaced the hand-edited `UIDeviceFamily` Info.plist overrides with the build tool's new
+  `deviceFamily` key: `stupid-app.yml` now declares `deviceFamily: iphone`, and the app and
+  its Safari extension receive `UIDeviceFamily = [1]` (with no iPad orientation key) from the
+  build. Removed the `UIDeviceFamily` entries from `Info.plist` and
+  `SafariExtension/Info.plist`, so there is a single source of truth.
+- Requires `stupid-app` 0.0.19, which introduced `deviceFamily`; the local CLI was updated from
+  the published release and its checksum verified.
+- The `Mac/` XcodeGen project keeps its own `TARGETED_DEVICE_FAMILY: "1"` and `UIDeviceFamily`
+  plist values because it does not use `stupid-app.yml`.
+
+### Verification
+
+- `stupid-app doctor`: 0 failures, 0 warnings.
+- `stupid-app build`: the built app and `PlugIns/StupidWalletSafari.appex` both report
+  `UIDeviceFamily = [1]` with no `Info.plist` override present.
+- `stupid-app run --simulator --udid <preferred-simulator>`: rebuilt, installed, and launched.
+
+### Follow-Up
+
+- The iPad/Mac visual result is unchanged from the preceding iPhone-only change; Mac Safari
+  acceptance still requires an Xcode Run on "My Mac (Designed for iPhone)".
+
+## 2026-09-24 - iPhone-only device family for iPad and Mac
+
+### Summary
+
+- Made the app iPhone-only so iPadOS and Apple Silicon macOS present the same fixed phone-sized
+  layout as iPhone instead of a distinct resizable iPad layout. The owner asked for the
+  Mac-compatibility app to "look the same as iOS."
+- `Info.plist` (shipped app) now carries `UIDeviceFamily = [1]`. `stupid-app` synthesizes
+  `UIDeviceFamily = [1, 2]` and merges the project `Info.plist` last, so the project value is
+  authoritative.
+- `SafariExtension/Info.plist` carries `UIDeviceFamily = [1]` as well. The shipped extension
+  previously declared no `UIDeviceFamily` and inherited the app's; pinning it keeps the app and
+  extension device families consistent for App Store validation.
+- `Mac/project.yml` sets `TARGETED_DEVICE_FAMILY: "1"` at project base and on each iOS target, and
+  declares `UIDeviceFamily: [1]` in both `Info-App` and `Info-Ext` info properties. XcodeGen
+  injects a per-target `TARGETED_DEVICE_FAMILY: "1,2"` default that overrides the project base, so
+  the per-target settings are required. Regenerated `Mac/StupidWalletMac.xcodeproj` with XcodeGen
+  2.46.0.
+
+### Why
+
+- The app previously supported device families 1 and 2. On Apple Silicon Mac that installs as
+  "Designed for iPad" with a resizable window, so the single SwiftUI layout stretched across a wide
+  window instead of matching the iPhone presentation. iPhone-only makes the Mac app open in a fixed
+  phone-sized window and makes iPadOS run the same iPhone layout in compatibility mode.
+- Safari web extensions from iOS apps are not gated on the containing app's device family; Apple
+  documents that iPhone and iPad Safari extensions can both be used on Apple silicon Macs. The
+  bundled extension still compiles, embeds, and validates after the change.
+
+### Verification
+
+- `stupid-app doctor`: 0 failures, 0 warnings.
+- `stupid-app build`: the built app and `PlugIns/StupidWalletSafari.appex` both report
+  `UIDeviceFamily = [1]`.
+- `stupid-app run --simulator --udid <preferred-simulator>`: rebuilt, installed, and launched.
+- `xcodebuild -project Mac/StupidWalletMac.xcodeproj -scheme StupidWallet -destination
+  'platform=macOS,arch=arm64' build`: BUILD SUCCEEDED. The product app and its embedded Safari
+  web-extension appex both report `UIDeviceFamily = [1]`, the `com.apple.Safari.web-extension`
+  extension point is intact, and the embedded-binary validation step passed.
+
+### Follow-Up
+
+- The Mac compatibility install still requires an Xcode Run (`xcodebuild` does not perform it), so
+  the extension registration and a signed round-trip on the Mac were not re-verified here. Confirm
+  with an Xcode Run on "My Mac (Designed for iPhone)" plus
+  `pluginkit -m -v -p com.apple.Safari.web-extension`, then a connect/sign round-trip.
+- Changing device family alters the App Store listing from iPhone + iPad to iPhone-only; existing
+  iPad installations receive the iPhone layout on update. No TestFlight build was produced for this
+  change.
+
 ## 2026-09-22 - Internal TestFlight Build 1.0.0 (113)
 
 ### Summary

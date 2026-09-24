@@ -106,7 +106,8 @@ stupid-app simulators
 stupid-app run --simulator --udid <simulator-udid>
 ```
 
-Install and launch locally on Apple Silicon Mac as an iPhone/iPad compatibility app:
+Install and launch locally on Apple Silicon Mac as an iPhone compatibility app
+(the app is iPhone-only; iPadOS and macOS use the same fixed phone-sized layout):
 
 ```bash
 stupid-app signing setup --kind development --udid <mac-provisioning-udid>

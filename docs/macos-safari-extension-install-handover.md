@@ -8,14 +8,14 @@ in `docs/engineering-handover.md`; chronological evidence is in `docs/implementa
 
 ## Current Boundary
 
-The product remains one iOS app distributed through TestFlight and run on macOS through Apple's
-iPhone/iPad compatibility environment. The current `stupid-app run --mac` rejects projects with
-app extensions because its LaunchServices-only installation path cannot create the
+The product remains one iPhone-only iOS app distributed through TestFlight and run on macOS
+through Apple's iPhone compatibility environment. The current `stupid-app run --mac` rejects
+projects with app extensions because its LaunchServices-only installation path cannot create the
 MobileInstallation/PlugInKit launch records Safari needs to spawn the native appex.
 
 Xcode and TestFlight use Apple's entitled installer and do create those records. By explicit owner
 decision, local native-messaging work therefore uses the tracked XcodeGen project in `Mac/` and
-Xcode's **My Mac (Designed for iPad/iPhone)** Run destination. This is a development-only install
+Xcode's **My Mac (Designed for iPhone)** Run destination. This is a development-only install
 exception: it compiles the existing `Sources/` and does not replace `stupid-app` as the product's
 normal build, signing, or release authority.
 
@@ -42,7 +42,7 @@ evidence for Gate 8 distribution acceptance.
    newly installed artifact contains a stub plus debug dylib.
 3. Increment both app and extension `CFBundleVersion` when a fresh Safari install is required.
 4. Quit Safari before Xcode Run, Run the `StupidWallet` scheme on **My Mac (Designed for
-   iPad/iPhone)**, then reopen Safari.
+   iPhone)**, then reopen Safari.
 5. Re-enable the extension if Xcode's reinstall reset it to disabled.
 
 An `xcodebuild build` validates compilation but does not perform the compatibility-app installation.

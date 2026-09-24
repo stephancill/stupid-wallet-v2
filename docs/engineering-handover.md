@@ -43,8 +43,9 @@ acceptance browser; Arc's native-host launch remains unproven.
 The local installer uses an existing compatible macOS development profile and Apple Development
 identity, under the owner's direct-codesign exception. It installs only a helper bundle and exact
 Chrome user-level registration. No stupid-app source or Apple account resources are modified.
-`stupid-app` remains the iOS build authority (0.0.18 verified for watch-only work with
-Swift 6.4 / Xcode 27 / iOS SDK 27, retaining the iOS 17 deployment target). The owner authorized repository-local Chrome
+`stupid-app` remains the iOS build authority (0.0.19 verified with Swift 6.4 / Xcode 27 / iOS SDK 27,
+retaining the iOS 17 deployment target; 0.0.19 is required for the `deviceFamily: iphone` key the
+project now declares). The owner authorized repository-local Chrome
 beta packaging and GitHub prerelease distribution without modifying stupid-app. The helper now has
 an approved Developer ID Application certificate and MAC_APP_DIRECT profile for the existing helper
 bundle identity and shared stores. Optimized arm64 helper 0.0.4 is signed with hardened runtime and
@@ -238,12 +239,15 @@ registry transition; and balance, Activity, Connected Apps, Settings, authorizat
 export use stable home-account identity. Home selection never mutates connection default, grants, or
 provider-visible active accounts.
 
-The macOS direction is the same iOS build running through Apple Silicon's iPhone/iPad-app
-compatibility environment, not a native macOS or Mac Catalyst target. Distribution uses
+The macOS direction is the same iOS build running through Apple Silicon's iPhone
+compatibility environment, not a native macOS or Mac Catalyst target. The app is
+iPhone-only (`deviceFamily: iphone` in `stupid-app.yml` for the shipped build and
+`TARGETED_DEVICE_FAMILY = 1` in `Mac/project.yml`), so iPad and Mac both present the fixed
+phone-sized layout instead of a distinct resizable iPad layout. Distribution uses
 the iOS TestFlight build. The current `stupid-app run --mac` rejects extension-bearing projects
 because its LaunchServices-only installer cannot create the plugin registration needed for native
 messaging. By owner decision, local Mac native-messaging testing routes through **Xcode's "My Mac
-(Designed for iPad)"** install via the tracked XcodeGen project at `Mac/` (`Mac/project.yml` →
+(Designed for iPhone)"** install via the tracked XcodeGen project at `Mac/` (`Mac/project.yml` →
 `Mac/StupidWalletMac.xcodeproj`) that compiles the existing `Sources/`; it is the build/install
 authority for the Mac-testing path only, and `stupid-app` remains the authority elsewhere.
 That entitled install now works end to end on the Mac: the extension plugin spawns, native
@@ -1090,8 +1094,10 @@ Build a small, auditable iOS wallet distributed with a Safari Web Extension that
 10. Allows the iOS TestFlight app to run on Apple Silicon Mac and expose the same bundled
     Safari Web Extension to macOS Safari.
 
-There is one iOS target. On Apple Silicon Mac it runs in Apple's iPhone/iPad-app
-compatibility environment with its bundled iOS Safari extension. `ThisDeviceOnly`
+There is one iPhone-only iOS target (`deviceFamily: iphone` in `stupid-app.yml`). On Apple
+Silicon Mac it runs in Apple's iPhone compatibility environment with its bundled iOS Safari
+extension. iPadOS runs the same iPhone layout in compatibility mode rather than a separate
+iPad layout. `ThisDeviceOnly`
 keychain material and App Group containers do not synchronize between an iPhone and a
 Mac; using the same account on both requires an explicit user-authorized import on the Mac.
 
@@ -1431,8 +1437,8 @@ ENSNormalize             copied ENSIP-15 normalization and embedded Unicode tabl
 StupidWalletTests         package unit tests where supported
 ```
 
-On Apple Silicon Mac, TestFlight distributes this same iOS app and bundled
-`StupidWalletSafari` extension through Apple's iPhone/iPad-app compatibility path. There
+On Apple Silicon Mac, TestFlight distributes this same iPhone-only iOS app and bundled
+`StupidWalletSafari` extension through Apple's iPhone compatibility path. There
 is no separate Mac SwiftPM product or web-resource fork. Extension-capable local installation
 requires Xcode or TestFlight because `stupid-app run --mac` rejects extension-bearing apps.
 

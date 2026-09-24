@@ -9,6 +9,9 @@ settings:
     SWIFT_VERSION: "5.0"
     CLANG_ENABLE_MODULES: YES
     ENABLE_DEBUG_DYLIB: NO
+    # iPhone-only: on Apple silicon Mac the app installs as "Designed for iPhone"
+    # and uses the fixed phone-sized window instead of the resizable iPad layout.
+    TARGETED_DEVICE_FAMILY: "1"
 targets:
   ENSNormalize:
     type: framework.static
@@ -22,6 +25,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.stupidtech.ENSNormalize
         PRODUCT_MODULE_NAME: ENSNormalize
+        TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
   StupidWalletCore:
@@ -39,6 +43,7 @@ targets:
       base:
         PRODUCT_NAME: StupidWalletCore
         PRODUCT_MODULE_NAME: StupidWalletCore
+        TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
         SWIFT_INCLUDE_PATHS:
@@ -69,6 +74,8 @@ targets:
         CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "7"
         NSFaceIDUsageDescription: Face ID is used to authorize signing and access protected wallet keys.
+        UIDeviceFamily:
+          - 1
         NSExtension:
           NSExtensionPointIdentifier: com.apple.Safari.web-extension
           NSExtensionPrincipalClass: StupidWalletSafari.SafariWebExtensionHandler
@@ -77,6 +84,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: co.za.stephancill.stupid-wallet.extension
         PRODUCT_NAME: StupidWalletSafari
         PRODUCT_MODULE_NAME: StupidWalletSafari
+        TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Info-Ext.plist
         SWIFT_INCLUDE_PATHS:
@@ -103,6 +111,8 @@ targets:
         CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "7"
         NSFaceIDUsageDescription: Face ID is used to authorize signing and access protected wallet keys.
+        UIDeviceFamily:
+          - 1
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
     settings:
@@ -110,7 +120,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: co.za.stephancill.stupid-wallet
         PRODUCT_NAME: StupidWallet
         PRODUCT_MODULE_NAME: StupidWallet
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Info-App.plist
         SWIFT_INCLUDE_PATHS:

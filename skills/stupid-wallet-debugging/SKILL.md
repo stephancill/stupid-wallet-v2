@@ -237,7 +237,7 @@ public implementation notes.
   installer cannot create the launch records native messaging needs. Mac native-messaging testing
   routes through the tracked XcodeGen project at `Mac/` (build with `xcodebuild
   -project Mac/StupidWalletMac.xcodeproj -scheme StupidWallet -destination
-  'platform=macOS,arch=arm64'`, install by running in Xcode on "My Mac (Designed for iPad/iPhone)").
+  'platform=macOS,arch=arm64'`, install by running in Xcode on "My Mac (Designed for iPhone)").
 - A keychain probe from a terminal is **not** evidence a `.userPresence` wallet key is missing:
   those items are ACL-protected and invisible to `security find-generic-password` /
   `dump-keychain`, which report item-not-found even when signing succeeds. Judge signing by a
