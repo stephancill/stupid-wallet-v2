@@ -50,6 +50,33 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-24 - Internal TestFlight build 1.0.0 (114)
+
+### Summary
+
+- Released the iPhone-only device-family change to internal TestFlight as 1.0.0 (114). The app
+  and its Safari extension now declare `deviceFamily: iphone` via `stupid-app.yml`, so iPadOS and
+  Apple Silicon Mac present the fixed phone layout instead of a resizable iPad layout.
+- `stupid-app release new-build` selected unused build 114 and `release bump --build-number 114`
+  synchronized the containing app and Safari extension. The What to Test note is "iPhone-only app:
+  iPadOS and Apple Silicon Mac now use the same fixed phone layout."
+
+### Verification
+
+- `stupid-app release preflight`: READY, both Apple bundles 1.0.0 (114); `stupid-app doctor`:
+  0 failures, 0 warnings (CLI 0.0.19 / Swift 6.4 / Xcode 27 / iOS SDK 27).
+- `stupid-app release archive`: IPA SHA-256
+  `5410272368bc0dad418fe502026ee498c9f604f5ef4cc2631a5070688d11fe71`; the packaged app and
+  extension both report `UIDeviceFamily = [1]` with no `UISupportedInterfaceOrientations~ipad` key.
+- `stupid-app release upload --wait`: upload COMPLETE, processing `VALID`, internal
+  `IN_BETA_TESTING`. `release status --live` reports the same live state; external beta is
+  `READY_FOR_BETA_SUBMISSION` and no external submission was made.
+
+### Follow-Up
+
+- External TestFlight distribution of this build was not requested.
+- Mac Safari extension acceptance still requires an Xcode Run on "My Mac (Designed for iPhone)".
+
 ## 2026-09-24 - Adopt the deviceFamily project config
 
 ### Summary
