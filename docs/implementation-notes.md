@@ -50,6 +50,30 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-24 - External TestFlight build 1.0.0 (114)
+
+### Summary
+
+- Submitted the already uploaded build 114 for external TestFlight review and assigned it to the
+  existing External group, with the iPhone-only layout note in What to Test. The build initially
+  entered the other external group; the owner directed us to leave that assignment in place after
+  correcting the target. The release manifest now records the External group.
+
+### Verification
+
+- `stupid-app release preflight`: READY for the containing app and Safari extension, both 1.0.0
+  (114). The existing IPA digest matched the upload manifest.
+- `stupid-app release beta-group add-build --group <External group ID> --build-id <build ID>`
+  succeeded. An authenticated read-only App Store Connect `betaGroups/{id}/builds` query confirmed
+  build 114 belongs to External.
+- `stupid-app release status --live` reports processing `VALID`, internal and external
+  `IN_BETA_TESTING`. The initial external-beta command timed out waiting for approval, but the
+  subsequent live status confirmed availability; no second review submission was created.
+
+### Follow-Up
+
+- None for external availability of build 114.
+
 ## 2026-09-24 - Internal TestFlight build 1.0.0 (114)
 
 ### Summary

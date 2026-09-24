@@ -91,8 +91,10 @@ grouped picker, with existing pairing retained. Live switch/disconnect mutation 
 GitHub prerelease `chrome-v0.0.7-beta.1` publishes the previous artifacts from `c499181`; all four
 uploaded asset digests match local files. Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
-version 1.0.0 (114), live for internal TestFlight, making the app iPhone-only so iPadOS and Apple
-Silicon Mac present the same fixed phone layout, on top of the app send-target fix so an ERC-20 transfer
+version 1.0.0 (114), live for internal and external TestFlight. Build 114 is assigned to the existing
+External group and live App Store Connect reports external `IN_BETA_TESTING`. The build makes the app
+iPhone-only so iPadOS and Apple Silicon Mac present the same fixed phone layout, on top of the app
+send-target fix so an ERC-20 transfer
 calls the token contract rather than the recipient, zero-balance visibility for tracked
 tokens, ENS recipient resolution with a recipient-first Send form, synced USD and token amounts with
 a fee-reserved native Max, an empty
