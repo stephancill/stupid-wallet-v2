@@ -50,6 +50,25 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-24 - External TestFlight build 114 test notes
+
+### Summary
+
+- Updated build 114's external TestFlight What to Test from the iPhone-only layout note to a
+  high-level summary of changes since the previous external build: watch-only address import,
+  custom ERC-20 tracking, the USD portfolio and per-network breakdowns, native/ERC-20 sending
+  from the portfolio with recipient and amount choices, and the iPhone-only iPad/Mac layout.
+
+### Verification
+
+- `stupid-app release beta-notes --build-id <build ID> --whats-new <public note>` succeeded.
+  A read-only App Store Connect `betaBuildLocalizations` query returned the exact updated note,
+  and `betaGroups/{id}/builds` confirmed build 114 remains in External.
+
+### Follow-Up
+
+- None.
+
 ## 2026-09-24 - External TestFlight build 1.0.0 (114)
 
 ### Summary
