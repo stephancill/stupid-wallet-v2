@@ -48,6 +48,11 @@ public struct PortfolioHolding: Sendable, Equatable, Identifiable {
 
   public var id: String { "\(chainID):\(address ?? "native")" }
   public var isNative: Bool { address == nil }
+  public var balanceDisplay: String {
+    DecimalValue.rounded(
+      ClearSigningFormatter.scaledDecimal(raw: raw, decimals: Int(decimals)), significantDigits: 6
+    ) ?? "—"
+  }
   public var valueDisplay: String? { valueUSD.flatMap(DecimalValue.usd) }
   public var changeDisplay: String? { change24h.flatMap { DecimalValue.signedPercent($0) } }
 
@@ -108,6 +113,13 @@ public struct PortfolioGroup: Sendable, Equatable, Identifiable {
   public var valueDisplay: String? { valueUSD.flatMap(DecimalValue.usd) }
   public var changeDisplay: String? { change24h.flatMap { DecimalValue.signedPercent($0) } }
   public var iconURL: URL? { holdings.compactMap(\.iconURL).first }
+  public var balanceDisplay: String {
+    let amounts = holdings.map {
+      ClearSigningFormatter.scaledDecimal(raw: $0.raw, decimals: Int($0.decimals))
+    }
+    return DecimalValue.sum(amounts).flatMap { DecimalValue.rounded($0, significantDigits: 6) }
+      ?? "—"
+  }
   public var networkLabel: String {
     holdings.count == 1 ? (holdings.first?.networkName ?? "") : "\(holdings.count) networks"
   }

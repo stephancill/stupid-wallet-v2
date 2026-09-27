@@ -50,6 +50,114 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-27 - Show symbol beside grouped portfolio quantity
+
+### Summary
+
+- Grouped portfolio subtitles now read `<amount> <symbol> • N networks`, consistent with the
+  single-network amount preview.
+
+### Why
+
+- The combined quantity was missing its unit next to the amount.
+
+### Verification
+
+- `xcrun swift-format format --in-place Sources/StupidWallet/ContentView.swift` and
+  `xcrun swift-format lint --strict Sources/StupidWallet/ContentView.swift` passed.
+- `stupid-app build` succeeded and `stupid-app run --simulator --udid <preferred-simulator>`
+  reinstalled and launched the app. The simulator accessibility tree shows a populated grouped
+  ETH row in the `<amount> ETH • 4 networks` form.
+- The preceding full `swift test --quiet` run passed 437 tests; this follow-up changed only
+  SwiftUI subtitle text, which is compiled by the iOS build.
+
+### Follow-Up
+
+- Confirm the grouped row's spacing and expansion visually during portfolio UI acceptance.
+
+## 2026-09-27 - Grouped portfolio token totals
+
+### Summary
+
+- Grouped portfolio rows now show the total token quantity before the network count
+  (`<amount> • N networks`) alongside the existing USD value and expansion control.
+- The preview sums exact per-network amounts after applying each token's decimals and rounds only
+  the combined quantity to six significant figures. Unpriced holdings contribute their balances.
+
+### Why
+
+- A grouped row showed only its USD value and network count, hiding how many tokens were held in
+  total across those networks.
+
+### Verification
+
+- `swift test --filter PortfolioTests`: 8 tests passed, including cross-decimal exact summation,
+  rounding at the aggregate boundary, tiny quantities, and missing USD prices.
+- `swift test --quiet`: 437 tests in 49 suites passed.
+- `xcrun swift-format format --in-place` and `xcrun swift-format lint --strict` on the three changed
+  Swift files passed; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched the app.
+  The simulator accessibility tree exposes a populated grouped ETH row with the summed amount,
+  `• 4 networks`, and the existing USD value. Visual spacing and tap-to-expand acceptance remain open.
+
+### Follow-Up
+
+- Confirm the grouped subtitle's layout and expansion behavior with a multi-network portfolio.
+
+## 2026-09-27 - Dismiss Send keyboard on outside taps
+
+### Summary
+
+- Send now resigns the keyboard when tapping outside an input on the form or its recipient/asset
+  pickers. A non-cancelling tap recognizer scoped to the sheet ignores taps inside text inputs so
+  field selection, editing, navigation, and buttons continue to work.
+
+### Why
+
+- The decimal amount keypad had no dismissal key, and tapping elsewhere in the sheet left it open.
+
+### Verification
+
+- `xcrun swift-format format --in-place Sources/StupidWallet/SendView.swift` and
+  `xcrun swift-format lint --strict Sources/StupidWallet/SendView.swift` passed.
+- `swift test` passed (436 tests in 49 suites), and `stupid-app build` succeeded for iOS.
+- `stupid-app run --simulator --udid <preferred-simulator>` reinstalled and launched the current
+  build. Live Send-field interaction was not exercised because the simulator was in an existing
+  user flow; verify outside-tap dismissal and input/control taps in the sheet during UI testing.
+
+### Follow-Up
+
+- Confirm keyboard dismissal on blank space and non-input rows while amount and recipient inputs
+  are focused, and confirm tapping between inputs and using the asset/recipient controls still works.
+
+## 2026-09-24 - Portfolio token balance previews
+
+### Summary
+
+- Single-network portfolio rows now show `<amount> <symbol> • <network>` beneath the asset symbol.
+  Expanded multichain rows show each network's balance below its name beside the existing USD value.
+- The preview shares Send's exact six-significant-figure balance formatting, including tiny, zero,
+  and unpriced holdings; Send reuses the shared holding display value.
+
+### Why
+
+- USD values alone did not show how many tokens the account holds, especially when comparing the
+  same asset across networks.
+
+### Verification
+
+- `swift test --filter PortfolioTests`: 7 tests pass, including unpriced, zero, and tiny balance
+  previews. `swift test`: 436 tests in 49 suites pass.
+- `xcrun swift-format format --in-place` and `xcrun swift-format lint --strict` on the four changed
+  Swift files pass. `git diff --check` passes.
+- `stupid-app build` succeeds. `stupid-app run --simulator --udid <preferred-simulator>` reinstalls
+  and launches the app after the final Swift edit. The simulator currently shows initial setup with
+  no wallet, so populated single- and multichain portfolio rows were not visually exercised there.
+
+### Follow-Up
+
+- Confirm the single- and multichain row layout with a populated portfolio during UI acceptance.
+
 ## 2026-09-24 - External TestFlight build 114 test notes
 
 ### Summary

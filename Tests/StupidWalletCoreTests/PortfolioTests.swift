@@ -29,6 +29,52 @@ struct PortfolioTests {
     #expect(PortfolioHolding.value(raw: units, decimals: 6, price: "not-a-price") == nil)
   }
 
+  @Test("holding balance previews are independent of price and keep tiny and zero amounts visible")
+  func balanceDisplay() throws {
+    let units = try #require(Hex.quantityData(hex: "0x12d687"))
+    let token = PortfolioHolding(
+      chainID: "1", networkName: "Ethereum", symbol: "USDC", address: "0xtoken", iconURL: nil,
+      raw: units, decimals: 6, priceUSD: nil, valueUSD: nil)
+    #expect(token.balanceDisplay == "1.23457")
+    let tiny = PortfolioHolding(
+      chainID: "8453", networkName: "Base", symbol: "ETH", address: nil, iconURL: nil,
+      raw: [1], decimals: 18, priceUSD: nil, valueUSD: nil)
+    #expect(tiny.balanceDisplay == "0.000000000000000001")
+    let zero = PortfolioHolding(
+      chainID: "1", networkName: "Ethereum", symbol: "USDC", address: "0xtoken", iconURL: nil,
+      raw: [0], decimals: 6, priceUSD: nil, valueUSD: "0")
+    #expect(zero.balanceDisplay == "0")
+  }
+
+  @Test("group balance sums exact token quantities before rounding across differing decimals")
+  func groupedBalanceDisplay() throws {
+    let first = PortfolioHolding(
+      chainID: "1", networkName: "Ethereum", symbol: "USDC", address: "0xtoken",
+      iconURL: nil, raw: try #require(Hex.quantityData(hex: "0x75bcbf2")), decimals: 8,
+      priceUSD: nil, valueUSD: nil)
+    let second = PortfolioHolding(
+      chainID: "8453", networkName: "Base", symbol: "USDC", address: "0xtoken",
+      iconURL: nil, raw: [40], decimals: 9, priceUSD: nil, valueUSD: nil)
+    let group = try #require(PortfolioGroup.groups(from: [first, second]).first)
+    #expect(first.balanceDisplay == "1.23456")
+    #expect(group.balanceDisplay == "1.23457")
+    #expect(group.networkLabel == "2 networks")
+    #expect(group.valueDisplay == nil)
+
+    let tiny = PortfolioHolding(
+      chainID: "1", networkName: "Ethereum", symbol: "ETH", address: nil, iconURL: nil,
+      raw: [1], decimals: 18, priceUSD: nil, valueUSD: nil)
+    let tinyGroup = try #require(
+      PortfolioGroup.groups(from: [
+        tiny,
+        PortfolioHolding(
+          chainID: "8453", networkName: "Base", symbol: "ETH", address: nil, iconURL: nil,
+          raw: [1], decimals: 18, priceUSD: nil, valueUSD: nil
+        ),
+      ]).first)
+    #expect(tinyGroup.balanceDisplay == "0.000000000000000002")
+  }
+
   @Test("holdings group by symbol, ordered by value with unpriced last")
   func grouping() {
     let groups = PortfolioGroup.groups(from: [

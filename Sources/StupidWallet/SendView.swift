@@ -2,6 +2,8 @@ import StupidWalletCore
 import SwiftUI
 
 #if os(iOS)
+  import UIKit
+
   /// One concrete send target: a native currency on a chain, or a tracked ERC-20 token.
   struct SendAsset: Identifiable, Equatable {
     let chainID: String
@@ -13,6 +15,7 @@ import SwiftUI
     let raw: [UInt8]
     let priceUSD: String?
     let valueDisplay: String?
+    let balanceDisplay: String
 
     var id: String { "\(chainID):\(address ?? "native")" }
     var isNative: Bool { address == nil }
@@ -27,12 +30,7 @@ import SwiftUI
       raw = holding.raw
       priceUSD = holding.priceUSD
       valueDisplay = holding.valueDisplay
-    }
-
-    var balanceDisplay: String {
-      DecimalValue.rounded(
-        ClearSigningFormatter.scaledDecimal(raw: raw, decimals: Int(decimals)), significantDigits: 6
-      ) ?? "—"
+      balanceDisplay = holding.balanceDisplay
     }
   }
 
@@ -183,6 +181,7 @@ import SwiftUI
           Text(sentHash ?? "")
         }
       }
+      .background(SendKeyboardDismissView())
       .task(id: maximumRequest) {
         guard let request = maximumRequest else { return }
         do {
@@ -664,5 +663,68 @@ import SwiftUI
       let bytes = Hex.data(trimmed), bytes.contains(where: { $0 != 0 })
     else { return nil }
     return EIP55.checksum(from: bytes)
+  }
+
+  private struct SendKeyboardDismissView: UIViewRepresentable {
+    func makeUIView(context: Context) -> MarkerView {
+      let view = MarkerView()
+      view.onWindowChange = { [weak coordinator = context.coordinator] window in
+        coordinator?.attach(to: window)
+      }
+      context.coordinator.marker = view
+      return view
+    }
+
+    func updateUIView(_ uiView: MarkerView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    static func dismantleUIView(_ uiView: MarkerView, coordinator: Coordinator) {
+      uiView.onWindowChange = nil
+      coordinator.attach(to: nil)
+    }
+
+    final class MarkerView: UIView {
+      var onWindowChange: ((UIWindow?) -> Void)?
+
+      override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onWindowChange?(window)
+      }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+      weak var marker: MarkerView?
+      private weak var attachedWindow: UIWindow?
+      private lazy var tap = UITapGestureRecognizer(
+        target: self, action: #selector(dismissKeyboard))
+
+      func attach(to window: UIWindow?) {
+        guard attachedWindow !== window else { return }
+        attachedWindow?.removeGestureRecognizer(tap)
+        attachedWindow = window
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        window?.addGestureRecognizer(tap)
+      }
+
+      func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch)
+        -> Bool
+      {
+        guard let marker, let window = marker.window,
+          marker.bounds.contains(touch.location(in: marker))
+        else { return false }
+        var view = touch.view
+        while let current = view {
+          if current is UITextField || current is UITextView { return false }
+          view = current.superview
+        }
+        return true
+      }
+
+      @objc private func dismissKeyboard() {
+        attachedWindow?.endEditing(true)
+      }
+    }
   }
 #endif

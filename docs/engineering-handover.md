@@ -91,8 +91,10 @@ grouped picker, with existing pairing retained. Live switch/disconnect mutation 
 GitHub prerelease `chrome-v0.0.7-beta.1` publishes the previous artifacts from `c499181`; all four
 uploaded asset digests match local files. Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
-version 1.0.0 (114), live for internal and external TestFlight. Build 114 is assigned to the existing
-External group and live App Store Connect reports external `IN_BETA_TESTING`. The build makes the app
+version 1.0.0 (115), live for internal and external TestFlight. Build 115 is assigned to the existing
+External group, and live App Store Connect reports external `IN_BETA_TESTING`. It adds token-balance
+previews and exact cross-network quantity summaries on the portfolio, and outside-tap keyboard
+dismissal in Send. Build 114 made the app
 iPhone-only so iPadOS and Apple Silicon Mac present the same fixed phone layout, on top of the app
 send-target fix so an ERC-20 transfer
 calls the token contract rather than the recipient, zero-balance visibility for tracked
@@ -723,13 +725,17 @@ account toolbar (copy address and the account menu).
   tracked holding reports an exact `0` value, so it shows `$0.00` even when the catalog has no price
   for it, and it carries no 24-hour change.
 - Rows group holdings by symbol, case-insensitively, so the same token or native currency on several
-  networks is one row. A grouped row shows a small caret inline beside the network label (for example
-  `4 networks ⌄`) that expands the per-chain distribution, and each
-  distribution row shows the network and its own value. Groups and their members are ordered by
-  value, with unpriced holdings last.
+  networks is one row. A grouped row shows the summed token quantity before the network count and
+  a small caret (for example `1.23457 USDC • 4 networks ⌄`); quantities are summed at full per-network
+  precision before applying the six-significant-figure display rounding, even when token decimals
+  differ. The caret expands the per-chain distribution, and each
+  distribution row shows the network, its token balance beneath the network name, and its own USD
+  value. A single-network row shows `<amount> <symbol> • <network>` beneath the symbol. Balances use
+  the same six-significant-figure preview as Send, including for unpriced and zero tracked tokens.
+  Groups and their members are ordered by value, with unpriced holdings last.
 - Watch-only accounts are read-only addresses, so every balance, price, and portfolio value works for
   them unchanged; only signing is unavailable.
-- Every value is USD: the exact product of the balance and the catalog price, displayed as the full
+- USD values are the exact product of the balance and the catalog price, displayed as the full
   amount with grouping separators, rounded to exactly two decimal places (`$12.34`, `$1,234.57`,
   `$34,400,000.00`, `$1.30`). Amounts, prices, and values are
   decimal-string arithmetic in `DecimalValue`; no floating point is used. A holding the catalog
@@ -788,7 +794,7 @@ account toolbar (copy address and the account menu).
   expanded network rows open Send with that exact chain/token selected. A multi-network group opens
   directly to Send's asset search with its symbol prefilled, so the user selects the concrete network
   holding. Token detail and removal stay in Settings → Tokens. Home's holdings list shows USD values
-  rather than raw token amounts; Send's asset picker shows token balances.
+  alongside token-balance previews; Send's asset picker also shows token balances.
 - `Simple7702AccountDeploymentStore` treats an unrecognized deployments cache shape as empty instead
   of failing, because that file is only a positive verification cache that is re-checked on chain.
   Previously a legacy cache file made RPC override saves fail with "could not be saved".
@@ -810,7 +816,9 @@ Send presents a wallet-owned sheet ordered To → Asset → Amount → Send. The
 picker; the flat per-chain asset picker offers the same per-chain holdings as the portfolio, so it
 includes every tracked token (showing a zero balance when it holds none) and every included network's
 non-zero native currency, each row labelled with its network. The decimal amount field shows the
-available balance. The recipient picker lists
+available balance. Tapping anywhere in the Send sheet outside a text input resigns the keyboard,
+including in the recipient and asset pickers; text inputs retain focus when tapped, and other controls
+retain their actions. The recipient picker lists
 every active registered account under its wallet-group label, including watch-only accounts and the
 sending account. Choosing an account returns to the Send form without changing the Home account.
 A separate Address or ENS name field accepts pasted or typed non-zero 20-byte Ethereum addresses

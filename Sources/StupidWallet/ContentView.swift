@@ -404,9 +404,14 @@ import SwiftUI
       if group.isGrouped, expandedSymbols.contains(group.symbol) {
         ForEach(group.holdings) { holding in
           HStack(spacing: 12) {
-            Text(holding.networkName)
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+              Text(holding.networkName)
+              Text("\(holding.balanceDisplay) \(holding.symbol)")
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
             Spacer(minLength: 12)
             Text(holding.valueDisplay ?? "—")
               .font(.subheadline)
@@ -433,7 +438,15 @@ import SwiftUI
         VStack(alignment: .leading, spacing: 3) {
           Text(group.symbol).foregroundStyle(.primary)
           HStack(spacing: 4) {
-            Text(group.networkLabel).font(.subheadline).foregroundStyle(.secondary)
+            if let holding = group.holdings.first, !expandable {
+              Text("\(holding.balanceDisplay) \(holding.symbol) • \(holding.networkName)")
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            } else {
+              Text("\(group.balanceDisplay) \(group.symbol) • \(group.networkLabel)")
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            }
             if expandable {
               Image(
                 systemName: expandedSymbols.contains(group.symbol) ? "chevron.up" : "chevron.down"
@@ -442,6 +455,8 @@ import SwiftUI
               .foregroundStyle(.secondary)
             }
           }
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
         }
         Spacer(minLength: 12)
         VStack(alignment: .trailing, spacing: 3) {
