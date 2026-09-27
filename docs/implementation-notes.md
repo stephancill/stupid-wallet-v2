@@ -50,6 +50,40 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-27 - External TestFlight build 1.0.0 (115)
+
+### Summary
+
+- Released the portfolio token-balance previews, grouped token totals with symbols, and Send
+  outside-tap keyboard dismissal to the existing External TestFlight group. The app and Safari
+  extension remain version 1.0.0 with build 115.
+- The artifact was built from source commit `c782c8d3fc0c040da17ac731d7e739930d290a48`.
+  The unrelated untracked backend directory and account-switch investigation skill changes were
+  excluded from the release commit.
+- The public What to Test note asks testers to inspect portfolio token balances across networks
+  and dismiss Send's keyboard by tapping outside an input.
+
+### Verification
+
+- `stupid-app release new-build` selected unused build 115; `release bump --build-number 115`
+  synchronized both Apple bundle versions. `release preflight` reported READY; `stupid-app doctor`
+  completed with zero failures and warnings on Xcode 27 / iOS SDK 27.
+- `swift test --quiet` passed 437 tests in 49 suites; `stupid-app build` succeeded.
+- `stupid-app release archive` signed the app and nested extension and passed the post-sign verifier.
+  The IPA SHA-256 is `883ed256176447be715da800fc96dcfc57c701997d4ed7e9961ab36ee7f51558`.
+  Packaged plists confirmed matching version/build, iPhone-only device family, and SDK provenance.
+- `stupid-app release upload --wait` completed with `VALID` processing and internal
+  `IN_BETA_TESTING`. `release external-beta` with the existing External group and a public test
+  note assigned the build, set the note, and created the external review submission;
+  its approval wait timed out. A subsequent `stupid-app release status --live` reported external
+  `IN_BETA_TESTING`, confirming availability. The local manifest still shows the pre-live external
+  status, so the live App Store Connect result is authoritative.
+
+### Follow-Up
+
+- Test the Send keyboard interaction and grouped-row spacing on a populated device. A TestFlight
+  rollout is not a new proof of signing or broadcast behavior.
+
 ## 2026-09-27 - Show symbol beside grouped portfolio quantity
 
 ### Summary
