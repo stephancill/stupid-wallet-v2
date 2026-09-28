@@ -93,8 +93,14 @@ generic error text and do not bypass the canonical approval protocol.
 18. AXe can expose a SwiftUI text-field placeholder under `AXValue` with a null `AXLabel`; target it
     with `tap --value <placeholder> --element-type TextField`. On Xcode 27 an automatic/simulator tap
     can report success without focusing the field. Use `--tap-style physical` and verify the typed
-     value from a fresh tree before continuing. Also check that a button is enabled: account selection
-     can keep the Accounts Close button disabled while its balance refresh is still finishing.
+    value from a fresh tree before continuing. Also check that a button is enabled: account selection
+    can keep the Accounts Close button disabled while its balance refresh is still finishing.
+    For a slow containing-app account switch, distinguish a disabled picker from a frozen main thread:
+    `WalletViewModel.selectHomeAccount` retains `isSaving` across `await refreshBalance()`, and
+    `WalletBalanceModel.refresh()` awaits all configured-network batches followed by the catalog price
+    request. Cached account values hydrate before those awaits. Registry selection and repeated adoption
+    validation, including noninteractive keychain existence probes, are synchronous on the main actor;
+    measure those separately before attributing the full delay to RPC latency.
 19. On Xcode 27, `simctl pbcopy` can exit successfully while the simulator's general pasteboard
     remains empty, leaving native text fields with AutoFill but no Paste. Confirm metadata with
     `xcrun devicectl device pasteboard info --device <simulator>` rather than changing the field.

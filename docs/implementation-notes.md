@@ -335,6 +335,32 @@ Use this entry template:
 
 - None.
 
+## 2026-09-24 - Containing-app account-switch delay investigation
+
+### Summary
+
+- Traced the Accounts row action through `WalletViewModel.selectHomeAccount`, registry adoption,
+  `WalletBalanceModel.refresh`, and the Accounts sheet's disabled controls. The switch persists the
+  new home account and hydrates cached balances before network work, but `isSaving` remains true
+  until all configured-network RPC batches and the catalog price request complete. The account rows
+  and Close control are disabled throughout that wait.
+- The selection, adoption validation, and protected-source existence probes are synchronous calls
+  made from a main-actor view model. They can additionally stall rendering while they execute;
+  no per-stage duration was measured. No authentication prompt is part of an ordinary switch.
+
+### Verification
+
+- Inspected the current source call chain and project documentation without changing app code.
+  `stupid-app --version` reports 0.0.19; the Safari source manifest is 0.1.57. The booted preferred
+  simulator has an older installed app build, so it was not used as evidence of current-build timing.
+
+### Follow-Up
+
+- If improving the switch UX, release the picker busy state after the persisted home selection and
+  cached-account publication, keeping balance/price revalidation independent. Measure and, if needed,
+  move synchronous registry/keychain checks off the main actor while retaining the current validation
+  and persistence boundaries.
+
 ## 2026-09-24 - External TestFlight build 1.0.0 (114)
 
 ### Summary

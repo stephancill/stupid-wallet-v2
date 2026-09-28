@@ -660,6 +660,12 @@ pull-to-refresh trigger revalidation. Successful rows publish and persist as the
 finishes. During refresh or failure, existing values remain visible; without a successful
 cache, a failed row is Unavailable. Failures never save a zero or erase a previous success. Each row
 tracks its last-success timestamp and error, and a retained value is not labelled in the UI.
+The current containing-app account-selection task keeps the Accounts sheet's `isSaving` state active
+until the entire balance and price refresh completes, disabling its account rows and Close control
+even though the new account and cached values have already been published. Selection also runs
+registry/adoption validation and noninteractive protected-source existence checks synchronously on
+the main actor, which can briefly stall rendering. These are observed source-level UX bottlenecks;
+their individual costs have not been measured on the current installed build.
 Native aggregate SWR semantics remain
 account-bound and independent of whether token reads succeed.
 
