@@ -50,6 +50,41 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-28 - Internal TestFlight build 1.0.0 (116)
+
+### Summary
+
+- Released the single-send simulated native/ERC-20 asset-change popup preview to internal
+  TestFlight as app and Safari extension version 1.0.0 (116). The exact source commit for
+  the archive is `4ec7232ae3276c2f7418c8f60c5fe162cd168c11`; unrelated backend work
+  and the pre-existing account-switch investigation edits were excluded from that commit.
+- Set What to Test to ask testers to review a pending send on a simulation-capable RPC and
+  reject it without broadcasting. No external beta submission was made for build 116;
+  external testers remain on build 115.
+
+### Verification
+
+- `stupid-app release new-build` selected 116; `release bump --build-number 116`
+  synchronized both Apple bundles. `release preflight` reported READY and
+  `stupid-app doctor` reported zero failures/warnings on Xcode 27 / iOS SDK 27.
+- The preceding full `swift test` passed 440 tests across 49 suites and
+  `node --test Tests/JavaScript/*.test.mjs` passed 39 tests; no code changed after those
+  runs. `stupid-app release archive` signed the app and nested extension, and passed the
+  post-sign verifier. The IPA SHA-256 is
+  `c4c26134aad39dccf6acf2b1cfa8dc4c5b970489e856821b46dc155988236ea7`.
+  Packaged plists confirmed both bundles at 1.0.0 (116), iPhone-only device family,
+  Xcode/SDK build provenance, and Safari resource manifest 0.1.58.
+- `stupid-app release upload --wait` completed with processing `VALID` and internal
+  `IN_BETA_TESTING`. `release beta-notes` set the public test note.
+  `stupid-app release status --live` independently confirmed internal `IN_BETA_TESTING`
+  and external `READY_FOR_BETA_SUBMISSION` for build 116.
+
+### Follow-Up
+
+- Inspect a populated transaction preview on a funded key-backed account using an RPC
+  with `eth_simulateV1` support. Internal TestFlight availability does not establish the
+  physical-device Safari popup result or a network-accepted transaction.
+
 ## 2026-09-28 - Wi-Fi iPhone development install
 
 ### Summary

@@ -91,8 +91,10 @@ grouped picker, with existing pairing retained. Live switch/disconnect mutation 
 GitHub prerelease `chrome-v0.0.7-beta.1` publishes the previous artifacts from `c499181`; all four
 uploaded asset digests match local files. Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
-version 1.0.0 (115), live for internal and external TestFlight. Build 115 is assigned to the existing
-External group, and live App Store Connect reports external `IN_BETA_TESTING`. It adds token-balance
+version 1.0.0 (116), live for internal TestFlight with the single-send simulated asset-change
+preview. Build 116 is `VALID` and internal `IN_BETA_TESTING` in live App Store Connect, but
+has not been submitted externally. Build 115 remains assigned to the existing External group,
+with external `IN_BETA_TESTING`. Build 115 added token-balance
 previews and exact cross-network quantity summaries on the portfolio, and outside-tap keyboard
 dismissal in Send. Build 114 made the app
 iPhone-only so iPadOS and Apple Silicon Mac present the same fixed phone layout, on top of the app
