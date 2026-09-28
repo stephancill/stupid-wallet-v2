@@ -40,21 +40,24 @@ keychain group. It requires a ready registry and never runs migration or creates
 Production app, Safari, App Group and keychain identities are unchanged. Google Chrome is the selected
 acceptance browser; Arc's native-host launch remains unproven.
 
-The local installer uses an existing compatible macOS development profile and Apple Development
-identity, under the owner's direct-codesign exception. It installs only a helper bundle and exact
-Chrome user-level registration. No stupid-app source or Apple account resources are modified.
+The local development installer uses an existing compatible macOS development profile and Apple
+Development identity under the owner's direct-codesign exception. The release installer verifies
+the Developer ID signature and Gatekeeper before installing the helper bundle and exact Chrome
+user-level registration. Neither installer modifies wallet data, stupid-app source, or Apple account
+resources.
 `stupid-app` remains the iOS build authority (0.0.19 verified with Swift 6.4 / Xcode 27 / iOS SDK 27,
 retaining the iOS 17 deployment target; 0.0.19 is required for the `deviceFamily: iphone` key the
 project now declares). The owner authorized repository-local Chrome
-beta packaging and GitHub prerelease distribution without modifying stupid-app. The helper now has
-an approved Developer ID Application certificate and MAC_APP_DIRECT profile for the existing helper
-bundle identity and shared stores. Optimized arm64 helper 0.0.4 is signed with hardened runtime and
-secure timestamp; Apple accepted notarization and the stapled app passes Gatekeeper. Chrome 0.0.6 is
-packaged as a fixed-ID unpacked ZIP. A per-user installer verifies identity and Gatekeeper acceptance,
-retains the prior helper, and writes only the Chrome host registration and helper installation.
-Installation from the release ZIP and an independently recovered authenticated message signature
-passed in Chrome with existing pairing retained. Clean-machine acceptance and a reserved Web Store
-identity remain general-distribution requirements.
+beta packaging and GitHub prerelease distribution without modifying stupid-app. The helper has an
+approved Developer ID Application certificate and MAC_APP_DIRECT profile for the existing helper
+bundle identity and shared stores. Optimized arm64 helper 0.0.7 is signed with hardened runtime and
+secure timestamp; Apple accepted notarization and the stapled app passes Gatekeeper. Chrome 0.0.9 is
+packaged as a fixed-ID unpacked ZIP. Its helper was installed from the finalized release archive;
+installed version, exact native-host registration, codesign and Gatekeeper checks passed. An earlier
+release installation and independently recovered authenticated message signature passed in Chrome
+with existing pairing retained; the new badge and automatic-popup behavior has not had live Chrome
+acceptance. Clean-machine acceptance and a reserved Web Store identity remain general-distribution
+requirements.
 
 Chrome 0.0.9 uses a black arrow on a white square at 16/19/32/38 pixels for its
 toolbar icon. Its arrow is cropped closer than the app artwork so it fills roughly half
@@ -88,13 +91,14 @@ origin-scoped account-refresh notifications; the page resolves its native profil
 The app's home account is unchanged; successful connect selection retains the existing connection-
 default policy. Current source versions are Safari manifest 0.1.59, Chrome 0.0.9 and helper 0.0.7
 (protocol 3). Helper 0.0.7 includes the shared single-send transaction simulation preview;
-helper 0.0.6 remains protocol-compatible but cannot supply that summary. Helper 0.0.6 was
-the first published helper built from the watch-aware shared core, so it
-reads a registry containing watch-only groups instead of failing closed as helper 0.0.5 did. It passed
-Apple notarization, stapling and Gatekeeper verification and is installed locally; extension 0.0.7
-remains compatible with it. Chrome 0.0.7 live acceptance confirms the idle connected-account bar and
+helper 0.0.6 remains protocol-compatible but cannot supply that summary. It was the first
+published helper built from the watch-aware shared core, so it reads a registry containing
+watch-only groups instead of failing closed as helper 0.0.5 did. Chrome 0.0.7 live acceptance
+confirms the idle connected-account bar and
 grouped picker, with existing pairing retained. Live switch/disconnect mutation acceptance remains pending.
-GitHub prerelease `chrome-v0.0.8-beta.1` is the latest published Chrome beta before 0.0.9.
+GitHub prerelease `chrome-v0.0.9-beta.1` publishes extension 0.0.9 and notarized helper 0.0.7
+from source commit `91687e8a87a834188314e2cedd7684904562c0c2`; all four uploaded asset
+sizes and SHA-256 digests match local deliverables.
 Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
 version 1.0.0 (116), live for internal TestFlight with the single-send simulated asset-change

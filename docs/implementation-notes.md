@@ -50,6 +50,54 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-28 - Chrome 0.0.9 beta release
+
+### Summary
+
+- Committed and pushed source and public engineering notes as
+  `91687e8a87a834188314e2cedd7684904562c0c2`, excluding the unrelated
+  untracked backend directory. Packaged the fixed-ID Chrome extension 0.0.9 with
+  the enlarged black-on-white icon, badge reconciliation and revised popup timing,
+  plus the optimized shared-core helper 0.0.7 under protocol 3. No Apple bundle
+  identities, pairing data, wallet keys or grants were changed.
+- Reused the existing authorized Developer ID certificate and MAC_APP_DIRECT profile.
+  Apple accepted notarization of this exact helper submission; stapling, staple
+  validation, strict signature verification and Gatekeeper assessment passed.
+  Installed from the finalized helper archive without sudo. The installed version
+  and exact user-level Chrome native-host registration were verified.
+- Published GitHub prerelease
+  https://github.com/stephancill/stupid-wallet-v2/releases/tag/chrome-v0.0.9-beta.1
+  against the full source SHA with exactly the extension ZIP, notarized helper ZIP,
+  RELEASE-INSTALL.md and SHA256SUMS. No staging metadata, standalone profiles, or
+  credentials were uploaded. The signed helper necessarily embeds its authorized
+  distribution profile.
+
+### Verification
+
+- `uv run --no-project python ChromeExtension/package-release.py --profile
+  <existing-private-direct-profile> --identity <existing-Developer-ID-SHA1>` signed
+  the helper and staged the extension. `xcrun notarytool submit --wait` saved its
+  raw JSON response privately; an independent `xcrun notarytool info` returned
+  Accepted for that submission. `uv run --no-project python
+  ChromeExtension/finalize-release.py` stapled, validated, and packaged it.
+- Inspected both ZIPs: manifest 0.0.9, four exact toolbar PNGs, helper plist
+  0.0.7 (build 7), and the embedded authorized profile; all three SHA256SUMS
+  entries match their local files. The extracted release installer passed
+  codesign/Gatekeeper and installed the helper and native-host registration.
+- `gh release create --target <full-pushed-source-SHA> --prerelease --notes-file
+  <public-notes-file>` published the four explicit assets. `gh api` independently
+  confirmed the prerelease target and exact four filenames; every uploaded size
+  and GitHub SHA-256 digest, including SHA256SUMS itself, equals the local file.
+  The packaging Mac had no running Chrome process during this install.
+
+### Follow-Up
+
+- Reload the unpacked extension and dapp tabs in Chrome and run a fresh foreground
+  request to accept the revised automatic popup and badge behavior. Live Chrome
+  signing, transaction/batch broadcast, multi-profile, interruption, lock/sleep,
+  and clean-machine acceptance of this new build remain unproven. No TestFlight
+  update was requested or performed.
+
 ## 2026-09-28 - Chrome 0.0.9 beta preparation
 
 ### Summary
