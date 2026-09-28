@@ -101,6 +101,169 @@ struct TransactionSubmissionTests {
     #expect(resolvedTransaction["gasPrice"] == .string("0x3b9aca00"))
   }
 
+  @Test("simulation previews net native and ERC-20 changes without changing the request")
+  func simulatedAssetChanges() async throws {
+    let account = TransactionSigner().account
+    let token = "0x1111111111111111111111111111111111111111"
+    let counterparty = "0x2222222222222222222222222222222222222222"
+    let transfer = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    @Sendable func topic(_ address: String) -> JSONValue {
+      .string("0x" + String(repeating: "0", count: 24) + address.dropFirst(2).lowercased())
+    }
+    @Sendable func log(_ emitter: String, _ from: String, _ to: String, _ amount: UInt64)
+      -> JSONValue
+    {
+      .object([
+        "address": .string(emitter),
+        "topics": .array([.string(transfer), topic(from), topic(to)]),
+        "data": .string("0x" + String(format: "%064llx", amount)),
+      ])
+    }
+    let service = service { request in
+      let body = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
+      switch body.nestedString(at: ["method"]) {
+      case "eth_estimateGas": return rpcResponse(result: "0x5208")
+      case "eth_gasPrice": return rpcResponse(result: "0x3b9aca00")
+      case "eth_simulateV1":
+        guard case .object(let envelope) = body,
+          case .array(let parameters)? = envelope["params"],
+          case .object(let simulation)? = parameters.first,
+          simulation["traceTransfers"] == .bool(true),
+          parameters.last == .string("latest"),
+          case .array(let blocks)? = simulation["blockStateCalls"],
+          case .object(let block)? = blocks.first,
+          case .array(let calls)? = block["calls"],
+          case .object(let call)? = calls.first,
+          call["from"] == .string(account), call["to"] == .string(counterparty)
+        else { return rpcResponse(error: "bad simulation request") }
+        return rpcResponse(
+          result: .array([
+            .object([
+              "calls": .array([
+                .object([
+                  "status": .string("0x1"),
+                  "logs": .array([
+                    log(
+                      "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", account, counterparty,
+                      1_000_000_000_000_000_000),
+                    log(token, counterparty, account, 2_000_000),
+                    log(token, account, counterparty, 500_000),
+                    // ERC-721 Transfer has four topics; it is not a fungible change.
+                    .object([
+                      "address": .string(token),
+                      "topics": .array([
+                        .string(transfer), topic(counterparty), topic(account), .string("0x1"),
+                      ]),
+                      "data": .string("0x"),
+                    ]),
+                  ]),
+                ])
+              ])
+            ])
+          ]))
+      case "eth_call":
+        let selector: String?
+        if case .object(let envelope) = body,
+          case .array(let params)? = envelope["params"],
+          case .object(let request)? = params.first
+        {
+          selector = request["data"]?.stringValue
+        } else {
+          selector = nil
+        }
+        if selector == "0x313ce567" {
+          return rpcResponse(result: "0x" + String(repeating: "0", count: 63) + "6")
+        }
+        if selector == "0x95d89b41" {
+          return rpcResponse(
+            result: "0x" + String(repeating: "0", count: 62) + "20"
+              + String(repeating: "0", count: 63) + "4" + "55534443"
+              + String(repeating: "0", count: 56))
+        }
+        return rpcResponse(error: "unknown metadata")
+      default: return rpcResponse(error: "unexpected method")
+      }
+    }
+    let id = try await service.prepare(
+      method: "eth_sendTransaction",
+      params: .array([
+        .object(["to": .string(counterparty), "value": .string("0xde0b6b3a7640000")])
+      ]),
+      origin: "https://dapp.example")
+    let before = try #require(await service.store.record(id))
+    let summary = try #require(await service.summarize(request: id))
+    #expect(summary.rows.contains { $0.label == "Asset Change 1" && $0.value == "−1 ETH" })
+    #expect(summary.rows.contains { $0.label == "Asset Change 2" && $0.value == "+1.5 USDC" })
+    #expect(try await service.store.record(id)?.params == before.params)
+    #expect(try await service.store.record(id)?.payloadDigest == before.payloadDigest)
+  }
+
+  @Test("simulation rejection and unsupported RPC remain visible")
+  func simulationFailures() async throws {
+    for (response, message) in [
+      (
+        rpcResponse(
+          result: .array([.object(["calls": .array([.object(["status": .string("0x0")])])])])),
+        "Transaction reverted in simulation"
+      ),
+      (
+        rpcResponse(error: "method not found", code: -32601),
+        "Unsupported by selected RPC"
+      ),
+      (
+        rpcResponse(
+          result: .array([
+            .object([
+              "calls": .array([
+                .object([
+                  "status": .string("0x1"), "logs": .array([]),
+                ])
+              ])
+            ])
+          ])),
+        "No net fungible asset changes detected"
+      ),
+    ] {
+      let service = service { request in
+        let body = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
+        return body.nestedString(at: ["method"]) == "eth_simulateV1"
+          ? response : rpcResponse(result: "0x5208")
+      }
+      let id = try await service.prepare(
+        method: "eth_sendTransaction",
+        params: .array([.object(["to": .string("0x2222222222222222222222222222222222222222")])]),
+        origin: "https://dapp.example")
+      let summary = try #require(await service.summarize(request: id))
+      #expect(summary.rows.contains { $0.label == "Simulation" && $0.value == message })
+    }
+  }
+
+  @Test("oversized token metadata is ignored instead of crashing review")
+  func oversizedSimulationTokenSymbol() async {
+    TransactionURLProtocol.handler = { request in
+      let body = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
+      if case .object(let envelope) = body,
+        case .array(let params)? = envelope["params"],
+        case .object(let call)? = params.first,
+        call["data"] == .string("0x313ce567")
+      {
+        return rpcResponse(result: "0x" + String(repeating: "0", count: 63) + "6")
+      }
+      return rpcResponse(
+        result: "0x" + String(repeating: "0", count: 64)
+          + String(repeating: "f", count: 64))
+    }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [TransactionURLProtocol.self]
+    let metadata = await RPCTokenResolver(
+      client: RPCClient(session: URLSession(configuration: configuration)),
+      resolver: RPCResolver(overrides: ["1": URL(string: "https://rpc.example")!])
+    )
+    .tokenMetadata(chainID: "1", tokenAddress: "0x1111111111111111111111111111111111111111")
+    #expect(metadata?.symbol == nil)
+    #expect(metadata?.decimals == 6)
+  }
+
   @Test("quick successive approvals resolve consecutive pending nonces")
   func resolvesNonceAtEachApproval() async throws {
     let state = TransactionRPCState()

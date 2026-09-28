@@ -356,6 +356,22 @@ idb ui swipe 200 800 200 500 --duration 0.5 --udid <udid>
   populate `resolvedParams` or change the canonical request. Approval resolves nonce, gas,
   and fees again immediately before signing, so never treat the displayed estimate as the
   signed gas fields.
+- The single-send popup's Simulated asset changes section uses `eth_simulateV1` with
+  `traceTransfers: true` at `latest` on the selected RPC. Inspect the first block's only
+  call `status` and `logs`: synthetic native Transfer logs use emitter
+  `0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`; ERC-20 Transfer has three topics and
+  a 32-byte amount. Four-topic ERC-721 Transfers must not be counted as fungible changes.
+  An RPC `-32601`, failed call, or empty/malformed log result should surface as an
+  explicit simulation state, never as an invented zero balance. Simulation is display-only;
+  compare the pending record digest before/after review when diagnosing mutation concerns.
+- When a live preview reports `Unsupported by selected RPC`, test the exact configured chain:
+  the default Ethereum endpoint returned `-32601` in a September 2026 simulator probe while
+  the default Base endpoint accepted a public `eth_simulateV1` transfer probe. A Base send
+  from an unfunded account instead returned `-38014` (`insufficient funds for gas * price +
+  value`); this is not a parser failure. The containing-app portfolio may show a funded
+  watch-only home account while the connected dapp signer is a different unfunded account.
+  Check the canonical request's account and chain and its actual onchain balance without
+  printing user-linked addresses before assuming the portfolio balance funds the request.
 - Only the oldest pending request is approvable. Never reorder or mutate persisted files.
 - **Empty popup with a valid fresh pending record:** native `list` may be failing the whole
   store, not returning zero. A retained `PendingRequests/*.json` written by an older build

@@ -82,7 +82,7 @@ No signature or authentication is involved in an ordinary connect. Disconnect at
 reviewed account and revokes its grant without selecting another retained grant. Both actions emit
 origin-scoped account-refresh notifications; the page resolves its native profile-bound snapshot.
 The app's home account is unchanged; successful connect selection retains the existing connection-
-default policy. Current source versions are Safari manifest 0.1.57, Chrome 0.0.8 and helper 0.0.6
+default policy. Current source versions are Safari manifest 0.1.58, Chrome 0.0.8 and helper 0.0.6
 (protocol 3). Helper 0.0.6 is the first published helper built from the watch-aware shared core, so it
 reads a registry containing watch-only groups instead of failing closed as helper 0.0.5 did. It passed
 Apple notarization, stapling and Gatekeeper verification and is installed locally; extension 0.0.7
@@ -104,7 +104,7 @@ portfolio state, and portfolio swipe-to-Send, which sit on the token-balances me
 custom tokens, the USD portfolio, persistent price SWR, 24-hour price and change expiry), the layout
 and portfolio-change fixes, and always-two-decimal USD values. Builds 108 through 113 were the
 preceding internal builds. No external beta has been submitted for any of them. The Safari extension
-manifest is 0.1.57.
+manifest is 0.1.58.
 
 Protocol version 3 requires one-time Chrome-profile pairing before native approval. The extension
 stores a non-exportable P-256 signing CryptoKey in its origin-owned IndexedDB; the helper stores only
@@ -344,7 +344,16 @@ standard-params work:
   the full address as hover metadata. Native-value quantities are formatted in the network currency
   rather than shown as
   hexadecimal, and explicit add-network Chain IDs are decimal; nonce, gas limit, and raw
-  fee fields are not exposed in the popup, while simulation remains deferred.
+  fee fields are not exposed in the popup. Single `eth_sendTransaction` reviews now run a
+  display-only `eth_simulateV1` against the selected RPC at `latest` with `traceTransfers`.
+  The popup renders account-relative net native and ERC-20 changes derived from successful
+  fungible Transfer logs in a separate Simulated asset changes section. Token amounts use
+  onchain `symbol()`/`decimals()` where available; otherwise the review shows raw base units
+  and the token address. A reverted call, unsupported RPC, malformed result, or missing
+  net fungible change is stated explicitly. ERC-721/1155 and non-event balance changes are not
+  covered, and simulation is not a guarantee of the final transaction outcome. The canonical
+  pending request and approval/signing inputs are never changed by this preview; batch-call
+  simulation remains pending.
   Clear-signing descriptors are fetched+cached from the public `ethereum/clear-signing-erc7730-registry`
   and applied by selector only when the descriptor's binding matches the chain/destination. Generic chain rows resolve through the shared `NetworkStore` and display the
   persisted network name, falling back to `Chain N` for unknown metadata; explicit add-network
@@ -1427,9 +1436,9 @@ Implemented after the Secure Wallet Core gates passed:
 Still deferred:
 
 - Reverse ENS account-name display and avatars (forward recipient resolution is implemented).
-- Transaction simulation and richer value previews.
+- Batch-call simulation and balance-diff previews beyond the single-send fungible
+  Transfer-log summary.
 - ABI and contract metadata resolution.
-- ERC-7730 clear-signing previews.
 - Rich activity detail and status surfaces.
 
 Deferred functionality must not distort the core request, approval, key-storage, or RPC
@@ -1877,8 +1886,9 @@ Exit conditions:
 
 SIWE, EIP-5792 atomic calls, and wallet-owned EIP-7702 authorization management are
 implemented behind the earlier canonical-request, native-approval, origin/profile,
-keychain-authentication, and RPC-resolution boundaries. Simulation, reverse ENS/avatar display, ABI metadata,
-and clear signing remain separate later work.
+keychain-authentication, and RPC-resolution boundaries. Single-send Transfer-log simulation
+and ERC-7730 calldata clear signing are implemented; batch simulation, reverse ENS/avatar
+display, and richer metadata remain separate later work.
 
 Current acceptance status (2026-08-25): deterministic vectors, native policy, Safari
 routing, popup summaries, SIWE signing, all-configured-network capability reporting, runtime

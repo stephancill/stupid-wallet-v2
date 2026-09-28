@@ -215,9 +215,16 @@
     );
     const transactionRows =
       kind === "send"
-        ? detailRows.filter((row) => !["Chain", "Value", "Network Fee"].includes(row.label))
+        ? detailRows.filter(
+            (row) =>
+              !["Chain", "Value", "Network Fee", "Simulation"].includes(row.label) &&
+              !/^Asset Change \d+$/.test(row.label),
+          )
         : [];
     const batchRows = kind === "batch" ? batchCallRows(detailRows) : [];
+    const assetRows = detailRows.filter(
+      (row) => row.label === "Simulation" || /^Asset Change \d+$/.test(row.label),
+    );
     // A decoded clear-signing intent replaces the raw calldata: when one is present,
     // drop the raw "Data" row so the human-readable intent/amount/to carry the review.
     const clearSigned = transactionRows.some((row) => /(^| )Intent$/.test(row.label));
@@ -227,6 +234,7 @@
     const summaryRows = detailRows.filter(
       (row) =>
         !transactionRows.includes(row) &&
+        !assetRows.includes(row) &&
         !isBatchCallRow(row) &&
         !(kind === "batch" && row.label === "Calls"),
     );
@@ -239,6 +247,13 @@
 
     if (visibleTransactionRows.length > 0) appendSection(body, "Details", visibleTransactionRows);
     if (batchRows.length > 0) appendBatchSection(body, batchRows);
+    if (assetRows.length > 0) {
+      appendSection(
+        body,
+        "Simulated asset changes",
+        assetRows.map((row) => ({ label: "", value: row.value })),
+      );
+    }
 
     if (domainRows.length > 0) {
       appendSection(
@@ -355,7 +370,7 @@
     const list = document.createElement("div");
     list.className = "call-list";
     for (const call of calls) {
-      const rows = [];
+      let rows = [];
       for (const item of call) {
         const value = item.value == null ? "" : String(item.value);
         if (value === "") continue;

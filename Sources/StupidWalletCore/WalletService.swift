@@ -817,6 +817,15 @@ public actor WalletService {
     if record.kind == .send || record.kind == .batch {
       rows.append(("Network Fee", await estimatedNetworkFee(for: record)))
     }
+    if record.kind == .send, case .array(let items) = record.params,
+      case .object(let transaction)? = items.first
+    {
+      rows.append(
+        contentsOf: await AssetChangePreview.rows(
+          transaction: transaction, account: record.account, chainID: record.chainId,
+          client: rpcClient, resolver: resolver,
+          tokenResolver: RPCTokenResolver(client: rpcClient, resolver: resolver)))
+    }
     let clearRows = await decodedClearRows(for: record)
     if let feeIndex = rows.firstIndex(where: { $0.0 == "Network Fee" }) {
       if !clearRows.isEmpty { rows.insert(contentsOf: clearRows, at: feeIndex) }
@@ -1109,7 +1118,7 @@ public actor WalletService {
     return words.reversed().map(UInt8.init)
   }
 
-  private static func nativeCurrencySymbol(chainID: String) -> String {
+  static func nativeCurrencySymbol(chainID: String) -> String {
     switch chainID {
     case "1", "10", "8453", "42161": return "ETH"
     case "56": return "BNB"

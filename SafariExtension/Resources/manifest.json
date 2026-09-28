@@ -1,7 +1,7 @@
 {
   "name": "stupid wallet",
   "description": "a simple ethereum wallet for the web",
-  "version": "0.1.57",
+  "version": "0.1.58",
   "manifest_version": 3,
   "minimum_chrome_version": "111",
   "icons": {

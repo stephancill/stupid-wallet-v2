@@ -183,8 +183,9 @@ public struct RPCTokenResolver: ClearSigningResolving {
       data.count >= 64
     else { return nil }
     // ABI string result: offset word at [0..32] (32), length at [32..64], bytes thereafter.
-    let length = Int(readWord(data[32..<64]))
-    guard length >= 0, 64 + length <= data.count else { return nil }
+    guard let length = Int(exactly: readWord(data[32..<64])),
+      length <= 64, length <= data.count - 64
+    else { return nil }
     return String(data: data.subdata(in: 64..<(64 + length)), encoding: .utf8)
   }
 

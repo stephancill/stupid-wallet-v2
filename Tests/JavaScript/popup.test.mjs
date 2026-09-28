@@ -201,6 +201,8 @@ test("popup renders addresses, collapses queued requests, and expands raw callda
                     { label: "Chain", value: "1" },
                     { label: "To", value: target },
                     { label: "Data", value: "0x1234" },
+                    { label: "Asset Change 1", value: "−1 ETH" },
+                    { label: "Asset Change 2", value: "+1.5 USDC" },
                   ],
                 },
               },
@@ -245,6 +247,13 @@ test("popup renders addresses, collapses queued requests, and expands raw callda
   const sendAddress = tray.querySelector(".request-send").querySelector(".message-value");
   assert.equal(sendAddress.tagName, "div");
   assert.equal(sendAddress.querySelector(".address-value").textContent, "0x1111...1111");
+  const send = tray.querySelector(".request-send");
+  assert.equal(send.querySelectorAll(".section").length, 2);
+  assert.ok(send.textContent.includes("Simulated asset changes"));
+  assert.deepEqual(
+    send.querySelectorAll(".section-row").map((row) => row.textContent),
+    ["To0x1111...1111", "Data0x1234", "−1 ETH", "+1.5 USDC"],
+  );
 
   const queued = tray.querySelector(".queued");
   const heading = queued.querySelector(".request-heading");

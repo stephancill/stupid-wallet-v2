@@ -75,6 +75,7 @@
 		9357D3A36169BA714A97D60B /* Transaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E20706F260F9202D3E7C5EB /* Transaction.swift */; };
 		938F2D1E665D79C42F5D6725 /* Simple7702AccountDeploymentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2B41A0AE3E8A03EC6B65126 /* Simple7702AccountDeploymentStore.swift */; };
 		99D7467C95C87A5450F5D0D3 /* ProtectedOperationCancellation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BD9635F1CD6F9E23797583C /* ProtectedOperationCancellation.swift */; };
+		9BF52CA39A64F0EC33B869F5 /* AssetChangePreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E9F6CC139F3ED4C9684E9DF /* AssetChangePreview.swift */; };
 		9F36DE0E57219CBE3348EA45 /* Decoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92CA757ABDC28B3BAA2F4BD9 /* Decoder.swift */; };
 		9FD71AEB3DCFA2D98E8B1CC0 /* EthereumKeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5E47756A5B4E31A7CF31CCD /* EthereumKeys.swift */; };
 		A125511002B5EB0809A814BF /* ABI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F9B33784564DDDC8937AF74 /* ABI.swift */; };
@@ -179,6 +180,7 @@
 		1569C29C0F6B87996B445DFE /* RLP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RLP.swift; sourceTree = "<group>"; };
 		1D586C2F9CF68B167108BF87 /* BIP39EnglishWords.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BIP39EnglishWords.swift; sourceTree = "<group>"; };
 		1E20706F260F9202D3E7C5EB /* Transaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Transaction.swift; sourceTree = "<group>"; };
+		1E9F6CC139F3ED4C9684E9DF /* AssetChangePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetChangePreview.swift; sourceTree = "<group>"; };
 		202D3C32FBAF0B5595EB6198 /* OutputToken.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputToken.swift; sourceTree = "<group>"; };
 		22021B72430A70D54FEDB8D0 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		25F9B9DB8131BF65928E8F70 /* SIWE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SIWE.swift; sourceTree = "<group>"; };
@@ -323,6 +325,7 @@
 				8E45E9E7D85BF3221223BC9B /* ActivityStore.swift */,
 				874047B73F282B7EC9DE3A3A /* ApprovalExecutor.swift */,
 				0D104B3BE1DFD7DB59CA3B42 /* ApprovalRequest.swift */,
+				1E9F6CC139F3ED4C9684E9DF /* AssetChangePreview.swift */,
 				AE634A5140D3D8EED65CB73D /* AuthorizationService.swift */,
 				8B009675BC95B88887900BE5 /* BalanceCache.swift */,
 				F7FA855888B11D85C8C5623A /* BIP39.swift */,
@@ -678,6 +681,7 @@
 				15F00B904CD3379D6F2D94C3 /* ActivityStore.swift in Sources */,
 				785C9435418E342F7D122585 /* ApprovalExecutor.swift in Sources */,
 				ED09278CD07A5FBF68135C07 /* ApprovalRequest.swift in Sources */,
+				9BF52CA39A64F0EC33B869F5 /* AssetChangePreview.swift in Sources */,
 				E5A93176A5737CB9710979B2 /* AuthorizationService.swift in Sources */,
 				E14B1C0FF9007C4A0B09AB16 /* BIP39.swift in Sources */,
 				E5C2197689AA919D3EBA6A82 /* BIP39EnglishWords.swift in Sources */,

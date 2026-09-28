@@ -50,6 +50,95 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-28 - Wi-Fi iPhone development install
+
+### Summary
+
+- Built, development-signed, installed, and launched the current app and nested Safari
+  extension on the paired iPhone over Wi-Fi with `stupid-app`. The installed source includes
+  the transaction simulation popup preview and Safari resource manifest 0.1.58.
+
+### Verification
+
+- `stupid-app device list` found the saved network pairing; `git diff --check` passed.
+- `stupid-app run --network --udid <paired-device> --sudo /usr/bin/sudo` completed its
+  build, signing, packaging, network installation, and containing-app launch. It did not
+  exercise the Safari popup or broadcast a transaction on the iPhone.
+
+### Follow-Up
+
+- Reopen or restart Safari as needed to activate the updated extension content, then
+  review a pending transaction on a funded account and simulation-capable RPC before
+  claiming live asset-change preview acceptance.
+
+## 2026-09-28 - Live simulator popup preview investigation
+
+### Summary
+
+- Opened the current Safari popup from the prototype dapp on the preferred simulator and
+  confirmed the new Simulated asset changes section renders on a real pending send. The
+  selected Ethereum RPC reported the method unsupported. On Base, the section reported
+  an RPC rejection for a transfer from the connected account; a separate read-only probe
+  identified insufficient funds for its value. The containing-app portfolio's funded
+  home account was watch-only, distinct from the unfunded connected signer.
+- Rejected both pending sends without authentication or broadcast. Restored the fixture's
+  original zero-value self-send source, the simulator's original Ethereum chain, and the
+  prior disconnected state for the temporary localhost origin.
+
+### Verification
+
+- Live simulator popup OCR showed the simulation section and the explicit unavailable
+  states on both networks. A public Base RPC probe produced a successful native-transfer
+  event for a synthetic address, but did not prove a populated preview for the unfunded
+  simulator signer. Read-only chain-balance probes distinguished the connected signer from
+  the watch-only home account without exposing either address in public notes.
+- `oxfmt --check` and `oxlint` passed on the temporarily edited TypeScript fixture before
+  it was restored. No fixture source diff remains.
+
+### Follow-Up
+
+- For a populated live preview, use a funded key-backed account on a selected RPC that
+  supports `eth_simulateV1`; queue a small transfer, inspect the popup, then reject it.
+  Physical-device and Chrome-helper acceptance remain separate.
+
+## 2026-09-28 - Simulated asset changes in transaction review
+
+### Summary
+
+- The native summary for a single pending `eth_sendTransaction` makes a read-only
+  `eth_simulateV1` call through the selected chain RPC with `traceTransfers`, then nets
+  successful native/ERC-20 Transfer logs for the signing account. The Safari/Chrome shared
+  popup renders the changes in a dedicated section. The review states a revert, unsupported
+  endpoint, failed/malformed response, or absence of net fungible changes explicitly.
+- Token metadata is read through the existing RPC resolver. Unknown decimals display exact
+  raw base units and a contract address instead of guessing. Non-fungible transfers and
+  balance changes without standard transfer events are not inferred. The canonical pending
+  request, digest, fee resolution, and signing authority are unchanged. Safari's resource
+  version is 0.1.58; the Mac XcodeGen project includes the new core source.
+- Bounded ERC-20 symbol decoding at 64 bytes and checked the length conversion so an
+  untrusted oversized ABI string cannot crash the review during simulation metadata reads.
+
+### Verification
+
+- A public zero-value Base `eth_simulateV1` probe succeeded on the configured default RPC;
+  a separate public native-value probe confirmed the synthetic native Transfer log shape.
+- `swift test` passed 440 tests across 49 suites, including native/ERC-20 netting, ERC-721
+  exclusion, request immutability, RPC rejection, simulation revert, and oversized metadata.
+  `node --test Tests/JavaScript/*.test.mjs` passed 39 tests including popup section rendering.
+- `xcrun swift-format lint --strict` and the repository-local `oxfmt --check`/`oxlint` passed
+  on changed Swift/JavaScript. `node ChromeExtension/build.mjs` succeeded.
+- `stupid-app doctor` reported zero failures/warnings; `stupid-app build` succeeded.
+- `stupid-app run --simulator --udid <preferred-simulator>` rebuilt, reinstalled and
+  launched the containing app and Safari extension. A live populated popup review was not
+  performed on the simulator in this pass.
+
+### Follow-Up
+
+- Verify a populated simulated transfer in the actual Safari popup and rebuild the macOS
+  Chrome helper before expecting it in Chrome. Add batch-call simulation separately, with
+  EIP-7702 execution/state-override parity. A simulated event is indicative, not a balance
+  diff or an accepted-network transaction proof.
+
 ## 2026-09-27 - External TestFlight build 1.0.0 (115)
 
 ### Summary
