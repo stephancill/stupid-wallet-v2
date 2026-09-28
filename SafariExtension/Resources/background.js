@@ -4,6 +4,7 @@
 (() => {
   const NATIVE_APP_ID = "co.za.stephancill.stupid-wallet";
   const pending = new Set();
+  let badgeRevision = 0;
 
   // Method kinds that require the native approval surface. Network switching is handled
   // immediately below after native authorization; adding a chain still requires review.
@@ -72,7 +73,26 @@
   }
 
   function updateBadge() {
+    badgeRevision += 1;
     setBadge(pending.size === 0 ? "" : String(pending.size));
+  }
+
+  function reconcileBadge(nativeList, revision) {
+    if (
+      !globalThis.walletChromeContext ||
+      revision !== badgeRevision ||
+      !nativeList?.ok ||
+      !Array.isArray(nativeList.data?.pending)
+    )
+      return;
+    pending.clear();
+    for (const item of nativeList.data.pending) pending.add(item.id);
+    updateBadge();
+  }
+
+  if (globalThis.walletChromeContext) {
+    const revision = badgeRevision;
+    void native({ action: "list" }).then((list) => reconcileBadge(list, revision));
   }
 
   async function activeChain() {
@@ -297,7 +317,9 @@
         }
         case "popup.list":
           // Read the durable native store (survives worker suspension).
+          const revision = badgeRevision;
           const nativeList = await native({ action: "list" });
+          reconcileBadge(nativeList, revision);
           sendResponse(
             globalThis.walletChromeContext
               ? nativeList
@@ -539,13 +561,16 @@
         return;
       }
       const requestId = prepared.data.requestId;
-      if (globalThis.walletChromeContext)
-        await globalThis.walletChromeContext.remember(requestId, sender);
+      const openReview = globalThis.walletChromeContext
+        ? await globalThis.walletChromeContext.remember(requestId, sender)
+        : false;
       pending.add(requestId);
       updateBadge();
       // Hand the requestId to the bridge immediately; the bridge then polls the
       // native store for the result, so completion survives worker suspension.
       envelope(sendResponse, { ok: true, pendingId: requestId });
+      if (openReview)
+        void globalThis.walletChromeContext.openReview({ requestId, tabId: sender.tab.id });
       return;
     }
 
@@ -593,9 +618,13 @@
     }
     const res = await native({ action: "get", payload: { requestId: message.id } });
     if (!res.ok || !res.data) {
-      pending.delete(message.id);
-      updateBadge();
-      sendResponse({ __missing: true });
+      if (res?.error === "not found") {
+        pending.delete(message.id);
+        updateBadge();
+        sendResponse({ __missing: true });
+      } else {
+        sendResponse({ __pending: true });
+      }
       return;
     }
     if (

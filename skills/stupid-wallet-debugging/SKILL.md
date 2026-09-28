@@ -674,6 +674,14 @@ stupid-app run --simulator --udid 6552DF1D-95CE-48E3-801F-8F80F0AA8D29
   new unpacked popup files are talking to an already-running old worker. Check Chrome's displayed
   extension version, reload the extension, and reload the dapp's isolated bridge. Rebuilding files
   alone does not update the running worker. Verify the installed helper version separately.
+- In Chrome, an icon badge without a native pending card can be stale service-worker state.
+  Check the native App Group `PendingRequests/*.json` statuses without printing params or
+  account details; an expired or decided record is not approvable. Opening the popup (or
+  restarting the worker) reconciles the badge with the native profile-filtered pending list.
+  Never delete or rewrite canonical records to clear a badge. A helper transport failure on
+  `get` is not a "not found" response and must not end the dapp promise as missing; keep
+  polling after a transient failure. If automatic Chrome review is refused, the toolbar
+  badge remains the manual entry point; duplicate canonical preparation can retry presentation.
 - `Could not establish connection. Receiving end does not exist.` from idle page inspection means
   `tabs.sendMessage` could not reach the isolated bridge. Reload the dapp page after extension
   installation/reload, then reopen the popup. Catch this rejection at document-context lookup and

@@ -56,17 +56,21 @@ Installation from the release ZIP and an independently recovered authenticated m
 passed in Chrome with existing pairing retained. Clean-machine acceptance and a reserved Web Store
 identity remain general-distribution requirements.
 
-Chrome artifacts 0.0.5 and later use a light #f2f2f2 toolbar arrow at 16/19/32/38 pixels for dark browser
-chrome. Chrome-only assets preserve the original alpha masks; general app/discovery and Safari icons
-retain their existing appearance. The icon variant is static rather than automatic theme detection.
+Chrome 0.0.9 uses a black arrow on a white square at 16/19/32/38 pixels for its
+toolbar icon. Its arrow is cropped closer than the app artwork so it fills roughly half
+the icon width. General app/discovery and Safari icons retain their existing appearance.
 
 Chrome artifact 0.0.3 automatically opens the real toolbar popup once after a new canonical request's
 route is persisted, only for the current document in the active tab of a focused window. Chrome 127+
 supports this API for ordinary extensions. Older supported Chrome builds and browser refusal retain
 the existing toolbar badge/manual review flow; presentation failure never drops a pending request.
 Chrome artifact 0.0.6 omits the Safari in-page pending banner while preserving durable polling and
-completion. Safari retains its existing notice. Background tabs and duplicate route registration do not reopen the popup. Physical Chrome acceptance
-confirmed automatic message review opening without a toolbar click, followed by rejection.
+completion. Safari retains its existing notice. Background tabs and successfully presented duplicate
+route registration do not reopen the popup; a refused open can be retried on duplicate preparation.
+Popup opening no longer delays returning the pending ID to the page. The worker reconciles its badge
+with native pending state on startup and popup listing, and a temporary native status failure does not
+mark a request missing. Physical Chrome acceptance confirmed the earlier automatic message review
+opening without a toolbar click, followed by rejection; the revised flow awaits live acceptance.
 
 The shared idle popup now has a fixed account bar for the active HTTP(S) page. It shows the
 connected account's label/blockie, offers the grouped picker to connect or switch, and provides
@@ -82,14 +86,16 @@ No signature or authentication is involved in an ordinary connect. Disconnect at
 reviewed account and revokes its grant without selecting another retained grant. Both actions emit
 origin-scoped account-refresh notifications; the page resolves its native profile-bound snapshot.
 The app's home account is unchanged; successful connect selection retains the existing connection-
-default policy. Current source versions are Safari manifest 0.1.58, Chrome 0.0.8 and helper 0.0.6
-(protocol 3). Helper 0.0.6 is the first published helper built from the watch-aware shared core, so it
+default policy. Current source versions are Safari manifest 0.1.59, Chrome 0.0.9 and helper 0.0.7
+(protocol 3). Helper 0.0.7 includes the shared single-send transaction simulation preview;
+helper 0.0.6 remains protocol-compatible but cannot supply that summary. Helper 0.0.6 was
+the first published helper built from the watch-aware shared core, so it
 reads a registry containing watch-only groups instead of failing closed as helper 0.0.5 did. It passed
 Apple notarization, stapling and Gatekeeper verification and is installed locally; extension 0.0.7
 remains compatible with it. Chrome 0.0.7 live acceptance confirms the idle connected-account bar and
 grouped picker, with existing pairing retained. Live switch/disconnect mutation acceptance remains pending.
-GitHub prerelease `chrome-v0.0.7-beta.1` publishes the previous artifacts from `c499181`; all four
-uploaded asset digests match local files. Build 101 was uploaded and live App Store Connect status
+GitHub prerelease `chrome-v0.0.8-beta.1` is the latest published Chrome beta before 0.0.9.
+Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
 version 1.0.0 (116), live for internal TestFlight with the single-send simulated asset-change
 preview. Build 116 is `VALID` and internal `IN_BETA_TESTING` in live App Store Connect, but
@@ -106,7 +112,7 @@ portfolio state, and portfolio swipe-to-Send, which sit on the token-balances me
 custom tokens, the USD portfolio, persistent price SWR, 24-hour price and change expiry), the layout
 and portfolio-change fixes, and always-two-decimal USD values. Builds 108 through 113 were the
 preceding internal builds. No external beta has been submitted for any of them. The Safari extension
-manifest is 0.1.58.
+manifest is 0.1.59.
 
 Protocol version 3 requires one-time Chrome-profile pairing before native approval. The extension
 stores a non-exportable P-256 signing CryptoKey in its origin-owned IndexedDB; the helper stores only

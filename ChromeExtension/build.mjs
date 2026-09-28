@@ -13,15 +13,15 @@ await mkdir(output, { recursive: true });
 const source = resolve(root, "SafariExtension/Resources");
 const manifest = JSON.parse(await readFile(resolve(source, "manifest.json"), "utf8"));
 manifest.name = "stupid wallet";
-manifest.version = "0.0.8";
+manifest.version = "0.0.9";
 manifest.permissions = [...new Set([...manifest.permissions, "webNavigation"])];
 manifest.minimum_chrome_version = "111";
 manifest.incognito = "not_allowed";
 manifest.action.default_icon = Object.fromEntries(
-  [16, 19, 32, 38].map((size) => [String(size), `toolbar-light-${size}.png`]),
+  [16, 19, 32, 38].map((size) => [String(size), `toolbar-white-${size}.png`]),
 );
 for (const size of [16, 19, 32, 38]) {
-  const file = `toolbar-light-${size}.png`;
+  const file = `toolbar-white-${size}.png`;
   await copyFile(resolve(root, "ChromeExtension/icons", file), resolve(output, file));
 }
 manifest.key = (

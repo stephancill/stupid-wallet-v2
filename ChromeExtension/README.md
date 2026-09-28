@@ -3,7 +3,7 @@
 The installed Chrome extension connects to the existing Stupid Wallet on this Mac. It supports the
 shared WalletService method set and requires native authentication for signing. Local connection,
 RPC, message signing and typed-data signing passed; both signatures independently recovered to the
-selected account. Transaction/batch broadcast and public distribution remain unverified.
+selected account. Transaction/batch broadcast and clean-machine installation remain unverified.
 
 ## Build and install locally
 
@@ -51,7 +51,7 @@ port disconnects never replay approvals. Incognito is denied. Chrome inherits no
 Pairing protects against an unpaired caller imitating the native protocol. It does not protect against
 malware controlling Chrome or stealing the browser credential: non-exportability is a browser API
 restriction, not guaranteed hardware-backed storage. Fresh wallet authentication remains mandatory.
-Use extension 0.0.8 with helper 0.0.6; protocol 2 is intentionally incompatible.
+Use extension 0.0.9 with helper 0.0.7; protocol 2 is intentionally incompatible.
 
 Helper 0.0.6 is the first published helper built from the watch-aware shared core. Helper 0.0.5
 rejected any registry containing the `watchOnly` group kind, so the Chrome integration reported an
@@ -112,12 +112,15 @@ for the beta release. Apple Development suffices for the isolated local
 transport proof, but does not establish notarized distribution or production keychain access.
 
 
-The Chrome toolbar uses a light arrow variant for dark browser themes; assets at 16/19/32/38 pixels
-live in `ChromeExtension/icons`. General extension and Safari icons retain their existing design.
+The Chrome toolbar uses a black arrow on a white square at 16/19/32/38 pixels;
+assets live in `ChromeExtension/icons`. General extension and Safari icons retain their existing design.
 
 Chrome opens the toolbar review popup for new requests from the active tab in a focused window.
 The Chrome build omits Safari’s in-page pending banner. If Chrome refuses automatic opening,
-the pending badge and toolbar button remain available; request polling continues normally.
+the pending badge and toolbar button remain available; a retry of the same canonical request
+can try opening again. The worker reconciles its badge with the native pending list after
+restart and when the popup opens, so expired or already-decided requests do not leave a stale
+count. Request polling continues normally through transient helper errors.
 
 ## Beta release commands
 
@@ -138,5 +141,6 @@ app necessarily embeds its Apple-authorized direct-distribution profile.
 The idle popup shows the current page's connected account. Choose it to connect/switch accounts,
 or use Disconnect to revoke the displayed account. These controls use the same canonical native
 connection path and emit accountsChanged to the page. Reopen the popup after page navigation.
-Chrome 0.0.8 needs helper 0.0.6. Helper 0.0.6 keeps protocol 3 and the existing identities; it only
-adds watch-aware registry support, which extension 0.0.7 also works with.
+Chrome 0.0.9 ships with helper 0.0.7. Helper 0.0.7 retains protocol 3 and the existing
+identities and includes the current shared core's transaction simulation preview. Existing
+helper 0.0.6 remains protocol-compatible but does not provide that preview.

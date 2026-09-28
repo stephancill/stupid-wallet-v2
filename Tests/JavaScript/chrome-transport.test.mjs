@@ -332,22 +332,32 @@ test("auto review opens once for a current foreground document and preserves rou
   };
   const sender = { tab: { id: 1 }, documentId: "doc", origin: "https://example.com" };
   const review = h.context.walletChromeContext;
-  await review.remember("first", sender);
-  await review.remember("first", sender);
+  assert.equal(await review.remember("first", sender), true);
+  await review.openReview({ requestId: "first", tabId: 1 });
+  assert.equal(await review.remember("first", sender), false);
   assert.deepEqual(opens, [7]);
   active = false;
-  await review.remember("background", sender);
+  assert.equal(await review.remember("background", sender), true);
+  await review.openReview({ requestId: "background", tabId: 1 });
   active = true;
   focused = false;
-  await review.remember("unfocused", sender);
+  assert.equal(await review.remember("unfocused", sender), true);
+  await review.openReview({ requestId: "unfocused", tabId: 1 });
   focused = true;
-  await review.remember("stale", { ...sender, documentId: "old-doc" });
+  assert.equal(await review.remember("stale", { ...sender, documentId: "old-doc" }), true);
+  await review.openReview({ requestId: "stale", tabId: 1 });
   assert.deepEqual(opens, [7]);
   h.api.action.openPopup = async () => {
     throw new Error("Browser refused");
   };
-  await review.remember("refused", sender);
+  assert.equal(await review.remember("refused", sender), true);
+  await review.openReview({ requestId: "refused", tabId: 1 });
   assert.ok(h.storage["route:refused"]);
+  assert.equal(await review.remember("refused", sender), true);
+  h.api.action.openPopup = async ({ windowId }) => opens.push(windowId);
+  await review.openReview({ requestId: "refused", tabId: 1 });
+  assert.equal(await review.remember("refused", sender), false);
+  assert.deepEqual(opens, [7, 7]);
 });
 
 test("paired approval signs only the reviewed request binding and native nonce", async () => {

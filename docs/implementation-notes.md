@@ -50,6 +50,99 @@ Use this entry template:
 - Remaining risks, failures, or next work.
 ```
 
+## 2026-09-28 - Chrome 0.0.9 beta preparation
+
+### Summary
+
+- Prepared the next fixed-ID Chrome extension beta from the pending badge/popup fixes,
+  black-on-white enlarged toolbar artwork, and the current shared Safari popup. Set the
+  macOS helper's marketing/build versions to 0.0.7/7 in both local and distribution
+  packaging and the release archive name, because the shared core has changed since
+  helper 0.0.6 was published. Protocol 3 and shared wallet identities remain unchanged.
+- The new helper includes the single-send simulated asset-change summary; the previous
+  helper remains protocol-compatible but does not provide that preview. The release
+  still requires Developer ID signing, notarization, archive inspection, and Chrome
+  acceptance before publication can be claimed.
+
+### Verification
+
+- `bun install --frozen-lockfile` in `ChromeExtension/`: no dependency changes.
+  `node ChromeExtension/build.mjs` succeeded; `node --test Tests/JavaScript/*.test.mjs`
+  passed 43 tests; configured `oxfmt --check`/`oxlint` passed on changed JavaScript.
+- `swift build -c release --product StupidWalletChromeHost` succeeded and
+  `swift test --quiet` passed 440 tests in 49 suites. `stupid-app doctor` reported
+  zero failures/warnings; `stupid-app build` succeeded and `stupid-app run --simulator
+  --udid <preferred-simulator>` reinstalled and launched the app.
+- Python compilation, installer shell syntax, and `git diff --check` passed.
+
+### Follow-Up
+
+- Sign and notarize the exact optimized helper build, inspect finalized archives,
+  publish four public deliverables against the pushed source commit, and verify
+  uploaded checksums. Live Chrome review of the changed auto-open behavior remains open.
+
+## 2026-09-28 - Larger Chrome toolbar arrow
+
+### Summary
+
+- Enlarged the black arrow in the four Chrome-only white-background toolbar PNGs.
+  ImageMagick crops a centered 560-by-560 square from the existing 1024-pixel app
+  artwork before downsampling; the arrow now spans about half the icon width and
+  two-thirds of its height instead of appearing small within the original padding.
+  The white background, icon dimensions, fixed extension identity, and Chrome source
+  version 0.0.9 are retained.
+
+### Verification
+
+- ImageMagick confirmed 16/19/32/38-pixel opaque PNGs with white corners and arrow
+  bounds of 7x11, 9x13, 16x22, and 19x26 pixels respectively. Visually inspected the
+  38-pixel asset.
+- `node ChromeExtension/build.mjs` regenerated the unpacked extension with the revised
+  assets; `git diff --check` passed.
+
+### Follow-Up
+
+- Reload the unpacked extension in Chrome to see the revised toolbar artwork.
+
+## 2026-09-28 - Chrome pending badge, popup opening, and toolbar icon
+
+### Summary
+
+- Read-only inspection of the Mac's App Group pending-record statuses found no active native
+  pending request. The apparent stuck count was consistent with a service-worker badge that
+  had not been reconciled after terminal/expired native state. Chrome now rebuilds its badge
+  from the profile-filtered native pending list at worker startup and when the popup lists
+  requests; a racing local update takes precedence over an older list response. A transient
+  helper error while polling `get` is no longer mistaken for an explicit `not found` result.
+- Chrome returns the canonical pending ID to the page before attempting `action.openPopup`,
+  so popup presentation cannot delay the dapp's polling. Successful presentation is recorded
+  with the browser-only route; if Chrome refused the opening, a duplicate canonical prepare
+  can try again while the current document remains valid. Active-tab, focused-window and
+  document checks remain in place. The Chrome toolbar icon is again black on a solid white
+  square, generated at 16/19/32/38 pixels from the existing app artwork with ImageMagick.
+  Chrome source version is 0.0.9 with helper 0.0.6; shared Safari worker manifest is 0.1.59.
+
+### Verification
+
+- `node --test Tests/JavaScript/*.test.mjs`: 43 passed, including stale-badge reconciliation,
+  a racing list response, transient helper failure vs explicit not-found, early pending-ID delivery,
+  and refusal/retry coverage.
+- `PrototypeDapp/node_modules/.bin/oxfmt` and `oxlint` on changed JavaScript passed;
+  `node ChromeExtension/build.mjs` generated the 0.0.9 unpacked extension. ImageMagick
+  confirmed all four Chrome-only toolbar PNGs are opaque and have white corners.
+- `swift build -c release --product StupidWalletChromeHost` succeeded;
+  `swift test --quiet` passed 440 tests in 49 suites. `stupid-app doctor` reported zero
+  failures/warnings; `stupid-app build` succeeded. `stupid-app run --simulator --udid
+  <preferred-simulator>` reinstalled and launched the app with the shared Safari resource.
+- `git diff --check` passed. No native pending records were modified and no signing or
+  transaction request was initiated.
+
+### Follow-Up
+
+- Reload the unpacked extension and existing dapp tabs in Google Chrome, then verify the
+  badge clears and a fresh foreground request opens the toolbar popup. Browser refusal
+  still requires the toolbar button. No new Chrome release package was signed or published.
+
 ## 2026-09-28 - Internal TestFlight build 1.0.0 (116)
 
 ### Summary

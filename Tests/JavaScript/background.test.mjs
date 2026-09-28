@@ -110,6 +110,142 @@ test("a popup decision removes its request and clears the zero badge", async () 
   assert.equal(badgeTexts.at(-1), "");
 });
 
+test("Chrome reconciles a stale badge with native pending state and preserves polling on helper errors", async () => {
+  let listener;
+  let resolveList;
+  const badges = [];
+  const browser = {
+    action: { setBadgeText: ({ text }) => badges.push(text) },
+    runtime: { onMessage: { addListener: (fn) => (listener = fn) } },
+  };
+  const context = {
+    browser,
+    Promise,
+    Set,
+    URL,
+    walletChromeContext: {
+      validate: async () => {},
+      owns: async () => true,
+    },
+    walletNativeTransport: async ({ action }) => {
+      if (action === "list") return new Promise((resolve) => (resolveList = resolve));
+      return { ok: false, error: { code: 4900, message: "Helper disconnected" } };
+    },
+  };
+  vm.runInNewContext(backgroundSource, context);
+  const send = (message) => new Promise((resolve) => listener(message, {}, resolve));
+  await new Promise(setImmediate);
+  resolveList({ ok: true, data: { pending: [{ id: "still-pending" }] } });
+  await new Promise(setImmediate);
+  assert.equal(badges.at(-1), "1");
+  assert.equal((await send({ type: "ethereum.status", id: "still-pending" })).__pending, true);
+  assert.equal(badges.at(-1), "1");
+
+  const list = send({ type: "popup.list" });
+  await new Promise(setImmediate);
+  resolveList({ ok: true, data: { pending: [] } });
+  await list;
+  assert.equal(badges.at(-1), "");
+});
+
+test("Chrome replies with the pending ID before trying to present the popup", async () => {
+  let listener;
+  let opened = false;
+  const browser = {
+    action: { setBadgeText() {} },
+    runtime: { onMessage: { addListener: (fn) => (listener = fn) } },
+  };
+  const context = {
+    browser,
+    Promise,
+    Set,
+    URL,
+    walletChromeContext: {
+      validate: async () => {},
+      remember: async () => true,
+      openReview: async () => {
+        opened = true;
+      },
+    },
+    walletNativeTransport: async ({ action }) => {
+      if (action === "chain") return { ok: true, data: { chainId: "1" } };
+      if (action === "prepare") return { ok: true, data: { requestId: "request-1" } };
+      return { ok: true, data: { pending: [], accounts: [] } };
+    },
+  };
+  vm.runInNewContext(backgroundSource, context);
+  const response = await new Promise((resolve) =>
+    listener(
+      { type: "ethereum.request", method: "personal_sign", params: ["0x01"] },
+      { origin: "https://example.com", tab: { id: 1 } },
+      (value) => {
+        assert.equal(opened, false);
+        resolve(value);
+      },
+    ),
+  );
+  assert.equal(response.pendingId, "request-1");
+  assert.equal(opened, true);
+});
+
+test("an older Chrome list response cannot erase a newly prepared badge", async () => {
+  let listener;
+  let resolveList;
+  const badges = [];
+  const context = {
+    browser: {
+      action: { setBadgeText: ({ text }) => badges.push(text) },
+      runtime: { onMessage: { addListener: (fn) => (listener = fn) } },
+    },
+    Promise,
+    Set,
+    URL,
+    walletChromeContext: {
+      validate: async () => {},
+      remember: async () => false,
+    },
+    walletNativeTransport: async ({ action }) => {
+      if (action === "list") return new Promise((resolve) => (resolveList = resolve));
+      if (action === "chain") return { ok: true, data: { chainId: "1" } };
+      if (action === "prepare") return { ok: true, data: { requestId: "new-request" } };
+      return { ok: true, data: { accounts: [] } };
+    },
+  };
+  vm.runInNewContext(backgroundSource, context);
+  await new Promise(setImmediate);
+  await new Promise((resolve) =>
+    listener(
+      { type: "ethereum.request", method: "personal_sign", params: ["0x01"] },
+      { origin: "https://example.com", tab: { id: 1 } },
+      resolve,
+    ),
+  );
+  resolveList({ ok: true, data: { pending: [] } });
+  await new Promise(setImmediate);
+  assert.equal(badges.at(-1), "1");
+});
+
+test("Chrome treats an explicit native not-found as missing", async () => {
+  let listener;
+  const context = {
+    browser: {
+      action: { setBadgeText() {} },
+      runtime: { onMessage: { addListener: (fn) => (listener = fn) } },
+    },
+    Promise,
+    Set,
+    URL,
+    walletChromeContext: { validate: async () => {}, owns: async () => true },
+    walletNativeTransport: async ({ action }) =>
+      action === "list" ? { ok: true, data: { pending: [] } } : { ok: false, error: "not found" },
+  };
+  vm.runInNewContext(backgroundSource, context);
+  const response = await new Promise((resolve) =>
+    listener({ type: "ethereum.status", id: "missing" }, {}, resolve),
+  );
+  assert.equal(response.__missing, true);
+});
+
 test("popup fallback forwards reviewed revisions and connect rebind payloads", async () => {
   let messageListener;
   const nativeMessages = [];

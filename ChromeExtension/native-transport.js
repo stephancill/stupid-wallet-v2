@@ -16,6 +16,7 @@ import {
   const PROFILE_KEY = "nativeProfileId";
   let profilePromise;
   let connection;
+  const openingReviews = new Set();
   const decision = {
     requestId: z.uuid(),
     revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -338,21 +339,30 @@ import {
           documentId: sender.documentId,
           origin: sender.origin,
           profileId: await profileID(),
+          opened: existing?.documentId === sender.documentId && existing?.opened === true,
         },
       });
-      if (!existing && open) await this.openReview({ requestId, tabId: sender.tab.id });
+      return open && !(existing?.documentId === sender.documentId && existing?.opened);
     },
     async openReview({ requestId, tabId }) {
-      if (!api.action?.openPopup) return;
+      if (!api.action?.openPopup || openingReviews.has(requestId)) return;
+      openingReviews.add(requestId);
       try {
         const tab = await api.tabs.get(tabId);
         if (!tab.active || !(await currentRoute(requestId))) return;
         const window = await api.windows.get(tab.windowId);
         if (!window.focused) return;
         await api.action.openPopup({ windowId: tab.windowId });
+        const key = `route:${requestId}`;
+        const route = (await api.storage.local.get(key))[key];
+        if (route && route.tabId === tabId && (await currentRoute(requestId))) {
+          await api.storage.local.set({ [key]: { ...route, opened: true } });
+        }
       } catch {
         // Presentation failure must not discard an already-persisted approval request.
         console.warn("Automatic wallet review could not open. Use the wallet toolbar button.");
+      } finally {
+        openingReviews.delete(requestId);
       }
     },
     async owns(requestId, sender) {
