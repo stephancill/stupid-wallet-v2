@@ -108,6 +108,31 @@ struct EIP5792ServiceTests {
     #expect(try await service.activities().first?.transactionData?.hasPrefix("0x34fcd5be") == true)
   }
 
+  @Test("a node-rejected batch stays pending and a retry re-resolves fees and broadcasts")
+  func rejectedBatchRetries() async throws {
+    let nodeError = JSONValue.object([
+      "code": .number(-32000),
+      "message": .string("max fee per gas less than block base fee"),
+    ])
+    let state = CallsRPCState(accountCode: delegationCode)
+    state.broadcastErrors = [nodeError]
+    let (service, _) = makeService(state: state)
+    try await service.connect(origin: origin, profileID: profile)
+    let id = try await service.prepare(
+      method: "wallet_sendCalls", params: v1Params(), origin: origin, profileID: profile)
+
+    await #expect(throws: WalletError.rpc(nodeError)) {
+      try await service.approve(request: id, profileID: profile)
+    }
+    #expect(await service.status(for: id, profileID: profile)?.status == "pending")
+
+    let result = try await service.approve(request: id, profileID: profile)
+    #expect(result.stringValue == state.transactionHash)
+    #expect(state.methods.filter { $0 == "eth_sendRawTransaction" }.count == 2)
+    #expect(state.methods.filter { $0 == "eth_gasPrice" }.count == 2)
+    #expect(await service.status(for: id, profileID: profile)?.status == "consumed")
+  }
+
   @Test("missing delegation signs chain-bound authorization nonce plus one and sends type 4")
   func automaticDelegationV2() async throws {
     let state = CallsRPCState(accountCode: "0x")
@@ -485,6 +510,7 @@ private final class CallsRPCState: @unchecked Sendable {
     "blockNumber": .string("0x10"), "gasUsed": .string("0x5208"), "logs": .array([]),
   ])
   var receiptError: JSONValue?
+  var broadcastErrors: [JSONValue] = []
   private(set) var rawTransaction: [UInt8]?
   private(set) var rawTransactions: [[UInt8]] = []
   private(set) var methods: [String] = []
@@ -528,6 +554,9 @@ private final class CallsRPCState: @unchecked Sendable {
       case "eth_maxPriorityFeePerGas": return callsRPCResponse(result: .string("0x1"))
       case "eth_gasPrice": return callsRPCResponse(result: .string("0x2"))
       case "eth_sendRawTransaction":
+        if !broadcastErrors.isEmpty {
+          return callsRPCResponse(error: broadcastErrors.removeFirst())
+        }
         rawTransaction = object.value(at: ["params", "0"])?.stringValue.flatMap(Hex.data)
         if let rawTransaction { rawTransactions.append(rawTransaction) }
         if implementationInitiallyMissing && rawTransactions.count == 1 {

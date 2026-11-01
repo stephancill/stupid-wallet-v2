@@ -374,7 +374,7 @@ public enum NativeWalletDispatcher {
 }
 
 public struct NativeWalletEnvelope: Sendable {
-  let action: String
+  public let action: String
   let method: String?
   let origin: String?
   let chainId: String?

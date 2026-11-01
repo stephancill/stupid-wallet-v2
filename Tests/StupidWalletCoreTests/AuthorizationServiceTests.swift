@@ -314,7 +314,7 @@ struct AuthorizationServiceTests {
 
     let expected = EIP1559Transaction(
       chainId: 31_337, nonce: "0x7", maxPriorityFeePerGas: "0x3b9aca00",
-      maxFeePerGas: "0x77359400", gasLimit: "0x133333",
+      maxFeePerGas: "0xee6b2800", gasLimit: "0x133333",
       to: Simple7702AccountDeployment.factory, value: "0x0",
       data: Simple7702AccountDeployment.calldata)
     let expectedDigest = Keccak.keccak256(try expected.signingPayload())

@@ -12,6 +12,7 @@ import SwiftUI
     let accountName: String?
     let isWatchOnly: Bool
     @ObservedObject var balances: WalletBalanceModel
+    @State private var sharesUsageData = WalletMetrics.isEnabled
 
     var body: some View {
       NavigationView {
@@ -56,6 +57,17 @@ import SwiftUI
                 Text("Private Key")
               }
             }
+          }
+
+          Section {
+            Toggle("Share Usage Data", isOn: $sharesUsageData)
+              .onChange(of: sharesUsageData) { _, enabled in
+                WalletMetrics.isEnabled = enabled
+              }
+          } footer: {
+            Text(
+              "Sends anonymous usage counts, errors and crash reports to Stupid Tech to improve the app. Never includes your addresses, balances, sites or transaction details."
+            )
           }
         }
         .listStyle(.insetGrouped)

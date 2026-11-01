@@ -50,11 +50,17 @@ public final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandli
     }
     let box = ContextBox(context)
     Task { @Sendable in
+      await WalletMetrics.configure(surface: .safari)
       let response = await Self.dispatchAdoptedIfReady(
         envelope: envelope, profileID: profileID)
       let responseItem = NSExtensionItem()
       responseItem.userInfo = [SFExtensionMessageKey: response.unwrapped]
       box.context.completeRequest(returningItems: [responseItem], completionHandler: nil)
+      // The extension never receives app lifecycle notifications, so a review outcome is sent
+      // after the popup has its response rather than waiting for the periodic send.
+      if envelope.action == "approve" || envelope.action == "reject" {
+        await WalletMetrics.flush()
+      }
     }
   }
 

@@ -110,6 +110,41 @@ test("a popup decision removes its request and clears the zero badge", async () 
   assert.equal(badgeTexts.at(-1), "");
 });
 
+test("a request kept pending after a failed send reports 4001 once rejected", async () => {
+  let messageListener;
+  let status = "pending";
+  const browser = {
+    action: { setBadgeText() {} },
+    runtime: {
+      lastError: null,
+      onMessage: {
+        addListener(listener) {
+          messageListener = listener;
+        },
+      },
+      sendNativeMessage(_applicationID, message, callback) {
+        assert.equal(message.action, "get");
+        callback({ ok: true, data: { status } });
+      },
+    },
+    tabs: {
+      query(_query, callback) {
+        callback([]);
+      },
+      sendMessage() {},
+    },
+  };
+  vm.runInNewContext(backgroundSource, { browser, Map, Promise, Set, URL });
+  const poll = () =>
+    new Promise((resolve) => {
+      messageListener({ type: "ethereum.status", id: "request-1" }, {}, resolve);
+    });
+
+  assert.deepEqual({ ...(await poll()) }, { __pending: true });
+  status = "rejected";
+  assert.deepEqual({ ...(await poll()) }, { __error: "User rejected", code: 4001 });
+});
+
 test("Chrome reconciles a stale badge with native pending state and preserves polling on helper errors", async () => {
   let listener;
   let resolveList;

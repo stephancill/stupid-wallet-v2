@@ -10371,3 +10371,89 @@ Verification:
 - Before Add for Review: set pricing (Free), publish the App Privacy responses, and complete App
   Review contact information and notes in the App Store Connect web UI.
 - Physical-device acceptance of build 117 was not run.
+
+## 2026-11-01 — EIP-1559 fee-cap headroom and retryable broadcast rejections
+
+### Summary
+
+- A `wallet_sendCalls` approval on Arbitrum Sepolia failed with `max fee per gas less than block base
+  fee` (`maxFeePerGas` 20000000, base fee 20148000). The wallet set `maxFeePerGas` to
+  `max(eth_gasPrice, eth_maxPriorityFeePerGas)`, and Arbitrum's `eth_gasPrice` equals the current base
+  fee with a zero priority fee, so any base-fee rise before inclusion rejected the transaction.
+- Added `FeeCap.maxFeePerGas`: twice the larger of gas price and priority fee. It is used for
+  wallet-resolved fees in `eth_sendTransaction` (when the dapp omits `maxFeePerGas`),
+  `wallet_sendCalls`, and the implementation-deployment and authorization transactions. Only the
+  actual base fee plus priority fee is charged. Dapp-supplied fees and legacy `gasPrice` are
+  unchanged; the popup's fee estimate still shows the expected cost rather than the cap. Batch gas
+  limits already carried a 50% margin.
+- Approvals no longer terminalize a request when the node answers `eth_sendRawTransaction` with a
+  JSON-RPC error. The record stays `pending` at its reviewed revision, the popup shows the error and
+  re-enables its buttons, and approving again re-resolves nonce, gas and fees under fresh
+  authentication. Transport failures, invalid results and mismatched hashes remain terminal because
+  the transaction may have been accepted and a retry with a re-resolved nonce could execute twice.
+  Batch implementation-deployment failures remain terminal.
+- User rejection is unchanged: after a node-rejected attempt the record is still `pending` at the
+  same revision, so Reject persists `rejected` and the worker answers the page with `4001 User
+  rejected`. A dismissed Face ID prompt still returns `4001` to the popup without signing or
+  changing the record, so the user can retry or reject.
+
+### Verification
+
+- `swift test`: 449 tests; new/updated tests cover the doubled fee cap (including Arbitrum-style
+  values), a node-rejected `eth_sendTransaction` that stays pending and succeeds on retry, a
+  terminal broadcast transport failure, and a node-rejected `wallet_sendCalls` that succeeds on retry
+  with re-fetched fees, and Face ID cancellation then Reject after a node-rejected attempt ending
+  `rejected`. `node --test Tests/JavaScript/background.test.mjs`: 19 pass, including a pending
+  status poll followed by `4001 User rejected` once rejected. Two expired-request tests in
+  `ApprovalTests` fail identically on the
+  unmodified previous commit (`ConnectionStateError.unavailable`) and are unrelated.
+
+### Follow-Up
+
+- Physical-device retry of the Arbitrum Sepolia flow on app.isometric.fi has not been run.
+
+## 2026-11-01 — Anonymous usage metrics and error reporting
+
+### Summary
+
+- Instrumented the app, Safari extension and Chrome helper with stupid metrics
+  (`metrics.stupidtech.net`). `WalletMetrics` in `StupidWalletCore` names every event: `transaction`
+  (dapp and in-app sends, by kind, source, chain and outcome), `signature`, `request` (connect, chain),
+  and `transaction_result` (confirmed, reverted, dropped, replaced) from activity refresh. Failures also
+  record `<event>_failed` / `transaction_not_confirmed` issues with the error's type and case and, for
+  JSON-RPC errors, its code. Dismissed authentication is the `cancelled` outcome, not an issue.
+- Instrumentation wraps `WalletService.approve`, `reject` and `sendTransaction` rather than each call
+  site, so Safari, Chrome and the app share one definition of an outcome. The record's kind and chain
+  are read before approval because the approval path may rewrite the record.
+- Added Settings → Share Usage Data. The opt-out lives in App Group `UserDefaults` because the
+  package's own flag is per process (`UserDefaults.standard`); every process re-applies it on configure.
+- Vendored the StupidMetrics Swift package v0.2.1 (`scripts/vendor-stupid-metrics.sh`, matching the
+  stupid-app constraint on remote packages) and added it to `Package.swift`, `Mac/project.yml` and
+  `THIRD_PARTY_NOTICES.md`. Registered the app with the metrics service.
+
+### Decisions
+
+- Props are limited to kinds, decimal chain IDs, outcomes, surfaces and JSON-RPC codes. Origins,
+  addresses, hashes, amounts, payloads and node error messages are never sent.
+- `rejected` includes extension-issued rejections for closed or navigated tabs, since
+  `WalletService.reject` cannot tell them apart.
+- The extension sends after each approve/reject response (after the popup has its answer) and the
+  Chrome helper on disconnect, because neither receives UIKit lifecycle notifications.
+
+### Verification
+
+- `swift format --in-place` and `swift format lint --strict` on changed files: passed.
+- `swift test`: 448 tests; new `WalletMetricsTests` cover event naming, props, outcomes and JSON-RPC
+  code extraction. The two expired-request `ApprovalTests` failures (`ConnectionStateError.unavailable`)
+  also fail on the unmodified previous commit.
+- `stupid-app build`, and `stupid-app run --simulator` on the preferred simulator: installed and
+  launched; Settings shows Share Usage Data enabled. After backgrounding, the metrics admin API reported
+  one `session_start` from a `simulator` install on 1.0.0 (117).
+- `xcodegen generate` and an unsigned simulator build of the `Mac/` project: succeeded.
+
+### Limitations And Follow-Up
+
+- Transaction and signature events were not exercised end to end; signing needs a key-backed account
+  and, for the extension, a physical device. Extension and helper delivery is unverified.
+- App Store privacy answers must add Diagnostics and Usage Data before submitting a build with metrics.
+- The Chrome helper change ships only with the next notarized helper release.

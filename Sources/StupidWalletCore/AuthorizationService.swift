@@ -336,7 +336,7 @@ public struct AuthorizationService: Sendable {
     guard let gasLimit = Self.authorizationGasLimit(estimate) else {
       throw AuthorizationOperationError.rpc(.invalidResponse("Invalid gas estimate"))
     }
-    let maxFee = try Self.maximumQuantity(gasPrice, priorityFee)
+    let maxFee = try Self.maxFeePerGas(gasPrice: gasPrice, priorityFee: priorityFee)
     let authorization = try EIP7702Authorization(
       chainID: chainQuantity, delegate: delegate, nonce: outerNonce + 1)
 
@@ -385,7 +385,8 @@ public struct AuthorizationService: Sendable {
     }
     let transaction = EIP1559Transaction(
       chainId: chain, nonce: nonce, maxPriorityFeePerGas: priorityFee,
-      maxFeePerGas: try Self.maximumQuantity(gasPrice, priorityFee), gasLimit: gasLimit,
+      maxFeePerGas: try Self.maxFeePerGas(gasPrice: gasPrice, priorityFee: priorityFee),
+      gasLimit: gasLimit,
       to: Simple7702AccountDeployment.factory, value: "0x0",
       data: Simple7702AccountDeployment.calldata)
     let digest = Keccak.keccak256(try transaction.signingPayload())
@@ -496,11 +497,10 @@ public struct AuthorizationService: Sendable {
     }
   }
 
-  private static func maximumQuantity(_ lhs: String, _ rhs: String) throws -> String {
-    guard let left = Hex.quantityData(hex: lhs), let right = Hex.quantityData(hex: rhs) else {
+  private static func maxFeePerGas(gasPrice: String, priorityFee: String) throws -> String {
+    guard let maxFee = FeeCap.maxFeePerGas(gasPrice: gasPrice, priorityFee: priorityFee) else {
       throw AuthorizationOperationError.rpc(.invalidResponse("Invalid fee quantity"))
     }
-    if left.count != right.count { return left.count > right.count ? lhs : rhs }
-    return left.lexicographicallyPrecedes(right) ? rhs : lhs
+    return maxFee
   }
 }

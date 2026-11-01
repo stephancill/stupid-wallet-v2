@@ -424,9 +424,18 @@ missing field through the shared resolver immediately before authentication/sign
 stores those values separately from the immutable approved params/digest. This prevents quick
 successive approvals from signing the same stale pending nonce while preserving explicit
 dapp-provided limits. Approval signs a canonical legacy or type-2 raw transaction, submits it
-with `eth_sendRawTransaction`, and resolves to the 32-byte transaction hash. Structured
-node/transport submission failures become durable terminal request errors so polling does not
-strand the dapp promise. Approval/rejection
+with `eth_sendRawTransaction`, and resolves to the 32-byte transaction hash. A wallet-resolved
+EIP-1559 `maxFeePerGas` (dapp sends without one, `wallet_sendCalls`, and implementation
+deployment/authorization transactions) is twice the larger of `eth_gasPrice` and the priority fee:
+Arbitrum reports `eth_gasPrice` equal to the current base fee, so an unbuffered cap was rejected
+("max fee per gas less than block base fee") whenever the base fee rose before broadcast. Dapp-supplied
+fee fields and legacy `gasPrice` are not buffered. When the node answers `eth_sendRawTransaction`
+for an approval with a JSON-RPC error, the signed bytes were not accepted, so the request stays
+`pending` with its reviewed revision; the popup shows the error and the user can approve again
+(re-resolving nonce, gas and fees with fresh authentication) or reject, which still reaches the
+dapp as `4001 User rejected`; dismissing Face ID leaves the request pending as before. Transport failures, invalid
+results, mismatched hashes and pre-broadcast batch deployment errors remain durable terminal request
+errors because acceptance is unknown and a retry could execute twice. Approval/rejection
 uses an OS advisory lock across handler/store instances, binds the current signer back to
 the persisted account, revalidates transaction semantics at approval, rejects unsupported
 or ambiguous fields, and verifies the node-returned hash against the signed raw bytes.
@@ -1100,6 +1109,44 @@ The existing implementation in `../ios-wallet` is a behavior and migration refer
 not a codebase to copy wholesale. It contains useful feature work, protocol handling,
 and persisted formats, but its confirmation, RPC-routing, dependency, and concurrency
 boundaries are intentionally being redesigned.
+
+### Usage Metrics
+
+The app, Safari extension and Chrome helper report anonymous usage and errors to stupid metrics
+(`metrics.stupidtech.net`, a separate Stupid Tech service; dashboard app id
+`co.za.stephancill.stupid-wallet`). `StupidWalletCore/WalletMetrics.swift` is the only file that names
+events; each process calls `WalletMetrics.configure(surface:)` (`app`, `safari`, `chrome`) and every
+event carries that `surface` prop. Processes that never configure (tests, proof hosts) record nothing.
+
+- `transaction` {kind `send`/`batch`, source `app`/`dapp`, chain (decimal), outcome} from
+  `WalletService.approve` (dapp `eth_sendTransaction`/`wallet_sendCalls`) and
+  `WalletService.sendTransaction` (in-app Send).
+- `signature` {kind `message`/`typed_data`/`siwe`, outcome} and `request` {kind `connect`/`chain`,
+  outcome} from the same approval path. A record that cannot be read before approval is `request`
+  {kind `unknown`}.
+- Outcomes: `ok`; `cancelled` when device-owner authentication was dismissed; `rejected` from
+  `WalletService.reject`, which also covers rejections the extension issues for closed or navigated
+  tabs; `error` otherwise. Every `error` also records an issue named `<event>_failed` whose message is
+  the error's type and case (`StupidMetrics.describe`) and whose props add the JSON-RPC `code` for
+  `WalletError.rpc`. A retried approval after a node rejection counts each attempt.
+- `transaction_result` {chain, status `confirmed`/`reverted`/`dropped`/`replaced`} when activity
+  refresh resolves a broadcast transaction; non-confirmed statuses also record a
+  `transaction_not_confirmed` issue.
+- `session_start` and MetricKit crash, hang and exit reports come from the package itself.
+
+Privacy: props are kinds, decimal chain IDs, outcomes and JSON-RPC codes only. Never send addresses,
+origins, hashes, amounts, payloads, node error messages, or `localizedDescription`. Settings → Share
+Usage Data stores the opt-out in App Group `UserDefaults` (`metrics.disabled`), so it also governs the
+extension and helper; each process re-applies it on configure (the extension on every native message).
+Turning it off drops each process's queue and install id. The app, extension and helper each have their
+own install id, so dashboard install counts are per surface. The extension and helper never receive
+UIKit lifecycle notifications: the Safari handler sends after each `approve`/`reject` response, and the
+Chrome helper sends when Chrome disconnects; both also send every five minutes while running.
+
+`StupidMetrics` is vendored at `Vendor/StupidMetrics` by `scripts/vendor-stupid-metrics.sh <tag>` because
+stupid-app builds only local sources. The tracked `Mac/` XcodeGen project builds it as a static framework.
+The App Store privacy answers must declare Diagnostics and Usage Data (not linked to the user, not used
+for tracking) before a build with metrics is submitted.
 
 ## Prototype Notes
 
@@ -1802,6 +1849,9 @@ project; only `ENSResolver` imports it. License, provenance and adaptations are 
 `THIRD_PARTY_NOTICES.md`. Standard `swift format` applies, with a folder-scoped naming-rule exception
 for upstream identifiers.
 
+`Vendor/StupidMetrics` is the project-owned, dependency-free Stupid Tech metrics client (see Usage
+Metrics), pinned by tag and commit in `Vendor/StupidMetrics/VERSION`. Only `WalletMetrics` imports it.
+
 Do not add React, React Query, Vite, Tailwind, viem, Web3.swift, PromiseKit, BigInt,
 CryptoSwift, Dawn Key Management, or a general wallet SDK without a concrete reviewed
 need that cannot be met safely by the project-owned core.
@@ -2088,6 +2138,10 @@ selected Arc for acceptance. The ordered physical-Mac proof gates remain require
 and Linux are excluded from the scope.
 
 ## Risks And Open Decisions
+
+- **Usage metrics disclosure:** App Store privacy answers must add Diagnostics and Usage Data before
+  submitting a build containing `WalletMetrics`. Physical-device delivery from the Safari extension
+  process (send after a review response) is unverified.
 
 - **Toolbar discoverability:** Safari cannot open the extension popup programmatically.
   Gate 1 must validate a clear badge/notice flow on iPhone and iPad.

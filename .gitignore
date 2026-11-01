@@ -7,3 +7,6 @@ xcuserdata/
 ChromeExtension/node_modules/
 
 __pycache__/
+
+# Local Cloudflare tooling cache (no tracked source)
+server/

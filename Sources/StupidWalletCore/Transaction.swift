@@ -3,6 +3,20 @@ import Foundation
 /// Canonical Ethereum transaction encodings for signing and raw transaction submission.
 public enum EncodingError: Error { case badQuantity, badTo, badField }
 
+enum FeeCap {
+  /// EIP-1559 `maxFeePerGas` for wallet-resolved fees: twice the larger of the node gas price
+  /// and priority fee. On chains such as Arbitrum `eth_gasPrice` equals the current base fee,
+  /// so an unbuffered cap is rejected as soon as the base fee rises before inclusion. Only the
+  /// actual base fee plus priority fee is charged.
+  static func maxFeePerGas(gasPrice: String, priorityFee: String) -> String? {
+    guard let price = Hex.quantityData(hex: gasPrice),
+      let priority = Hex.quantityData(hex: priorityFee)
+    else { return nil }
+    let larger = NativeBalanceService.isGreater(priority, than: price) ? priority : price
+    return Hex.quantity(RLP.trimQuantity(NativeBalanceService.add(larger, larger)))
+  }
+}
+
 /// Legacy (pre-1559) transaction with EIP-155 replay protection.
 public struct LegacyTransaction: Sendable {
   public let nonce: String

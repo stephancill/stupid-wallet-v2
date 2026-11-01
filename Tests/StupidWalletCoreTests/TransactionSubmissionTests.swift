@@ -5,19 +5,20 @@ import Testing
 
 @Suite(.serialized)
 struct TransactionSubmissionTests {
-  private func service(handler: @escaping @Sendable (URLRequest) -> (HTTPURLResponse, Data))
-    -> WalletService
-  {
+  private func service(
+    directory: URL = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "TransactionSubmissionTests-\(UUID().uuidString)"),
+    signing: any Signing = TransactionSigner(),
+    handler: @escaping @Sendable (URLRequest) -> (HTTPURLResponse, Data)
+  ) -> WalletService {
     TransactionURLProtocol.handler = handler
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [TransactionURLProtocol.self]
     let client = RPCClient(session: URLSession(configuration: configuration))
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-      "TransactionSubmissionTests-\(UUID().uuidString)")
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return WalletService(
       store: PendingRequestStore(directory: directory),
-      signing: TransactionSigner(),
+      signing: signing,
       connectedSites: ConnectedSitesStore(suiteName: UUID().uuidString),
       chainStore: ChainStore(directory: directory),
       networkStore: NetworkStore(
@@ -360,15 +361,24 @@ struct TransactionSubmissionTests {
     }
   }
 
-  @Test("a structured broadcast error is terminal and preserved for polling")
-  func broadcastErrorPreserved() async throws {
+  @Test("a node-rejected broadcast stays pending and can be retried")
+  func broadcastRejectionRetries() async throws {
+    let attempts = BroadcastAttempts()
     let service = service { request in
       let object = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
       let method = object.nestedString(at: ["method"])!
-      if method == "eth_sendRawTransaction" {
+      guard method == "eth_sendRawTransaction" else {
+        return rpcResponse(error: "unexpected method \(method)")
+      }
+      guard attempts.next() > 1 else {
         return rpcResponse(error: "insufficient funds", code: -32000)
       }
-      return rpcResponse(error: "unexpected method \(method)")
+      guard case .object(let body) = object,
+        case .array(let params)? = body["params"],
+        case .string(let raw)? = params.first,
+        let bytes = Hex.data(raw)
+      else { return rpcResponse(error: "invalid raw transaction") }
+      return rpcResponse(result: "0x" + Hex.encode(Keccak.keccak256(bytes)))
     }
     let id = try await service.prepare(
       method: "eth_sendTransaction",
@@ -392,12 +402,70 @@ struct TransactionSubmissionTests {
     ) {
       try await service.approve(request: id)
     }
-    let status = await service.status(for: id)
-    #expect(status?.status == "failed")
-    #expect(status?.error?.nestedString(at: ["message"]) == "insufficient funds")
+    #expect(await service.status(for: id)?.status == "pending")
+
+    let result = try await service.approve(request: id)
+    #expect(attempts.count == 2)
+    #expect(await service.status(for: id)?.status == "consumed")
+    #expect(await service.status(for: id)?.result == result)
   }
 
-  @Test("missing EIP-1559 fees are prepared without allowing max fee below priority fee")
+  @Test("rejecting or cancelling after a node-rejected broadcast still reports user rejection")
+  func rejectionAfterBroadcastRejection() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "TransactionSubmissionTests-\(UUID().uuidString)")
+    let handler: @Sendable (URLRequest) -> (HTTPURLResponse, Data) = { request in
+      let object = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
+      guard object.nestedString(at: ["method"]) == "eth_sendRawTransaction" else {
+        return rpcResponse(error: "unexpected method")
+      }
+      return rpcResponse(error: "max fee per gas less than block base fee", code: -32000)
+    }
+    let service = service(directory: directory, handler: handler)
+    let id = try await prepareCompleteLegacy(service)
+    await #expect(throws: WalletError.self) {
+      try await service.approve(request: id)
+    }
+
+    // A dismissed Face ID prompt never signs, so the request remains reviewable.
+    let cancelled = self.service(
+      directory: directory, signing: CancelledSigner(account: TransactionSigner().account),
+      handler: handler)
+    await #expect(throws: WalletError.authCancelled) {
+      try await cancelled.approve(request: id)
+    }
+    #expect(await service.status(for: id)?.status == "pending")
+
+    try await service.reject(request: id)
+    #expect(await service.status(for: id)?.status == "rejected")
+    await #expect(throws: WalletError.alreadyConsumed) {
+      try await service.approve(request: id)
+    }
+  }
+
+  @Test("a broadcast transport failure is terminal because acceptance is unknown")
+  func broadcastTransportFailureTerminal() async throws {
+    let service = service { request in
+      let object = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
+      guard object.nestedString(at: ["method"]) == "eth_sendRawTransaction" else {
+        return rpcResponse(error: "unexpected method")
+      }
+      return (
+        HTTPURLResponse(
+          url: request.url!, statusCode: 502, httpVersion: nil, headerFields: nil)!, Data()
+      )
+    }
+    let id = try await prepareCompleteLegacy(service)
+    await #expect(throws: WalletError.self) {
+      try await service.approve(request: id)
+    }
+    #expect(await service.status(for: id)?.status == "failed")
+    await #expect(throws: WalletError.alreadyConsumed) {
+      try await service.approve(request: id)
+    }
+  }
+
+  @Test("missing EIP-1559 max fee doubles the larger of gas price and priority fee")
   func preparesDynamicFees() async throws {
     let service = service { request in
       let object = try! JSONDecoder().decode(JSONValue.self, from: requestBody(request))
@@ -434,7 +502,16 @@ struct TransactionSubmissionTests {
       return
     }
     #expect(transaction["maxPriorityFeePerGas"] == .string("0x77359400"))
-    #expect(transaction["maxFeePerGas"] == .string("0x77359400"))
+    #expect(transaction["maxFeePerGas"] == .string("0xee6b2800"))
+  }
+
+  @Test("fee cap leaves headroom above a gas price that equals the base fee")
+  func feeCapHeadroom() {
+    // Arbitrum reports eth_gasPrice == base fee and a zero priority fee.
+    #expect(FeeCap.maxFeePerGas(gasPrice: "0x1312d00", priorityFee: "0x0") == "0x2625a00")
+    #expect(FeeCap.maxFeePerGas(gasPrice: "0x1", priorityFee: "0x3") == "0x6")
+    #expect(FeeCap.maxFeePerGas(gasPrice: "0x80", priorityFee: "0x0") == "0x100")
+    #expect(FeeCap.maxFeePerGas(gasPrice: "nope", priorityFee: "0x0") == nil)
   }
 
   @Test("malformed canonical transaction is rejected before persistence")
@@ -684,6 +761,19 @@ private final class TransactionRPCState: @unchecked Sendable {
   func didBroadcast() { lock.withLock { broadcasts += 1 } }
 }
 
+private final class BroadcastAttempts: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = 0
+
+  func next() -> Int {
+    lock.withLock {
+      value += 1
+      return value
+    }
+  }
+  var count: Int { lock.withLock { value } }
+}
+
 private final class TransactionURLProtocol: URLProtocol {
   nonisolated(unsafe) static var handler: (@Sendable (URLRequest) -> (HTTPURLResponse, Data))?
 
@@ -712,6 +802,13 @@ private func requestBody(_ request: URLRequest) -> Data {
     data.append(buffer, count: count)
   }
   return data
+}
+
+private struct CancelledSigner: Signing {
+  let account: String
+
+  func hasKey() -> Bool { true }
+  func signDigest(_: [UInt8]) throws -> [UInt8] { throw SigningError.accountUnavailable }
 }
 
 private struct TransactionSigner: Signing {

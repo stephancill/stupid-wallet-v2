@@ -402,6 +402,22 @@ public actor WalletService {
     value: String = "0x0",
     data: String = "0x"
   ) async throws -> String {
+    let metrics = WalletMetrics.RequestContext(
+      kind: .send, chainID: ChainStore.normalize(chainID) ?? "invalid", isWalletOriginated: true)
+    do {
+      let hash = try await sendWalletTransaction(
+        account: account, chainID: chainID, to: to, value: value, data: data)
+      WalletMetrics.requestApproved(metrics, error: nil)
+      return hash
+    } catch {
+      WalletMetrics.requestApproved(metrics, error: error)
+      throw error
+    }
+  }
+
+  private func sendWalletTransaction(
+    account: String, chainID: String, to: String, value: String, data: String
+  ) async throws -> String {
     try ensureRegistryReady()
     guard let normalizedChain = ChainStore.normalize(chainID) else {
       throw WalletError.invalidParams
@@ -441,7 +457,12 @@ public actor WalletService {
       throw WalletError.authCancelled
     }
     let raw = try RequestExecutor.signedTransaction(signature: signature, for: record)
-    let hash = try await submitRawTransaction(raw, chainID: normalizedChain)
+    let hash: String
+    do {
+      hash = try await submitRawTransaction(raw, chainID: normalizedChain)
+    } catch let rejected as TransactionRejected {
+      throw WalletError.rpc(rejected.error)
+    }
     if let nonce = Self.transactionObject(resolved)?["nonce"]?.stringValue {
       try? await activityStore.recordTransaction(request: record, hash: hash, nonce: nonce)
     }
@@ -1370,6 +1391,21 @@ public actor WalletService {
   public func approve(
     request: UUID, profileID: String? = nil, reviewedRevision: UInt64 = 0
   ) async throws -> JSONValue {
+    let metrics = (try? rawRecord(request)).flatMap { $0.map(WalletMetrics.RequestContext.init) }
+    do {
+      let result = try await approveReviewed(
+        request: request, profileID: profileID, reviewedRevision: reviewedRevision)
+      WalletMetrics.requestApproved(metrics, error: nil)
+      return result
+    } catch {
+      WalletMetrics.requestApproved(metrics, error: error)
+      throw error
+    }
+  }
+
+  private func approveReviewed(
+    request: UUID, profileID: String?, reviewedRevision: UInt64
+  ) async throws -> JSONValue {
     _ = try ensureRegistryReady()
     let initial = try rawRecord(request)
     if initial == nil,
@@ -1491,6 +1527,8 @@ public actor WalletService {
           record.result = result
           try await store.insert(record)
           return result
+        } catch let rejected as TransactionRejected {
+          throw WalletError.rpc(rejected.error)
         } catch WalletError.rpc(let error) {
           record.status = .failed
           record.error = error
@@ -1537,7 +1575,11 @@ public actor WalletService {
       }
       if record.kind == .send {
         let raw = try RequestExecutor.signedTransaction(signature: signature, for: record)
-        result = try await broadcast(rawTransaction: raw, record: &record)
+        do {
+          result = try await broadcast(rawTransaction: raw, record: &record)
+        } catch let rejected as TransactionRejected {
+          throw WalletError.rpc(rejected.error)
+        }
       } else {
         result = try RequestExecutor.resultValue(signature: signature, for: record)
         try? await activityStore.recordSignature(request: record, signature: signature)
@@ -1873,8 +1915,9 @@ public actor WalletService {
         let gasPrice = try await rpcQuantity(
           method: "eth_gasPrice", params: .array([]), chainID: record.chainId)
         let priorityFee = transaction["maxPriorityFeePerGas"]?.stringValue ?? "0x0"
-        transaction["maxFeePerGas"] = .string(
-          try Self.maximumQuantity(gasPrice, priorityFee))
+        guard let maxFee = FeeCap.maxFeePerGas(gasPrice: gasPrice, priorityFee: priorityFee)
+        else { throw WalletError.invalidParams }
+        transaction["maxFeePerGas"] = .string(maxFee)
       }
     } else if transaction["gasPrice"] == nil {
       transaction["gasPrice"] = .string(
@@ -1942,7 +1985,9 @@ public actor WalletService {
       method: "eth_maxPriorityFeePerGas", params: .array([]), chainID: record.chainId)
     let gasPrice = try await rpcQuantity(
       method: "eth_gasPrice", params: .array([]), chainID: record.chainId)
-    let maxFee = try Self.maximumQuantity(gasPrice, priorityFee)
+    guard let maxFee = FeeCap.maxFeePerGas(gasPrice: gasPrice, priorityFee: priorityFee) else {
+      throw WalletError.invalidParams
+    }
     guard let chainQuantity = ChainStore.hexChainID(record.chainId) else {
       throw WalletError.invalidParams
     }
@@ -2420,8 +2465,16 @@ public actor WalletService {
           "message": .string("Invalid eth_sendRawTransaction result"),
         ]))
     case .error(let error):
-      throw WalletError.rpc(error)
+      throw TransactionRejected(error: error)
     }
+  }
+
+  /// The node answered `eth_sendRawTransaction` with a JSON-RPC error, so the signed bytes were
+  /// not accepted. Approvals leave the request pending so the user can retry (re-resolving
+  /// nonce and fees) or reject. Transport failures and malformed results stay terminal because
+  /// the transaction may have been accepted, and a retry could execute it twice.
+  private struct TransactionRejected: Error {
+    let error: JSONValue
   }
 
   private func broadcast(
@@ -2496,6 +2549,7 @@ public actor WalletService {
         try? await activityStore.updateTransaction(
           hash: hash, status: status, blockNumber: object["blockNumber"]?.stringValue,
           at: now)
+        WalletMetrics.transactionResolved(chainID: activity.chainID, status: status)
         continue
       }
       guard receipt == .null else { continue }
@@ -2523,6 +2577,7 @@ public actor WalletService {
         status = .dropped
       }
       try? await activityStore.updateTransaction(hash: hash, status: status, at: now)
+      WalletMetrics.transactionResolved(chainID: activity.chainID, status: status)
     }
   }
 
@@ -2682,6 +2737,7 @@ public actor WalletService {
     let initial = try rawRecord(request)
     let account = try transitionAccount(request: request, record: initial)
     guard initial != nil || account != nil else { throw WalletError.notFound }
+    var rejected: WalletMetrics.RequestContext?
     try withGroupClaim(account: account) {
       guard let claim = store.claim(request) else { throw WalletError.alreadyConsumed }
       defer { store.releaseClaim(claim) }
@@ -2701,7 +2757,9 @@ public actor WalletService {
       }
       record.status = .rejected
       try store.persistForLifecycleCleanup(record)
+      rejected = WalletMetrics.RequestContext(record)
     }
+    if let rejected { WalletMetrics.requestRejected(rejected) }
   }
 
   /// Node-answered JSON-RPC result or preserved node error, through the one resolver.

@@ -3,6 +3,14 @@
 This repository vendors or adapts a small set of upstream sources and algorithms.
 Each is pinned to an exact revision so builds are reproducible and auditable.
 
+## StupidMetrics (Swift)
+
+- **Provenance:** project-owned Stupid Tech package (private repository `stephancill/stupid-metrics`).
+- **Pinned revision:** recorded in `Vendor/StupidMetrics/VERSION` (initially `v0.2.1` → commit
+  `b13dffd15ad70435d0d109aa3c7d8b5f26222113`).
+- **Vendored tree:** `Vendor/StupidMetrics/Sources/StupidMetrics/`, copied unmodified by
+  `scripts/vendor-stupid-metrics.sh`; no transitive dependencies.
+
 ## libsecp256k1 (C)
 
 - **Provenance:** <https://github.com/bitcoin-core/secp256k1>

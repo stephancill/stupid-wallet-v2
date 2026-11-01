@@ -111,6 +111,20 @@ generic error text and do not bypass the canonical approval protocol.
     clipboard contents; verify public fixtures with equality checks. A shutdown simulator reports
     unsupported Pasteboard capability instead of an empty clipboard; boot it before retrying.
 
+## Usage Metrics
+
+- Check production reports with the `stupid-metrics` skill: app id `co.za.stephancill.stupid-wallet`.
+  `transaction_failed`, `signature_failed` and `request_failed` issues carry `surface`, `kind`, `chain`
+  and, for JSON-RPC errors, `code`; `GET /admin/apps/<id>/events/event/transaction` splits outcomes.
+- Metrics never carry origins, addresses or hashes, so they locate a failing kind, chain and error code,
+  not a specific request; reproduce from there.
+- To prove a simulator build reports, background the app by launching another app
+  (`xcrun simctl launch <udid> com.apple.mobilesafari`); `stupidsim key <udid> home` returned the wallet
+  to active without delivering `didEnterBackground`, so nothing was sent. An empty
+  `Application Support/StupidMetrics` queue after a send means sent or rejected, not necessarily received.
+- A newly registered ingest key can be rejected for up to a minute (the server caches key misses), and
+  the client drops rejected batches.
+
 ## Stack Map
 
 Trace requests in this order:
@@ -191,7 +205,13 @@ Use these observations:
 - No new pending record: failure is in the dapp, provider routing, passthrough RPC, native
   envelope parsing, transaction preparation, or typed-data preparation.
 - Pending record with `pending`: popup or approval has not completed.
-- `failed`: inspect its structured `error`; signing/serialization/broadcast failed.
+- `failed`: inspect its structured `error`; signing/serialization failed, or broadcast failed
+  with unknown acceptance (transport failure, invalid result, mismatched hash).
+- A popup error that leaves the request `pending` is a node-rejected `eth_sendRawTransaction`
+  (for example `max fee per gas less than block base fee` or `insufficient funds`); approving
+  again re-resolves nonce and fees. A repeated base-fee rejection after the doubled fee cap means
+  `eth_gasPrice` is far below the base fee on that RPC; compare it with the latest block's
+  `baseFeePerGas`.
 - `rejected` or `expired`: do not reuse it; reproduce a fresh request normally.
 - `consumed`: inspect `result`, then verify the signature or transaction independently.
 

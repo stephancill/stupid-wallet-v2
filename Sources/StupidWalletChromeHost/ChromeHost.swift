@@ -12,6 +12,7 @@ struct ChromeHost {
     }
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
+    MainActor.assumeIsolated { WalletMetrics.configure(surface: .chrome) }
     let (requests, continuation) = AsyncStream<ChromeNativeSession.Request>.makeStream(
       bufferingPolicy: .bufferingOldest(32))
     // Blocking stdio belongs to a dedicated thread, not Swift's cooperative executor or AppKit.
@@ -42,6 +43,7 @@ struct ChromeHost {
         await runtime.disconnect()
         await tasks.waitForAll()
       }
+      await WalletMetrics.flush()
       await MainActor.run { NSApplication.shared.terminate(nil) }
     }
     application.run()

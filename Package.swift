@@ -39,9 +39,14 @@ let package = Package(
         .define("ENABLE_MODULE_ECDH"),
       ]
     ),
+    // Anonymous usage metrics. Vendored by scripts/vendor-stupid-metrics.sh; don't edit by hand.
+    .target(
+      name: "StupidMetrics",
+      path: "Vendor/StupidMetrics/Sources/StupidMetrics"
+    ),
     .target(
       name: "StupidWalletCore",
-      dependencies: ["CSecp256k1", "ENSNormalize"],
+      dependencies: ["CSecp256k1", "ENSNormalize", "StupidMetrics"],
       linkerSettings: [.linkedLibrary("sqlite3")]
     ),
     .target(

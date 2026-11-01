@@ -28,6 +28,18 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
+  StupidMetrics:
+    type: framework.static
+    platform: iOS
+    sources:
+      - path: ../Vendor/StupidMetrics/Sources/StupidMetrics
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.stupidtech.StupidMetrics
+        PRODUCT_MODULE_NAME: StupidMetrics
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
   StupidWalletCore:
     type: framework
     platform: iOS
@@ -38,6 +50,7 @@ targets:
           - include
     dependencies:
       - target: ENSNormalize
+      - target: StupidMetrics
       - sdk: libsqlite3.tbd
     settings:
       base:
