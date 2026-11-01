@@ -346,7 +346,8 @@ standard-params work:
   of the actions; there is no duplicate wallet-brand header inside the
   Safari-owned popup. Typed-data summaries include primary type, domain fields, and ordered
   root message fields. Transaction details show canonical destination, value, display-only
-  estimated network fee, and full calldata. Where an ERC-7730 clear-signing descriptor is
+  estimated network fee (six decimals, extended to two significant digits when a nonzero fee
+  would otherwise truncate to zero), and full calldata. Where an ERC-7730 clear-signing descriptor is
   cached for the destination contract, the calldata is decoded and rendered as labelled
   fields with the descriptor's intent (for example ERC-20 `Send`/`Approve` with a scaled
   `Amount`); the raw calldata row remains as the expandable fallback and is always shown when
@@ -367,7 +368,9 @@ standard-params work:
   pending request and approval/signing inputs are never changed by this preview; batch-call
   simulation remains pending.
   Clear-signing descriptors are fetched+cached from the public `ethereum/clear-signing-erc7730-registry`
-  and applied by selector only when the descriptor's binding matches the chain/destination. Generic chain rows resolve through the shared `NetworkStore` and display the
+  and applied by selector only when the descriptor's binding matches the chain/destination.
+  Descriptor fields marked `"visible": "never"` are omitted from the decoded rows; the raw
+  calldata remains available. Generic chain rows resolve through the shared `NetworkStore` and display the
   persisted network name, falling back to `Chain N` for unknown metadata; explicit add-network
   Chain ID fields remain numeric. Atomic batches use the same bordered per-call detail table as
   single transactions, rendering each call's ERC-7730-decoded fields when a matching descriptor

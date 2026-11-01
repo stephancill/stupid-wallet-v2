@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo dapp</title>
+<style>
+  body { font-family: system-ui; margin: 0; padding: 24px; background: #fff; color: #111; }
+  h1 { font-size: 28px; margin: 32px 0 8px; }
+  p { color: #666; margin: 0 0 24px; }
+  button { display: block; width: 100%; font: inherit; font-size: 18px; padding: 16px; margin: 12px 0;
+    border: 0; border-radius: 14px; background: #f0f0f3; color: #111; }
+  button.primary { background: #111; color: #fff; }
+  #status { margin-top: 24px; color: #666; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Demo dapp</h1>
+<p>Connect your wallet to continue.</p>
+<button class="primary" id="connect">Connect wallet</button>
+<button id="sign">Sign in</button>
+<button id="send">Send 25 USDC</button>
+<button id="supply">Supply 1,000 USDC</button>
+<div id="status"></div>
+<script>
+  const status = document.getElementById("status");
+  const request = async (args) => {
+    try { const result = await window.ethereum.request(args); status.textContent = JSON.stringify(result); return result; }
+    catch (error) { status.textContent = error.message; }
+  };
+  let account;
+  document.getElementById("connect").onclick = async () => {
+    [account] = (await request({ method: "eth_requestAccounts" })) ?? [];
+  };
+  document.getElementById("sign").onclick = async () => {
+    [account] = await request({ method: "eth_accounts" });
+    const now = new Date().toISOString();
+    const message = `${location.host} wants you to sign in with your Ethereum account:\n${account}\n\nSign in to Demo dapp.\n\nURI: ${location.origin}\nVersion: 1\nChain ID: 8453\nNonce: 8f3k2m9q\nIssued At: ${now}`;
+    const hex = "0x" + [...new TextEncoder().encode(message)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    await request({ method: "personal_sign", params: [hex, account] });
+  };
+  document.getElementById("send").onclick = async () => {
+    [account] = await request({ method: "eth_accounts" });
+    await request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
+    const to = "000000000000000000000000000000000000dEaD".padStart(64, "0");
+    const amount = (25_000_000).toString(16).padStart(64, "0");
+    await request({ method: "eth_sendTransaction", params: [{ from: account,
+      to: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", data: "0xa9059cbb" + to + amount }] });
+  };
+  // Aave V3 Pool on Base: supply(USDC, 1,000 USDC, account, 0).
+  document.getElementById("supply").onclick = async () => {
+    [account] = await request({ method: "eth_accounts" });
+    await request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] });
+    const word = (hex) => hex.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+    const data = "0x617ba037" + word("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913") +
+      word((1_000_000_000).toString(16)) + word(account) + word("0");
+    await request({ method: "eth_sendTransaction", params: [{ from: account,
+      to: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5", data }] });
+  };
+</script>
+</body>
+</html>

@@ -105,6 +105,22 @@ public struct NativeBalanceService: Sendable {
   }
 
   public static func formatEther(bytes: [UInt8]) -> String {
+    let (whole, fraction) = etherParts(bytes: bytes)
+    return "\(whole).\(fraction.prefix(6))"
+  }
+
+  /// Like `formatEther`, but a nonzero fee that would truncate to zero keeps two significant
+  /// digits so cheap L2 fees are not shown as free.
+  public static func formatFee(bytes: [UInt8]) -> String {
+    let (whole, fraction) = etherParts(bytes: bytes)
+    guard whole == "0", let first = fraction.firstIndex(where: { $0 != "0" }),
+      fraction.distance(from: fraction.startIndex, to: first) >= 6
+    else { return "\(whole).\(fraction.prefix(6))" }
+    let end = fraction.index(first, offsetBy: 2, limitedBy: fraction.endIndex) ?? fraction.endIndex
+    return "0.\(fraction[..<end])"
+  }
+
+  private static func etherParts(bytes: [UInt8]) -> (whole: Substring, fraction: Substring) {
     var digits = [0]
     for byte in bytes {
       var carry = Int(byte)
@@ -123,8 +139,6 @@ public struct NativeBalanceService: Sendable {
       decimal = String(repeating: "0", count: 19 - decimal.count) + decimal
     }
     let split = decimal.index(decimal.endIndex, offsetBy: -18)
-    let whole = decimal[..<split]
-    let fraction = decimal[split...].prefix(6)
-    return "\(whole).\(fraction)"
+    return (decimal[..<split], decimal[split...])
   }
 }

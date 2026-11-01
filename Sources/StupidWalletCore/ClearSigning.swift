@@ -194,7 +194,9 @@ public struct ClearSigningDescriptor: Sendable, Equatable {
   private static func parseFields(_ payload: JSONValue?) -> [Field] {
     guard case .array(let array)? = payload else { return [] }
     return array.compactMap { item -> Field? in
-      guard case .object(let object) = item, let path = object["path"]?.stringValue else {
+      guard case .object(let object) = item, let path = object["path"]?.stringValue,
+        object["visible"]?.stringValue != "never"
+      else {
         return nil
       }
       var params: [String: JSONValue] = [:]

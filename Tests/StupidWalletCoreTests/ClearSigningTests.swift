@@ -69,6 +69,29 @@ final class ClearSigningTests: XCTestCase {
     XCTAssertEqual(descriptor.formats["transfer(address to,uint256 value)"]?.intent, "Send")
   }
 
+  func testParseOmitsFieldsNeverVisible() throws {
+    let json = """
+      {
+        "display": {
+          "formats": {
+            "supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)": {
+              "intent": "Supply",
+              "fields": [
+                { "path": "amount", "label": "Amount to supply", "visible": "always" },
+                { "path": "onBehalfOf", "label": "Collateral recipient" },
+                { "label": "Referral Code", "path": "referralCode", "visible": "never" }
+              ]
+            }
+          }
+        }
+      }
+      """
+    let descriptor = try ClearSigningDescriptor.parse(data: Data(json.utf8))
+    let format = descriptor.formats[
+      "supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)"]
+    XCTAssertEqual(format?.fields.map(\.path), ["amount", "onBehalfOf"])
+  }
+
   func testAppliesMatchingAndNonMatching() throws {
     let descriptor = try ClearSigningDescriptor.parse(data: Data(usdtDescriptor.utf8))
     XCTAssertTrue(

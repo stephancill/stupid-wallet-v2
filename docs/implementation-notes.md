@@ -10299,3 +10299,47 @@ Verification:
 - External TestFlight distribution of this build has not been requested.
 - Physical-device acceptance of the zero-balance portfolio was not run; the simulator covered the
   zero-balance and funded accounts.
+
+## 2026-11-01 — App Store listing preparation and review-surface fixes
+
+### Summary
+
+- Prepared the first App Store version (1.0) listing: `docs/app-store-copy.md` holds the subtitle,
+  promotional text, description, keywords and URLs. The listing text, subtitle, privacy policy and
+  support URLs, Finance/Utilities categories and the content-rights declaration were set through the
+  App Store Connect API. Seven captioned 6.9-inch screenshots (1320×2868) were uploaded to the
+  `APP_IPHONE_67` set.
+- Screenshots use fake data without app changes. `scripts/app-store/mock-rpc.mjs` is a loopback
+  JSON-RPC proxy that returns fixture native and ERC-20 balances, a fixed gas estimate, and
+  synthetic `eth_simulateV1` results for ERC-20 transfers and Aave V3 supplies; every other call is
+  forwarded to the default RPC, so catalog prices stay live. A temporary simulator's
+  `rpc-overrides.json` points each default chain at it (loopback HTTP is the existing
+  development-only override path). `scripts/app-store/demo-dapp.html` is a local page that issues
+  connect, SIWE-style `personal_sign`, ERC-20 transfer and Aave supply requests.
+  `scripts/app-store/caption.py` composes captions inside the native canvas.
+- Fixed two review-surface issues found while capturing:
+  - ERC-7730 fields with `"visible": "never"` were rendered (for example Aave's referral code).
+    The descriptor parser now omits them; raw calldata is still shown as the fallback.
+  - Cheap L2 fees displayed as `~0.000000 ETH`. Network fees now use six decimals, extended to two
+    significant digits when a nonzero fee would truncate to zero (for example `~0.00000039 ETH`).
+
+### Verification
+
+- `swift test --filter ClearSigningTests`: the new `testParseOmitsFieldsNeverVisible` failed before
+  the fix and passes after it. The new `networkFeeFormatting` test covers Base-sized, mainnet-sized,
+  one-wei and zero fees; the existing `~0.000021 ETH` submission test is unchanged.
+- `swift test`: 441 tests; all pass except three `ApprovalTests` expired-request cases that also fail
+  on the unmodified tree. They construct `WalletService` without a test connection-state directory,
+  so the default App Group container is unavailable under `swift test` and
+  `ConnectionStateError.unavailable` replaces the expected `WalletError.expired`.
+- `stupid-app build` and `stupid-app run --simulator` on a temporary simulator: an Aave V3 supply
+  review on Base shows Intent, Amount to supply and Collateral recipient without the referral-code
+  row, `~0.00000039 ETH` as the fee, and simulated `+1000 aBasUSDC` / `−1000 USDC` changes.
+
+### Limitations And Follow-Up
+
+- With the `en_ZA` region the Send form's USD field rendered `250,00` beside token amounts using a
+  period; screenshots were captured with `en_US`. The mixed separators are not yet fixed.
+- The Safari screenshots show `localhost` as the requesting site.
+- Pricing, the App Privacy questionnaire (planned answer: data not collected), age rating and
+  review information still need completion before Add for Review.

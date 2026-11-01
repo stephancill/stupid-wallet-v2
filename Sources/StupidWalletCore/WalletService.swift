@@ -1023,7 +1023,7 @@ public actor WalletService {
         let fee = try await rpcQuantity(
           method: "eth_gasPrice", params: .array([]), chainID: record.chainId)
         guard let feeBytes = Hex.quantityData(hex: fee) else { return "Unable to estimate" }
-        let amount = NativeBalanceService.formatEther(bytes: Self.multiply(gasBytes, feeBytes))
+        let amount = NativeBalanceService.formatFee(bytes: Self.multiply(gasBytes, feeBytes))
         return "~\(amount) \(Self.nativeCurrencySymbol(chainID: record.chainId))"
       } catch {
         return "Unable to estimate"
@@ -1069,7 +1069,7 @@ public actor WalletService {
       guard let gasBytes = Hex.quantityData(hex: gas),
         let feeBytes = Hex.quantityData(hex: feePerGas)
       else { return "Unable to estimate" }
-      let amount = NativeBalanceService.formatEther(bytes: Self.multiply(gasBytes, feeBytes))
+      let amount = NativeBalanceService.formatFee(bytes: Self.multiply(gasBytes, feeBytes))
       return "~\(amount) \(Self.nativeCurrencySymbol(chainID: record.chainId))"
     } catch {
       return "Unable to estimate"

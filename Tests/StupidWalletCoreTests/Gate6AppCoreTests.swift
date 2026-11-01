@@ -119,6 +119,17 @@ struct Gate6AppCoreTests {
         == "115792089237316195423570985008687907853269984665640564039457.584007")
   }
 
+  @Test("network fees below six decimals keep two significant digits")
+  func networkFeeFormatting() {
+    // 65,000 gas at 0.0019 gwei, a typical Base fee: 0.0000001235 ETH.
+    #expect(
+      NativeBalanceService.formatFee(bytes: Hex.quantityData(hex: "0x1cc12c7300")!) == "0.00000012")
+    #expect(
+      NativeBalanceService.formatFee(bytes: Hex.quantityData(hex: "0x1319718a5000")!) == "0.000021")
+    #expect(NativeBalanceService.formatFee(bytes: [1]) == "0.000000000000000001")
+    #expect(NativeBalanceService.formatFee(bytes: [0]) == "0.000000")
+  }
+
   @Test("cached total balance is account-bound and removable")
   func cachedTotalBalance() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
