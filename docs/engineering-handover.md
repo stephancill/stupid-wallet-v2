@@ -101,9 +101,10 @@ from source commit `91687e8a87a834188314e2cedd7684904562c0c2`; all four uploaded
 sizes and SHA-256 digests match local deliverables.
 Build 101 was uploaded and live App Store Connect status
 confirmed external IN_BETA_TESTING in the existing External group. The current Apple bundles are
-version 1.0.0 (116), live for internal TestFlight with the single-send simulated asset-change
-preview. Build 116 is `VALID` and internal `IN_BETA_TESTING` in live App Store Connect, but
-has not been submitted externally. Build 115 remains assigned to the existing External group,
+version 1.0.0 (117), live for internal TestFlight and attached to the App Store version 1.0 in
+`PREPARE_FOR_SUBMISSION`. Build 117 hides never-visible clear-signing fields and shows small L2 fees
+with significant digits; its listing copy is in `docs/app-store-copy.md`. Build 116 added the
+single-send simulated asset-change preview and was not submitted externally. Build 115 remains assigned to the existing External group,
 with external `IN_BETA_TESTING`. Build 115 added token-balance
 previews and exact cross-network quantity summaries on the portfolio, and outside-tap keyboard
 dismissal in Send. Build 114 made the app

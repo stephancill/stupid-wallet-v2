@@ -10343,3 +10343,31 @@ Verification:
 - The Safari screenshots show `localhost` as the requesting site.
 - Pricing, the App Privacy questionnaire (planned answer: data not collected), age rating and
   review information still need completion before Add for Review.
+
+## 2026-11-01 — Build 1.0.0 (117) attached to App Store version 1.0
+
+### Summary
+
+- `stupid-app release new-build` selected unused build 117 and `release bump --build-number 117`
+  synchronized the containing app and Safari extension. The build includes the clear-signing
+  visibility and network-fee fixes, plus the shared `background.js`/manifest changes made for the
+  Chrome 0.0.9 beta since build 116.
+- Attached build 117 to App Store version 1.0. Set the age-rating questionnaire to no applicable
+  content (App Store rating 4+).
+
+### Verification
+
+- `stupid-app release preflight`: READY, both Apple bundles 1.0.0 (117); `stupid-app doctor`: zero
+  failures and warnings.
+- `stupid-app release archive`: IPA SHA-256
+  `89fb73b14d4c2fc8df0f34107c8fe1990f9d6415a249fdffe58c00c1cd6e70e3`; the post-sign verifier passed.
+- `stupid-app release upload --wait`: processing `VALID`, internal `IN_BETA_TESTING`.
+- App Store Connect read-back: build 117 attached; description, keywords, promotional text, support
+  and marketing URLs, subtitle, privacy policy URL, Finance/Utilities categories and the
+  content-rights declaration persisted; all seven screenshots are `COMPLETE`.
+
+### Follow-Up
+
+- Before Add for Review: set pricing (Free), publish the App Privacy responses, and complete App
+  Review contact information and notes in the App Store Connect web UI.
+- Physical-device acceptance of build 117 was not run.
