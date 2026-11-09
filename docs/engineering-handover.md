@@ -1143,8 +1143,12 @@ own install id, so dashboard install counts are per surface. The extension and h
 UIKit lifecycle notifications: the Safari handler sends after each `approve`/`reject` response, and the
 Chrome helper sends when Chrome disconnects; both also send every five minutes while running.
 
-`StupidMetrics` is vendored at `Vendor/StupidMetrics` by `scripts/vendor-stupid-metrics.sh <tag>` because
-stupid-app builds only local sources. The tracked `Mac/` XcodeGen project builds it as a static framework.
+`StupidMetrics` is a SwiftPM package dependency from its public repository
+(`https://github.com/stephancill/stupid-metrics-swift`), pinned in `Package.resolved`; `stupid-app` builds
+package dependencies from 0.0.27. The tracked `Mac/` XcodeGen project declares the same package
+(`packages:` in `Mac/project.yml`, pinned in the project's `xcshareddata/swiftpm/Package.resolved`).
+To update it, tag a release there, run `swift package update stupid-metrics-swift`, regenerate the
+Mac project, and commit both resolved files.
 The App Store privacy answers must declare Diagnostics and Usage Data (not linked to the user, not used
 for tracking) before a build with metrics is submitted.
 
@@ -1849,8 +1853,8 @@ project; only `ENSResolver` imports it. License, provenance and adaptations are 
 `THIRD_PARTY_NOTICES.md`. Standard `swift format` applies, with a folder-scoped naming-rule exception
 for upstream identifiers.
 
-`Vendor/StupidMetrics` is the project-owned, dependency-free Stupid Tech metrics client (see Usage
-Metrics), pinned by tag and commit in `Vendor/StupidMetrics/VERSION`. Only `WalletMetrics` imports it.
+`StupidMetrics` is the project-owned, dependency-free Stupid Tech metrics client (see Usage Metrics), a
+package dependency pinned in `Package.resolved`. Only `WalletMetrics` imports it.
 
 Do not add React, React Query, Vite, Tailwind, viem, Web3.swift, PromiseKit, BigInt,
 CryptoSwift, Dawn Key Management, or a general wallet SDK without a concrete reviewed

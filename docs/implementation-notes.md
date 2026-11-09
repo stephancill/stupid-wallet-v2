@@ -10457,3 +10457,29 @@ Verification:
   and, for the extension, a physical device. Extension and helper delivery is unverified.
 - App Store privacy answers must add Diagnostics and Usage Data before submitting a build with metrics.
 - The Chrome helper change ships only with the next notarized helper release.
+
+## 2026-11-09 — StupidMetrics as a package dependency
+
+### Changes
+
+- `StupidMetrics` moved out of the private `stephancill/stupid-metrics` repository into its own public
+  package, <https://github.com/stephancill/stupid-metrics-swift>, at `v0.2.1` with unchanged sources.
+  The wallet now depends on it as a SwiftPM package (`from: "0.2.1"`, pinned in `Package.resolved`)
+  instead of the vendored copy; `Vendor/StupidMetrics` and `scripts/vendor-stupid-metrics.sh` are gone.
+- `Mac/project.yml` declares the same package (`packages:`) in place of the static-framework target
+  built from the vendored sources; the project was regenerated with XcodeGen and its resolved file is
+  tracked.
+
+### Decisions
+
+- Vendoring existed only because `stupid-app` couldn't build remote package products; 0.0.27 can, using
+  the project's `Package.resolved` pins, so builds stay reproducible.
+- The package is public so this public repository builds without access to the private service repo.
+
+### Verification
+
+- `stupid-app build`, `swift build --product StupidWalletChromeHost` (macOS) and the Mac project's
+  `StupidWallet` scheme (generic iOS Simulator, signing off) succeed.
+- `swift test --filter Metrics`: `WalletMetricsTests` pass.
+- Regenerating the unchanged Mac project with the installed XcodeGen also rewrites `project.pbxproj`
+  object ordering, so most of its diff is regeneration rather than the package change.

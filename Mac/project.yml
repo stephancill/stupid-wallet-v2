@@ -12,6 +12,10 @@ settings:
     # iPhone-only: on Apple silicon Mac the app installs as "Designed for iPhone"
     # and uses the fixed phone-sized window instead of the resizable iPad layout.
     TARGETED_DEVICE_FAMILY: "1"
+packages:
+  StupidMetrics:
+    url: https://github.com/stephancill/stupid-metrics-swift
+    from: 0.2.1
 targets:
   ENSNormalize:
     type: framework.static
@@ -28,18 +32,6 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
-  StupidMetrics:
-    type: framework.static
-    platform: iOS
-    sources:
-      - path: ../Vendor/StupidMetrics/Sources/StupidMetrics
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.stupidtech.StupidMetrics
-        PRODUCT_MODULE_NAME: StupidMetrics
-        TARGETED_DEVICE_FAMILY: "1"
-        GENERATE_INFOPLIST_FILE: YES
-        SKIP_INSTALL: YES
   StupidWalletCore:
     type: framework
     platform: iOS
@@ -50,7 +42,7 @@ targets:
           - include
     dependencies:
       - target: ENSNormalize
-      - target: StupidMetrics
+      - package: StupidMetrics
       - sdk: libsqlite3.tbd
     settings:
       base:

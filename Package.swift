@@ -20,6 +20,10 @@ let package = Package(
       targets: ["StupidWalletSafari"],
     ),
   ],
+  dependencies: [
+    // Anonymous usage metrics: the project-owned Stupid Tech client, pinned in Package.resolved.
+    .package(url: "https://github.com/stephancill/stupid-metrics-swift", from: "0.2.1"),
+  ],
   targets: [
     .target(
       name: "ENSNormalize",
@@ -39,14 +43,12 @@ let package = Package(
         .define("ENABLE_MODULE_ECDH"),
       ]
     ),
-    // Anonymous usage metrics. Vendored by scripts/vendor-stupid-metrics.sh; don't edit by hand.
-    .target(
-      name: "StupidMetrics",
-      path: "Vendor/StupidMetrics/Sources/StupidMetrics"
-    ),
     .target(
       name: "StupidWalletCore",
-      dependencies: ["CSecp256k1", "ENSNormalize", "StupidMetrics"],
+      dependencies: [
+        "CSecp256k1", "ENSNormalize",
+        .product(name: "StupidMetrics", package: "stupid-metrics-swift"),
+      ],
       linkerSettings: [.linkedLibrary("sqlite3")]
     ),
     .target(

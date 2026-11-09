@@ -1,0 +1,15 @@
+{
+  "originHash" : "cfd944fcf0df39aef2b091fe3b0e38ba4885f7613d7c3e5f536c0c8d9dbe169a",
+  "pins" : [
+    {
+      "identity" : "stupid-metrics-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/stephancill/stupid-metrics-swift",
+      "state" : {
+        "revision" : "3e19b90d798295edd839d41ae435e68280e6699e",
+        "version" : "0.2.1"
+      }
+    }
+  ],
+  "version" : 3
+}

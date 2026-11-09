@@ -5,11 +5,12 @@ Each is pinned to an exact revision so builds are reproducible and auditable.
 
 ## StupidMetrics (Swift)
 
-- **Provenance:** project-owned Stupid Tech package (private repository `stephancill/stupid-metrics`).
-- **Pinned revision:** recorded in `Vendor/StupidMetrics/VERSION` (initially `v0.2.1` → commit
-  `b13dffd15ad70435d0d109aa3c7d8b5f26222113`).
-- **Vendored tree:** `Vendor/StupidMetrics/Sources/StupidMetrics/`, copied unmodified by
-  `scripts/vendor-stupid-metrics.sh`; no transitive dependencies.
+- **Provenance:** project-owned Stupid Tech package, <https://github.com/stephancill/stupid-metrics-swift>
+  (Apache 2.0).
+- **Pinned revision:** a SwiftPM package dependency from `v0.2.1`, pinned in `Package.resolved` (and
+  the Mac project's `xcshareddata/swiftpm/Package.resolved`); `v0.2.1` → commit `3e19b90d798295edd839d41ae435e68280e6699e` of that
+  repository, sources identical to the previously vendored `v0.2.1` (`b13dffd` of the private
+  `stephancill/stupid-metrics`). No transitive dependencies.
 
 ## libsecp256k1 (C)
 
