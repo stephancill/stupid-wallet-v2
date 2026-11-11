@@ -10483,3 +10483,29 @@ Verification:
 - `swift test --filter Metrics`: `WalletMetricsTests` pass.
 - Regenerating the unchanged Mac project with the installed XcodeGen also rewrites `project.pbxproj`
   object ordering, so most of its diff is regeneration rather than the package change.
+
+## 2026-11-11 — Chrome helper registration in other Chromium browsers
+
+### Investigation
+
+- An owner report of the pairing page doing nothing in the 0.0.9 beta traced to the extension being
+  loaded in Helium, a Chromium-based browser. `install-release.command` writes the native messaging
+  registration only to Google Chrome's `NativeMessagingHosts` directory. Helium reads its own
+  directory, which still held an early transport-proof registration pointing at a build output that
+  no longer exists, so the helper could not start.
+- The installed helper (0.0.7) verified as signed and notarized. The helper performs no
+  browser-identity check, so the same registration works for any Chromium browser that loads the
+  fixed extension ID.
+
+### Changes
+
+- The local Helium registration was repointed at the installed helper as a workaround; no source or
+  release change.
+- `skills/stupid-wallet-debugging/SKILL.md` records the failure signature and check.
+
+### Follow-up
+
+- Proposed, not implemented: have the installer, `install-local.py` and the uninstall steps cover
+  every installed Chromium-family browser from a known directory list, report which browsers were
+  registered, and surface a specific error when the helper cannot be reached. Browsers other than
+  Google Chrome would be documented as registered but untested.

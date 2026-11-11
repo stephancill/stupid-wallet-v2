@@ -706,3 +706,9 @@ stupid-app run --simulator --udid 6552DF1D-95CE-48E3-801F-8F80F0AA8D29
   `tabs.sendMessage` could not reach the isolated bridge. Reload the dapp page after extension
   installation/reload, then reopen the popup. Catch this rejection at document-context lookup and
   explain recovery; never bypass document binding or treat the missing reply as a connection grant.
+- A pairing page that never shows a code, or reports the helper unavailable, can mean the extension
+  is loaded in a different Chromium browser (for example Helium) than the one the installer registered.
+  `install-release.command` writes only Google Chrome's `NativeMessagingHosts` registration; every
+  other browser reads its own directory under `~/Library/Application Support/<browser>/`. Check that
+  browser's `net.stupidtech.stupid_wallet.json` points at the installed helper, not an old proof path,
+  then fully quit and reopen the browser and reload the extension.
